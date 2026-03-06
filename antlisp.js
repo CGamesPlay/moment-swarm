@@ -125,9 +125,10 @@ class Compiler {
     this.usedRegs = new Set();     // registers currently in use
     this.bindings = new Map();     // variable name -> register string
     this.globals = new Map();      // global variable name -> register string
+    this.macros = new Map();       // macro name -> { params: [...], body: [...] }
+    this.constValues = new Map();  // const name -> resolved value (for inline substitution)
     this.roles = [];
     this.aliases = [];
-    this.constants = [];
     this.loopStack = [];
     this.currentNode = null;       // track current AST node for error messages
     this.nodeStack = [];           // stack of nodes for context
@@ -228,6 +229,7 @@ class Compiler {
       const name = node.value;
       if (this.bindings.has(name)) return this.bindings.get(name);
       if (this.globals.has(name)) return this.globals.get(name);
+      if (this.constValues.has(name)) return this.constValues.get(name);  // inline constants
       if (this.isDirection(name)) return name.toUpperCase();
       if (this.isChannel(name)) return name.toUpperCase();
       if (this.isTarget(name)) return name.toUpperCase();
@@ -256,21 +258,21 @@ class Compiler {
   // ── Compilation entry ──
 
   compile(ast) {
-    // Pass 1: collect metadata
+    // Pass 1: collect metadata (roles and macros)
     for (const node of ast.body) {
       if (node.type === 'list' && node.value.length > 0) {
         const head = node.value[0];
         if (head.type === 'symbol') {
           if (head.value === 'define-role') this.collectRole(node.value);
+          if (head.value === 'defmacro') this.collectMacro(node.value);
         }
       }
     }
 
-    // Emit directives
+    // Emit directives (constants are resolved inline, not emitted)
     for (const r of this.roles) this.emit(`.tag ${r.id} ${r.name}`);
     for (const a of this.aliases) this.emit(`.alias ${a.name} ${a.reg}`);
-    for (const c of this.constants) this.emit(`.const ${c.name} ${c.value}`);
-    if (this.roles.length || this.aliases.length || this.constants.length) this.emit('');
+    if (this.roles.length || this.aliases.length) this.emit('');
 
     // Pass 2: compile
     for (const node of ast.body) {
@@ -278,6 +280,102 @@ class Compiler {
     }
 
     return this.output.join('\n');
+  }
+
+  // ── (defmacro name (params...) body...) ──
+  collectMacro(list) {
+    const name = list[1].value;
+    const params = list[2].value.map(p => p.value);  // list of param names
+    const body = list.slice(3);  // remaining forms are the body
+    this.macros.set(name, { params, body });
+  }
+
+  // Expand a macro call: substitute params with args, freshen labels
+  expandMacro(name, args, callNode) {
+    const macro = this.macros.get(name);
+    if (macro.params.length !== args.length) {
+      throw this.errorAt(`Macro ${name} expects ${macro.params.length} args, got ${args.length}`, callNode);
+    }
+
+    // Build substitution map: param name -> arg AST node
+    const subst = new Map();
+    for (let i = 0; i < macro.params.length; i++) {
+      subst.set(macro.params[i], args[i]);
+    }
+
+    // Generate a unique prefix for this expansion (for hygienic labels)
+    const prefix = `__${name}_${this.labelCounter++}`;
+
+    // Deep-clone and substitute the body
+    const expandedBody = macro.body.map(node => this.substNode(node, subst, prefix));
+    return expandedBody;
+  }
+
+  // Recursively substitute parameters and freshen labels in an AST node
+  substNode(node, subst, labelPrefix) {
+    if (node.type === 'symbol') {
+      // Check if it's a parameter to substitute
+      if (subst.has(node.value)) {
+        return this.cloneNode(subst.get(node.value));
+      }
+      return node;
+    }
+    if (node.type === 'number' || node.type === 'string') {
+      return node;
+    }
+    if (node.type === 'list') {
+      const list = node.value;
+      if (list.length === 0) return node;
+
+      const head = list[0];
+      
+      // Handle (label foo) — freshen the label name
+      if (head.type === 'symbol' && head.value === 'label' && list.length >= 2) {
+        const labelName = list[1].value;
+        const freshLabel = `${labelPrefix}_${labelName}`;
+        return {
+          type: 'list',
+          value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
+          line: node.line,
+          col: node.col
+        };
+      }
+
+      // Handle (goto foo) — freshen the label name
+      if (head.type === 'symbol' && head.value === 'goto' && list.length >= 2) {
+        const labelName = list[1].value;
+        const freshLabel = `${labelPrefix}_${labelName}`;
+        return {
+          type: 'list',
+          value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
+          line: node.line,
+          col: node.col
+        };
+      }
+
+      // Recurse into list elements
+      return {
+        type: 'list',
+        value: list.map(child => this.substNode(child, subst, labelPrefix)),
+        line: node.line,
+        col: node.col
+      };
+    }
+    return node;
+  }
+
+  // Deep clone an AST node
+  cloneNode(node) {
+    if (node.type === 'list') {
+      return {
+        type: 'list',
+        value: node.value.map(child => this.cloneNode(child)),
+        line: node.line,
+        col: node.col
+      };
+    }
+    // Primitives can be shared (they're immutable)
+    return node;
   }
 
   collectRole(list) {
@@ -290,7 +388,8 @@ class Compiler {
     if (head.type !== 'symbol') { this.compileExpr(node); return; }
 
     switch (head.value) {
-      case 'define-role': return; // already collected, no code emission unless it has a body
+      case 'define-role': return; // already collected
+      case 'defmacro':    return; // already collected
       case 'define':      return this.compileGlobalDefine(node.value);
       case 'alias':       return this.compileAlias(node.value);
       case 'const':       return this.compileConst(node.value);
@@ -341,8 +440,11 @@ class Compiler {
   }
 
   // ── (const name value) ──
+  // Constants are resolved inline (no .const directive emitted)
   compileConst(list) {
-    this.constants.push({ name: list[1].value, value: this.resolveAtom(list[2]) });
+    const name = list[1].value;
+    const value = this.resolveAtom(list[2]);
+    this.constValues.set(name, value);  // store for inline substitution
   }
 
   // ── Expression compiler ──
@@ -435,6 +537,17 @@ class Compiler {
         return null;
 
       default:
+        // Check if it's a macro call
+        if (this.macros.has(op)) {
+          const args = list.slice(1);
+          const expandedBody = this.expandMacro(op, args, node);
+          // Compile each expanded form; return result of last
+          let result = null;
+          for (let i = 0; i < expandedBody.length; i++) {
+            result = this.compileExpr(expandedBody[i], i === expandedBody.length - 1 ? destReg : null);
+          }
+          return result;
+        }
         throw this.errorAt(`Unknown form: ${op}`);
     }
   }

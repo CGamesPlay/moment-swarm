@@ -140,6 +140,53 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
   (scout body...))
 ```
 
+### Macros
+
+Macros expand inline at each call site — no CALL/return overhead, no register conflicts.
+
+```lisp
+;; Define a macro with (defmacro name (params...) body...)
+(defmacro wander ()
+  (move (+ (random 4) 1)))
+
+(defmacro move-track (dir)
+  (move dir)
+  (cond ((= dir 1) (set! dy (- dy 1)))
+        ((= dir 2) (set! dx (+ dx 1)))
+        ((= dir 3) (set! dy (+ dy 1)))
+        ((= dir 4) (set! dx (- dx 1)))))
+
+;; Usage — expands inline
+(wander)                        ; random direction
+(move-track (sense food))       ; compound expr as param
+```
+
+**Key properties:**
+- **Parameters**: AST-level substitution (like Lisp macros, not C text macros)
+- **Hygienic labels**: `(label foo)` and `(goto foo)` inside macros get freshened at each expansion site to avoid collisions
+- **Caller's scope**: Macros see globals and let-bindings from the call site
+- **Multi-statement bodies**: All forms in the body are emitted inline
+
+```lisp
+;; Macro with internal control flow
+(defmacro grab-if-food ()
+  (let ((dir (sense food)))
+    (when (!= dir 0)
+      (move dir)
+      (pickup))))
+
+;; Macro with explicit labels (freshened per expansion)
+(defmacro skip-if-carrying ()
+  (when (carrying?)
+    (goto done))
+  (move n)
+  (label done))
+
+;; Safe: two calls get distinct labels
+(skip-if-carrying)
+(skip-if-carrying)
+```
+
 ### Low-Level Escape Hatches
 
 ```lisp

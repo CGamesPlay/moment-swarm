@@ -779,6 +779,116 @@ function runTests() {
            (move s))))`,
     r => r.includes('SENSE FOOD') && r.includes('JGT'));
 
+  // ═══════════════════════════════════════════════════════════════
+  // MACRO TESTS
+  // ═══════════════════════════════════════════════════════════════
+
+  test('simple macro no params',
+    `(defmacro wander ()
+       (move (+ (random 4) 1)))
+     (main (wander))`,
+    r => r.includes('RANDOM') && r.includes('ADD') && r.includes('MOVE'));
+
+  test('macro with one param',
+    `(defmacro go (dir)
+       (move dir))
+     (main (go n))`,
+    r => r.includes('MOVE N'));
+
+  test('macro with multiple params',
+    `(defmacro mark-trail (ch amt)
+       (mark ch amt))
+     (main (mark-trail ch_red 100))`,
+    r => r.includes('MARK CH_RED 100'));
+
+  test('macro with expression param',
+    `(defmacro go (dir)
+       (move dir))
+     (main (go (+ (random 4) 1)))`,
+    r => r.includes('RANDOM') && r.includes('ADD') && r.includes('MOVE'));
+
+  test('macro with multi-statement body',
+    `(defmacro forage ()
+       (let ((dir (sense food)))
+         (when (!= dir 0)
+           (move dir)
+           (pickup))))
+     (main (forage))`,
+    r => r.includes('SENSE FOOD') && r.includes('MOVE') && r.includes('PICKUP'));
+
+  test('macro using globals',
+    `(define dx 0 :reg r1)
+     (defmacro track-east ()
+       (set! dx (+ dx 1)))
+     (main (track-east))`,
+    r => r.includes('ADD r1 1'));
+
+  test('macro called multiple times',
+    `(defmacro wander ()
+       (move (+ (random 4) 1)))
+     (main (wander) (wander) (wander))`,
+    r => {
+      const moves = (r.match(/MOVE/g) || []).length;
+      return moves === 3;
+    });
+
+  test('macro with internal labels - hygienic',
+    `(defmacro maybe-move ()
+       (let ((r (random 2)))
+         (if (= r 0)
+           (move n)
+           (move s))))
+     (main (maybe-move) (maybe-move))`,
+    r => {
+      // Should have two different sets of labels (no duplicates)
+      const labels = r.match(/__[a-z_]+_\d+:/g) || [];
+      const unique = new Set(labels);
+      return unique.size === labels.length;
+    });
+
+  test('macro with explicit label/goto - freshened',
+    `(defmacro skip-if-carrying ()
+       (when (carrying?)
+         (goto done))
+       (move n)
+       (label done))
+     (main (skip-if-carrying) (skip-if-carrying))`,
+    r => {
+      // Should have two distinct "done" labels
+      const doneLabels = r.match(/__skip-if-carrying_\d+_done:/g) || [];
+      return doneLabels.length === 2 && doneLabels[0] !== doneLabels[1];
+    });
+
+  test('nested macro calls',
+    `(defmacro go (dir)
+       (move dir))
+     (defmacro wander ()
+       (go (+ (random 4) 1)))
+     (main (wander))`,
+    r => r.includes('RANDOM') && r.includes('MOVE'));
+
+  test('macro param shadows global',
+    `(define x 5 :reg r1)
+     (defmacro set-x (x)
+       (move x))
+     (main (set-x n))`,
+    r => r.includes('MOVE N'));  // x param is N, not r1
+
+  // Test macro error case separately
+  (function() {
+    let caught = false;
+    try {
+      compileAntLisp(`
+        (defmacro foo (a b) (move a))
+        (main (foo n))
+      `);
+    } catch (e) {
+      caught = e.message.includes('expects 2 args');
+    }
+    console.log(`${caught ? '✓' : '✗'} macro wrong arg count error`);
+    if (caught) passed++; else failed++;
+  })();
+
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }
 
