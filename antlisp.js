@@ -16,49 +16,75 @@
 function tokenize(source) {
   const tokens = [];
   let i = 0;
+  let line = 1;
+  let col = 1;
+  let lineStart = 0;  // character index where current line starts
+  
+  function makePos(startIdx) {
+    // Calculate line/col for a given character index
+    let l = 1, c = 1, ls = 0;
+    for (let j = 0; j < startIdx; j++) {
+      if (source[j] === '\n') { l++; c = 1; ls = j + 1; }
+      else { c++; }
+    }
+    return { line: l, col: c, pos: startIdx };
+  }
+  
   while (i < source.length) {
     const ch = source[i];
-    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === '\n') { line++; col = 1; lineStart = i + 1; i++; continue; }
+    if (/\s/.test(ch)) { col++; i++; continue; }
     if (ch === ';') {
-      while (i < source.length && source[i] !== '\n') i++;
+      while (i < source.length && source[i] !== '\n') { i++; col++; }
       continue;
     }
     if (ch === '(' || ch === ')') {
-      tokens.push({ type: 'paren', value: ch, pos: i });
-      i++; continue;
+      tokens.push({ type: 'paren', value: ch, pos: i, line, col });
+      i++; col++; continue;
     }
     if (ch === '"') {
+      const startPos = i;
+      const startLine = line, startCol = col;
       let str = '';
-      i++;
-      while (i < source.length && source[i] !== '"') { str += source[i]; i++; }
-      i++;
-      tokens.push({ type: 'string', value: str, pos: i });
+      i++; col++;
+      while (i < source.length && source[i] !== '"') { 
+        if (source[i] === '\n') { line++; col = 1; } else { col++; }
+        str += source[i]; i++; 
+      }
+      i++; col++;
+      tokens.push({ type: 'string', value: str, pos: startPos, line: startLine, col: startCol });
       continue;
     }
     // Hex literals 0xFF
     if (ch === '0' && i + 1 < source.length && source[i + 1] === 'x') {
+      const startPos = i;
+      const startLine = line, startCol = col;
       let hex = '';
-      i += 2;
-      while (i < source.length && /[0-9a-fA-F]/.test(source[i])) { hex += source[i]; i++; }
-      tokens.push({ type: 'number', value: parseInt(hex, 16), pos: i });
+      i += 2; col += 2;
+      while (i < source.length && /[0-9a-fA-F]/.test(source[i])) { hex += source[i]; i++; col++; }
+      tokens.push({ type: 'number', value: parseInt(hex, 16), pos: startPos, line: startLine, col: startCol });
       continue;
     }
     // Numbers (including negative)
     if (/[0-9]/.test(ch) || (ch === '-' && i + 1 < source.length && /[0-9]/.test(source[i + 1]))) {
+      const startPos = i;
+      const startLine = line, startCol = col;
       let num = '';
-      if (ch === '-') { num = '-'; i++; }
-      while (i < source.length && /[0-9]/.test(source[i])) { num += source[i]; i++; }
-      tokens.push({ type: 'number', value: parseInt(num, 10), pos: i });
+      if (ch === '-') { num = '-'; i++; col++; }
+      while (i < source.length && /[0-9]/.test(source[i])) { num += source[i]; i++; col++; }
+      tokens.push({ type: 'number', value: parseInt(num, 10), pos: startPos, line: startLine, col: startCol });
       continue;
     }
     // Symbols
     if (/[^\s();"]/.test(ch)) {
+      const startPos = i;
+      const startLine = line, startCol = col;
       let sym = '';
-      while (i < source.length && /[^\s();"]/.test(source[i])) { sym += source[i]; i++; }
-      tokens.push({ type: 'symbol', value: sym, pos: i });
+      while (i < source.length && /[^\s();"]/.test(source[i])) { sym += source[i]; i++; col++; }
+      tokens.push({ type: 'symbol', value: sym, pos: startPos, line: startLine, col: startCol });
       continue;
     }
-    i++;
+    i++; col++;
   }
   return tokens;
 }
@@ -71,22 +97,23 @@ function parse(tokens) {
     if (pos >= tokens.length) throw new Error('Unexpected end of input');
     const tok = tokens[pos];
     if (tok.type === 'paren' && tok.value === '(') {
+      const startTok = tok;  // remember opening paren for location
       pos++;
       const list = [];
       while (pos < tokens.length && !(tokens[pos].type === 'paren' && tokens[pos].value === ')')) {
         list.push(parseExpr());
       }
-      if (pos >= tokens.length) throw new Error('Missing closing paren');
+      if (pos >= tokens.length) throw new Error(`Missing closing paren for ( at line ${startTok.line}:${startTok.col}`);
       pos++;
-      return { type: 'list', value: list };
+      return { type: 'list', value: list, line: startTok.line, col: startTok.col };
     }
     if (tok.type === 'paren' && tok.value === ')') {
-      throw new Error(`Unexpected ) at position ${tok.pos}`);
+      throw new Error(`Unexpected ) at line ${tok.line}:${tok.col}`);
     }
     pos++;
-    if (tok.type === 'number') return { type: 'number', value: tok.value };
-    if (tok.type === 'string') return { type: 'string', value: tok.value };
-    return { type: 'symbol', value: tok.value };
+    if (tok.type === 'number') return { type: 'number', value: tok.value, line: tok.line, col: tok.col };
+    if (tok.type === 'string') return { type: 'string', value: tok.value, line: tok.line, col: tok.col };
+    return { type: 'symbol', value: tok.value, line: tok.line, col: tok.col };
   }
   const program = [];
   while (pos < tokens.length) program.push(parseExpr());
@@ -109,6 +136,47 @@ class Compiler {
     this.funcLabels = new Map();   // func name -> label string
     this.loopStack = [];
     this.retRegister = 'r7';      // default return-address register
+    this.currentNode = null;       // track current AST node for error messages
+    this.nodeStack = [];           // stack of nodes for context
+  }
+
+  // Format location info for error messages
+  locInfo(node) {
+    if (node && node.line !== undefined) {
+      return `line ${node.line}:${node.col}`;
+    }
+    return 'unknown location';
+  }
+
+  // Create an error with location context
+  errorAt(message, node) {
+    const loc = node || this.currentNode;
+    const locStr = this.locInfo(loc);
+    
+    // Build context from node stack
+    let context = '';
+    if (this.nodeStack.length > 0) {
+      const contextNodes = this.nodeStack.slice(-3);  // last 3 nodes
+      context = '\n  in: ' + contextNodes.map(n => {
+        if (n.type === 'list' && n.value.length > 0 && n.value[0].type === 'symbol') {
+          return `(${n.value[0].value} ...) at ${this.locInfo(n)}`;
+        }
+        return `${n.type} at ${this.locInfo(n)}`;
+      }).join('\n    → ');
+    }
+    
+    return new CompileError(`${message}\n  at ${locStr}${context}`);
+  }
+
+  // Push/pop node context for tracking
+  pushNode(node) {
+    this.nodeStack.push(node);
+    this.currentNode = node;
+  }
+
+  popNode() {
+    this.nodeStack.pop();
+    this.currentNode = this.nodeStack[this.nodeStack.length - 1] || null;
   }
 
   freshLabel(hint = 'L') {
@@ -125,12 +193,13 @@ class Compiler {
         return `r${i}`;
       }
     }
-    throw new Error('Register exhaustion — r1-r6 all in use (r0 reserved for return values, r7 for return address). Reduce nesting or free variables.');
+    const inUse = [...this.usedRegs].sort().map(r => `r${r}`).join(', ');
+    throw this.errorAt(`Register exhaustion — r1-r6 all in use (currently: ${inUse}). r0 reserved for return values, r7 for return address. Reduce nesting or free variables.`);
   }
 
   allocSpecificReg(n) {
     if (this.usedRegs.has(n)) {
-      throw new Error(`Register r${n} is already allocated`);
+      throw this.errorAt(`Register r${n} is already allocated`);
     }
     this.usedRegs.add(n);
     return `r${n}`;
@@ -176,7 +245,7 @@ class Compiler {
       if (role) return String(role.id);
       return name.toUpperCase();
     }
-    throw new Error(`Cannot resolve: ${JSON.stringify(node)}`);
+    throw this.errorAt(`Cannot resolve: ${JSON.stringify(node)}`, node);
   }
 
   // resolveArg: like resolveAtom but handles compound expressions
@@ -325,7 +394,7 @@ class Compiler {
           break;
         }
       }
-      if (!found) throw new Error(`Cannot allocate register for param ${params[i]}`);
+      if (!found) throw this.errorAt(`Cannot allocate register for param ${params[i]}`);
     }
 
     // Store param register info so the caller knows where to put args
@@ -362,6 +431,15 @@ class Compiler {
   // ── Expression compiler ──
 
   compileExpr(node, destReg = null) {
+    this.pushNode(node);  // Track current node for error messages
+    try {
+      return this._compileExprInner(node, destReg);
+    } finally {
+      this.popNode();
+    }
+  }
+
+  _compileExprInner(node, destReg) {
     if (node.type === 'number' || (node.type === 'symbol' && node.type !== 'list')) {
       if (destReg) {
         const val = this.resolveAtom(node);
@@ -375,7 +453,7 @@ class Compiler {
     const list = node.value;
     if (list.length === 0) return null;
     const head = list[0];
-    if (head.type !== 'symbol') throw new Error(`Expected symbol at head, got ${head.type}`);
+    if (head.type !== 'symbol') throw this.errorAt(`Expected symbol at head, got ${head.type}`);
     const op = head.value;
 
     switch (op) {
@@ -444,7 +522,7 @@ class Compiler {
         if (this.funcLabels.has(op)) {
           return this.compileFuncCall(op, list.slice(1), destReg);
         }
-        throw new Error(`Unknown form: ${op}`);
+        throw this.errorAt(`Unknown form: ${op}`);
     }
   }
 
@@ -453,11 +531,11 @@ class Compiler {
   ensureInReg(node, existingReg = null) {
     if (node.type === 'symbol') {
       const resolved = this.resolveAtom(node);
-      if (resolved.startsWith('r')) return resolved;
+      if (resolved.startsWith('r')) return { reg: resolved, allocated: false };
     }
     const reg = existingReg || this.allocReg();
     this.compileInto(node, reg);
-    return reg;
+    return { reg, allocated: !existingReg };
   }
 
   // ── Helpers for common patterns ──
@@ -512,7 +590,7 @@ class Compiler {
   compileSet(list) {
     const name = list[1].value;
     const reg = this.bindings.get(name) || this.globals.get(name);
-    if (!reg) throw new Error(`Undefined variable: ${name}`);
+    if (!reg) throw this.errorAt(`Undefined variable: ${name}`);
     this.compileInto(list[2], reg);
     return reg;
   }
@@ -627,13 +705,13 @@ class Compiler {
   }
 
   compileBreak() {
-    if (!this.loopStack.length) throw new Error('break outside loop');
+    if (!this.loopStack.length) throw this.errorAt('break outside loop');
     this.emit(`  JMP ${this.loopStack[this.loopStack.length - 1].end}`);
     return null;
   }
 
   compileContinue() {
-    if (!this.loopStack.length) throw new Error('continue outside loop');
+    if (!this.loopStack.length) throw this.errorAt('continue outside loop');
     this.emit(`  JMP ${this.loopStack[this.loopStack.length - 1].top}`);
     return null;
   }
@@ -713,7 +791,7 @@ class Compiler {
     };
 
     if (jmpOps[op]) {
-      const a = this.ensureInReg(list[1]);
+      const { reg: a, allocated } = this.ensureInReg(list[1]);
       const b = this.resolveAtom(list[2]);
       const info = jmpOps[op];
 
@@ -736,13 +814,15 @@ class Compiler {
           this.emitLabel(skip);
         }
       }
+      if (allocated) this.freeReg(a);
       return;
     }
 
     if (op === 'not') { this.compileCondJump(list[1], label, !jumpOnFalse); return; }
     if (op === 'zero?') {
-      const a = this.ensureInReg(list[1]);
+      const { reg: a, allocated } = this.ensureInReg(list[1]);
       this.emit(`  ${jumpOnFalse ? 'JNE' : 'JEQ'} ${a} 0 ${label}`);
+      if (allocated) this.freeReg(a);
       return;
     }
     if (op === 'carrying?') {
@@ -783,7 +863,7 @@ class Compiler {
       const clause = list[i].value;
       const roleName = clause[0].value;
       const role = this.roles.find(r => r.name === roleName);
-      if (!role) throw new Error(`Unknown role: ${roleName}`);
+      if (!role) throw this.errorAt(`Unknown role: ${roleName}`);
       const nextLabel = this.freshLabel('next_role');
       this.emit(`  JNE ${idReg} ${role.id} ${nextLabel}`);
       this.emit(`  TAG ${role.id}`);
@@ -803,7 +883,7 @@ class Compiler {
 
   compileFuncCall(name, argNodes, destReg) {
     const def = this.funcDefs.get(name);
-    if (!def) throw new Error(`Unknown function: ${name}`);
+    if (!def) throw this.errorAt(`Unknown function: ${name}`);
 
     // Compile args into param registers
     if (def.paramRegs) {
@@ -829,6 +909,15 @@ class Compiler {
   }
 }
 
+// ─── COMPILE ERROR ───────────────────────────────────────────
+
+class CompileError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'CompileError';
+  }
+}
+
 // ─── PUBLIC API ──────────────────────────────────────────────
 
 function compileAntLisp(source) {
@@ -847,9 +936,17 @@ if (require.main === module) {
     console.log('Usage: node antlisp.js <source.lisp>');
     console.log('Tests: node antlisp.test.js');
   } else {
-    const source = fs.readFileSync(args[0], 'utf-8');
-    console.log(compileAntLisp(source));
+    try {
+      const source = fs.readFileSync(args[0], 'utf-8');
+      console.log(compileAntLisp(source));
+    } catch (err) {
+      if (err instanceof CompileError) {
+        console.error(`error: ${err.message}`);
+        process.exit(1);
+      }
+      throw err;  // Re-throw unexpected errors with stack trace
+    }
   }
 }
 
-module.exports = { compileAntLisp, tokenize, parse, Compiler };
+module.exports = { compileAntLisp, tokenize, parse, Compiler, CompileError };

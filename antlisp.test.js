@@ -1056,9 +1056,77 @@ function runTests() {
   );
   if (errorTestPassed) passed++; else failed++;
 
+  // ═══════════════════════════════════════════════════════════════
+  // REGISTER LEAK BUG TESTS
+  // These tests expose the bug where compileCondJump allocates temp
+  // registers via ensureInReg() but never frees them.
+  // ═══════════════════════════════════════════════════════════════
+
+  // MINIMAL reproduction - the smallest case that triggers the bug
+  // Bug: compileCondJump calls ensureInReg() for comparisons like (= (random 5) 0)
+  // but never frees the allocated register afterward
+  test('MINIMAL: register leak in compileCondJump',
+    `(define g1 0 :reg r1)
+     (define g2 0 :reg r2)
+     (define g3 0 :reg r3)
+
+     (main
+       (cond
+         ((= g3 0)
+          (if (= (random 5) 0)
+            (move n)
+            (move s)))
+
+         ((= g3 1)
+          (let ((x 1))
+            (if (= (random 10) 0)
+              (move (+ (random 4) 1))
+              (move s))))))`,
+    r => {
+      // Should compile without register exhaustion
+      return r.includes('RANDOM') && r.includes('MOVE N');
+    });
+
+  // Simpler test case that still exercises the bug
+  test('multiple comparisons in sequence should free temp registers',
+    `(define a 0 :reg r1)
+     (define b 0 :reg r2)
+     (define c 0 :reg r3)
+     (main
+       (let ((x (sense food)))
+         (if (> x 0)
+           (if (< x 5)
+             (if (= x 3)
+               (move n)
+               (move s))
+             (move e))
+           (move w))))`,
+    r => {
+      // Should compile - each comparison's temp reg should be freed
+      return r.includes('SENSE FOOD') && r.includes('MOVE N');
+    });
+
+  // Test showing the register leak in compileCondJump
+  test('compileCondJump frees temp registers after comparison',
+    `(define g1 0 :reg r1)
+     (define g2 0 :reg r2)
+     (define g3 0 :reg r3)
+     (define g4 0 :reg r4)
+     (main
+       (let ((x (sense food))
+             (y (sense wall)))
+         (if (> x y)
+           (move n)
+           (move s))))`,
+    r => {
+      // With 4 globals (r1-r4), we have r5, r6 available
+      // let binds x to r5, y to r6
+      // The comparison (> x y) should NOT need to allocate another register
+      // because x is already in a register
+      return r.includes('SENSE FOOD') && r.includes('JGT');
+    });
+
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }
-
-runTests();
 
 runTests();
