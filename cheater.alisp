@@ -1,0 +1,141 @@
+; ── SWARM CHEATER (AntLisp) ────────────────────
+; Navigate to a known location (-40, -10)
+; Once there, random wander to find food
+; Pick up food and dead-reckon home like forager
+
+; ── Registers (pinned to match original) ──
+(define dx 0 :reg r1)           ; x displacement from nest
+(define dy 0 :reg r2)           ; y displacement from nest
+(define dir 0 :reg r0)          ; current direction (for move-track)
+(define state 0 :reg r3)        ; 0 = navigating to target, 1 = wandering
+
+; ── Constants ──
+(const TARGET_X -40)
+(const TARGET_Y -10)
+
+; ── Roles ──
+(define-role navigating 0)
+(define-role wandering 1)
+(define-role homing 2)
+
+; ══════════════════════════════════════════════
+; MACROS — inline at each call site
+; ══════════════════════════════════════════════
+
+; move-track: move in 'dir', update dx/dy
+; If wall ahead, pick a random direction instead; if still wall, just move (waste tick)
+(defmacro move-track ()
+  (let ((cell (probe dir)))
+    (when (= cell 1)
+      (set! dir (+ (random 4) 1))
+      ; if still wall, just move and waste the tick without updating dx/dy
+      (let ((cell2 (probe dir)))
+        (when (= cell2 1)
+          (move dir)
+          (continue))))
+    (move dir)
+    (cond ((= dir 1) (set! dy (- dy 1)))   ; N
+          ((= dir 2) (set! dx (+ dx 1)))   ; E
+          ((= dir 3) (set! dy (+ dy 1)))   ; S
+          ((= dir 4) (set! dx (- dx 1))))))  ; W
+
+; home-dir: set 'dir' = direction toward nest based on dx/dy
+(defmacro home-dir ()
+  (let ((abs-dx dx)
+        (abs-dy dy))
+    (when (<= dx 0)
+      (set! abs-dx (- dx)))
+    (when (<= dy 0)
+      (set! abs-dy (- dy)))
+    (if (> abs-dy abs-dx)
+      (if (> dy 0)
+        (set! dir 1)
+        (set! dir 3))
+      (if (> dx 0)
+        (set! dir 4)
+        (set! dir 2)))))
+
+; target-dir: set 'dir' toward target (-40, -10) based on current dx/dy
+(defmacro target-dir ()
+  (let ((abs-ddx (+ dx 40))
+        (abs-ddy (+ dy 10)))
+    (when (<= abs-ddx 0)
+      (set! abs-ddx (- abs-ddx)))
+    (when (<= abs-ddy 0)
+      (set! abs-ddy (- abs-ddy)))
+    (if (> abs-ddy abs-ddx)
+      (if (> dy -10)
+        (set! dir 1)
+        (set! dir 3))
+      (if (> dx -40)
+        (set! dir 4)
+        (set! dir 2)))))
+
+; ══════════════════════════════════════════════
+; MAIN PROGRAM
+; ══════════════════════════════════════════════
+
+(main
+  (loop
+    (if (carrying?)
+      ; ── CARRYING FOOD — GO HOME ──
+      (begin
+        (tag homing)
+        (let ((nest-dir (sense nest)))
+          (if (!= nest-dir 0)
+            ; At nest — deliver and resume
+            (begin
+              (set! dir nest-dir)
+              (move-track)
+              (drop))
+            ; Navigate home
+            (begin
+              (let ((rnd (random 4)))
+                (if (= rnd 0)
+                  (begin
+                    (set! dir (+ (random 4) 1))
+                    (move-track))
+                  (begin
+                    (home-dir)
+                    (move-track))))))))
+
+      ; ── NOT CARRYING ──
+      (if (= state 0)
+        ; ── NAVIGATING TO TARGET ──
+        (begin
+          (tag navigating)
+          (let ((food-dir (sense food)))
+            (if (!= food-dir 0)
+              ; Found food along the way — grab it
+              (begin
+                (set! dir food-dir)
+                (move-track)
+                (pickup))
+              ; No food — keep heading to target
+              (begin
+                ; Check if we've arrived
+                (let ((ddx (+ dx 40))
+                      (ddy (+ dy 10)))
+                  (when (<= ddx 0)
+                    (set! ddx (- ddx)))
+                  (when (<= ddy 0)
+                    (set! ddy (- ddy)))
+                  (when (<= (+ ddx ddy) 2)
+                    (set! state 1)))
+                (target-dir)
+                (move-track)))))
+
+        ; ── WANDERING AT TARGET ──
+        (begin
+          (tag wandering)
+          (let ((food-dir (sense food)))
+            (if (!= food-dir 0)
+              ; Found food — grab it
+              (begin
+                (set! dir food-dir)
+                (move-track)
+                (pickup))
+              ; No food — random wander
+              (begin
+                (set! dir (+ (random 4) 1))
+                (move-track)))))))))
