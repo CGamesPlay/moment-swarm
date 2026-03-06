@@ -4,14 +4,18 @@
 
 set -eu
 
-
 # @cmd Compile alisp to ant
-# @arg file! alisp file
+# @arg  file!   alisp file
+# @flag --copy  Copy the result
 compile() {
-	target=$(basename "${argc_file:?}" .alisp).ant
-	node antlisp.js "${argc_file:?}" > "$target"
-	pbcopy < "$target"
-	echo "Compiled and copied $target"
+	local asm
+	asm="$(node antlisp.js "${argc_file:?}")"
+	if [[ ${argc_copy+1} ]]; then
+		echo "$asm" | pbcopy
+		echo "Compiled and copied $argc_file"
+	else
+		echo "$asm"
+	fi
 }
 
 # @cmd Run compiler tests
