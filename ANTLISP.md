@@ -16,18 +16,17 @@ The original forager program (dead-reckoning + pheromones, ~70 instructions of h
 (define dx 0 :reg r1)
 (define dy 0 :reg r2)
 
-(main
-  (loop
-    (let ((food (sense food)))
-      (if (!= food 0)
-        (begin
-          (move food)
-          (cond ((= food 1) (set! dy (- dy 1)))
-                ((= food 2) (set! dx (+ dx 1)))
-                ((= food 3) (set! dy (+ dy 1)))
-                ((= food 4) (set! dx (- dx 1))))
-          (pickup))
-        (move (+ (random 4) 1))))))
+(loop
+  (let ((food (sense food)))
+    (if (!= food 0)
+      (begin
+        (move food)
+        (cond ((= food 1) (set! dy (- dy 1)))
+              ((= food 2) (set! dx (+ dx 1)))
+              ((= food 3) (set! dy (+ dy 1)))
+              ((= food 4) (set! dx (- dx 1))))
+        (pickup))
+      (move (+ (random 4) 1)))))
 ```
 
 ## Usage
@@ -47,7 +46,6 @@ node antlisp.js program.alisp > out.asm # save to file
 (define var expr)               ; global, auto-allocated register
 (define var expr :reg r3)       ; global, pinned to r3
 (define-role name id)           ; emit .tag directive
-(main body...)                  ; entry point
 (const name value)              ; emit .const
 (alias name reg)                ; emit .alias
 ```

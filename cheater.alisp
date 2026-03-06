@@ -75,67 +75,66 @@
 ; MAIN PROGRAM
 ; ══════════════════════════════════════════════
 
-(main
-  (loop
-    (if (carrying?)
-      ; ── CARRYING FOOD — GO HOME ──
+(loop
+  (if (carrying?)
+    ; ── CARRYING FOOD — GO HOME ──
+    (begin
+      (tag homing)
+      (let ((nest-dir (sense nest)))
+        (if (!= nest-dir 0)
+          ; At nest — deliver and resume
+          (begin
+            (set! dir nest-dir)
+            (move-track)
+            (drop))
+          ; Navigate home
+          (begin
+            (let ((rnd (random 4)))
+              (if (= rnd 0)
+                (begin
+                  (set! dir (+ (random 4) 1))
+                  (move-track))
+                (begin
+                  (home-dir)
+                  (move-track))))))))
+
+    ; ── NOT CARRYING ──
+    (if (= state 0)
+      ; ── NAVIGATING TO TARGET ──
       (begin
-        (tag homing)
-        (let ((nest-dir (sense nest)))
-          (if (!= nest-dir 0)
-            ; At nest — deliver and resume
+        (tag navigating)
+        (let ((food-dir (sense food)))
+          (if (!= food-dir 0)
+            ; Found food along the way — grab it
             (begin
-              (set! dir nest-dir)
+              (set! dir food-dir)
               (move-track)
-              (drop))
-            ; Navigate home
+              (pickup))
+            ; No food — keep heading to target
             (begin
-              (let ((rnd (random 4)))
-                (if (= rnd 0)
-                  (begin
-                    (set! dir (+ (random 4) 1))
-                    (move-track))
-                  (begin
-                    (home-dir)
-                    (move-track))))))))
+              ; Check if we've arrived
+              (let ((ddx (+ dx 40))
+                    (ddy (+ dy 10)))
+                (when (<= ddx 0)
+                  (set! ddx (- ddx)))
+                (when (<= ddy 0)
+                  (set! ddy (- ddy)))
+                (when (<= (+ ddx ddy) 2)
+                  (set! state 1)))
+              (target-dir)
+              (move-track)))))
 
-      ; ── NOT CARRYING ──
-      (if (= state 0)
-        ; ── NAVIGATING TO TARGET ──
-        (begin
-          (tag navigating)
-          (let ((food-dir (sense food)))
-            (if (!= food-dir 0)
-              ; Found food along the way — grab it
-              (begin
-                (set! dir food-dir)
-                (move-track)
-                (pickup))
-              ; No food — keep heading to target
-              (begin
-                ; Check if we've arrived
-                (let ((ddx (+ dx 40))
-                      (ddy (+ dy 10)))
-                  (when (<= ddx 0)
-                    (set! ddx (- ddx)))
-                  (when (<= ddy 0)
-                    (set! ddy (- ddy)))
-                  (when (<= (+ ddx ddy) 2)
-                    (set! state 1)))
-                (target-dir)
-                (move-track)))))
-
-        ; ── WANDERING AT TARGET ──
-        (begin
-          (tag wandering)
-          (let ((food-dir (sense food)))
-            (if (!= food-dir 0)
-              ; Found food — grab it
-              (begin
-                (set! dir food-dir)
-                (move-track)
-                (pickup))
-              ; No food — random wander
-              (begin
-                (set! dir (+ (random 4) 1))
-                (move-track)))))))))
+      ; ── WANDERING AT TARGET ──
+      (begin
+        (tag wandering)
+        (let ((food-dir (sense food)))
+          (if (!= food-dir 0)
+            ; Found food — grab it
+            (begin
+              (set! dir food-dir)
+              (move-track)
+              (pickup))
+            ; No food — random wander
+            (begin
+              (set! dir (+ (random 4) 1))
+              (move-track))))))))

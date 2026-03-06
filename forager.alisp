@@ -6,7 +6,7 @@
 (define dx 0 :reg r1)           ; x displacement from nest
 (define dy 0 :reg r2)           ; y displacement from nest
 (define timer 0 :reg r4)        ; countdown for marking trail home
-(define dir 0 :reg r0)          ; current direction (for move-track)
+(define dir 0 :reg r0)          ; current direction (for move-with-tracking)
 
 ; ── Constants ──
 (const TRAIL ch_red)
@@ -19,8 +19,8 @@
 ; MACROS — inline at each call site
 ; ══════════════════════════════════════════════
 
-; move-track: move in 'dir', update dx/dy
-(defmacro move-track ()
+; move-with-tracking: move in 'dir', update dx/dy
+(defmacro move-with-tracking ()
   (move dir)
   (cond ((= dir 1) (set! dy (- dy 1)))   ; N
         ((= dir 2) (set! dx (+ dx 1)))   ; E
@@ -52,53 +52,57 @@
 ; MAIN PROGRAM
 ; ══════════════════════════════════════════════
 
-(main
-  (loop
-    ; Check if carrying food
-    (if (carrying?)
-      ; ── GO HOME ──
-      (begin
-        (tag homing)
-        (let ((nest-dir (sense nest)))
-          (if (!= nest-dir 0)
-            ; At nest — deliver
-            (begin
-              (set! dir nest-dir)
-              (move-track)
-              (drop)
-              (set! timer 0))
-            ; Navigate home
-            (begin
-              (let ((rnd (random 4)))
-                (if (= rnd 0)
-                  ; 25% random to unstick from walls
-                  (begin
-                    (set! dir (+ (random 4) 1))
-                    (move-track))
-                  ; 75% dead reckon toward nest
-                  (begin
-                    (home-dir)
-                    (move-track))))
-              ; Mark trail
-              (let ((amt (* timer 2)))
-                (mark TRAIL amt))
-              (set! timer (- timer 1))))))
-      
-      ; ── SEARCH FOR FOOD ──
-      (begin
-        (tag foraging)
-        (let ((food-dir (sense food)))
-          (if (!= food-dir 0)
-            ; Found food — grab it
-            (begin
-              (set! dir food-dir)
-              (move-track)
-              (pickup)
-              (set! timer 127))
-            ; No food — follow trail or wander
-            (begin
-              (let ((trail-dir (smell TRAIL)))
-                (if (!= trail-dir 0)
-                  (set! dir trail-dir)
-                  (set! dir (+ (random 4) 1))))
-              (move-track))))))))
+(loop
+  ; Check if carrying food
+  (if (carrying?)
+    ; ── GO HOME ──
+    (begin
+      (tag homing)
+      (let ((nest-dir (sense nest)))
+        (if (!= nest-dir 0)
+          ; At nest — deliver
+          (begin
+            (set! dir nest-dir)
+            (move-with-tracking)
+            (drop)
+            (set! timer 0))
+          ; Navigate home
+          (begin
+            (let ((rnd (random 4)))
+              (if (= rnd 0)
+                ; 25% random to unstick from walls
+                (begin
+                  (set! dir (+ (random 4) 1))
+                  (move-with-tracking))
+                ; 75% dead reckon toward nest
+                (begin
+                  (home-dir)
+                  (move-with-tracking))))
+            ; Mark trail
+            (let ((amt (* timer 2)))
+              (mark TRAIL amt))
+            (set! timer (- timer 1))))))
+    
+    ; ── SEARCH FOR FOOD ──
+    (begin
+      (tag foraging)
+      (let ((food-dir (sense food)))
+        (if (!= food-dir 0)
+          ; Found food — grab it
+          (begin
+            (set! dir food-dir)
+            (move-with-tracking)
+            (pickup)
+            (set! timer 127))
+          ; No food — follow trail 75%, wander 25%
+          (begin
+            (let ((rnd (random 4)))
+              (if (!= rnd 0)
+                ; 75%: try to follow trail
+                (let ((trail-dir (smell TRAIL)))
+                  (if (!= trail-dir 0)
+                    (set! dir trail-dir)
+                    (set! dir (+ (random 4) 1))))
+                ; 25%: wander randomly
+                (set! dir (+ (random 4) 1))))
+            (move-with-tracking)))))))

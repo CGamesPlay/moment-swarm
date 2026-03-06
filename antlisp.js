@@ -125,6 +125,7 @@ class Compiler {
     this.usedRegs = new Set();     // registers currently in use
     this.bindings = new Map();     // variable name -> register string
     this.globals = new Map();      // global variable name -> register string
+
     this.macros = new Map();       // macro name -> { params: [...], body: [...] }
     this.constValues = new Map();  // const name -> resolved value (for inline substitution)
     this.roles = [];
@@ -385,22 +386,33 @@ class Compiler {
   compileTopLevel(node) {
     if (node.type !== 'list' || node.value.length === 0) return;
     const head = node.value[0];
-    if (head.type !== 'symbol') { this.compileExpr(node); return; }
+    if (head.type !== 'symbol') { 
+      this.seenCode = true;
+      this.compileExpr(node); 
+      return; 
+    }
 
     switch (head.value) {
       case 'define-role': return; // already collected
       case 'defmacro':    return; // already collected
-      case 'define':      return this.compileGlobalDefine(node.value);
+      case 'define':      return this.compileGlobalDefine(node.value, node);
       case 'alias':       return this.compileAlias(node.value);
       case 'const':       return this.compileConst(node.value);
-      case 'main':        return this.compileMain(node.value);
-      default:            this.compileExpr(node);
+
+      default:
+        this.seenCode = true;
+        this.compileExpr(node);
     }
   }
 
   // ── (define var expr) or (define var expr :reg rN) ──
   // Top-level defines create globals with permanently reserved registers
-  compileGlobalDefine(list) {
+  // Must appear before any code to avoid use-before-initialize
+  compileGlobalDefine(list, node) {
+    if (this.seenCode) {
+      throw this.errorAt('(define ...) must appear before any code', node);
+    }
+
     const name = list[1].value;
     let reg;
 
@@ -420,18 +432,14 @@ class Compiler {
     // Find init expression (skip :reg annotation)
     const initExpr = list.length > 2 && list[2].type !== 'symbol' ? list[2] :
                      list.length > 2 && list[2].value !== ':reg' ? list[2] : null;
+    
+    // Emit initialization immediately
     if (initExpr) {
       this.compileInto(initExpr, reg);
     } else {
       // default to 0 if no init
       this.emit(`  SET ${reg} 0`);
     }
-  }
-
-  // ── (main body...) ──
-  compileMain(list) {
-    this.emitLabel('main');
-    for (let i = 1; i < list.length; i++) this.compileExpr(list[i]);
   }
 
   // ── (alias name reg) ──
