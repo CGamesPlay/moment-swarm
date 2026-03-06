@@ -1,0 +1,87 @@
+; ── SWARM FORAGER ────────────────────────────
+; Random walk to find food, dead reckoning to
+; navigate home. Pheromone marks food for others.
+;
+; Faithful translation from the original Antssembly.
+; Uses pinned registers to match the original layout.
+
+; ── Globals (pinned to match original register layout) ──
+(define dx    0 :reg r1)    ; x displacement from nest
+(define dy    0 :reg r2)    ; y displacement from nest
+(define timer 0 :reg r4)    ; countdown timer for marking trail
+
+; ── Roles ──
+(define-role foraging 0)
+(define-role homing 1)
+
+; ── SUBROUTINE: home-dir ─────────────────────
+; Returns (in r0) the direction toward the nest
+; by comparing |dx| vs |dy| and picking the
+; dominant axis.
+(defun home-dir ()
+  (let ((adx dx) (ady dy))
+    ; adx = abs(dx)
+    (unless (> dx 0) (set! adx (- adx)))
+    ; ady = abs(dy)
+    (unless (> dy 0) (set! ady (- ady)))
+    ; pick dominant axis
+    (if (> ady adx)
+      ; y-axis dominant
+      (if (> dy 0) 1 3)       ; N=1 S=3
+      ; x-axis dominant
+      (if (> dx 0) 4 2))))    ; W=4 E=2
+
+; ── SUBROUTINE: move-track ───────────────────
+; Move in direction (passed as arg), then
+; update dx/dy to track displacement from nest.
+(defun move-track (dir)
+  (move dir)
+  (cond ((= dir 1) (set! dy (- dy 1)))    ; N
+        ((= dir 2) (set! dx (+ dx 1)))    ; E
+        ((= dir 3) (set! dy (+ dy 1)))    ; S
+        ((= dir 4) (set! dx (- dx 1)))))  ; W
+
+; ── MAIN LOOP ────────────────────────────────
+(main
+  (loop
+    (if (carrying?)
+      ; ── GO HOME: dead reckon toward nest ──
+      (begin
+        (tag homing)
+        (let ((nest-dir (sense nest)))
+          (if (!= nest-dir 0)
+            ; At nest — deliver food
+            (begin
+              (move-track nest-dir)
+              (drop)
+              (set! timer 0))
+            ; Not at nest — navigate home
+            (let ((r (random 4)))
+              (if (= r 0)
+                ; 25% random walk to unstick from walls
+                (begin
+                  (move-track (+ (random 4) 1))
+                  (mark ch_red (* timer 2))
+                  (set! timer (- timer 1)))
+                ; 75% move toward nest via dead reckoning
+                (begin
+                  (let ((hdir (home-dir)))
+                    (move-track hdir))
+                  (mark ch_red (* timer 2))
+                  (set! timer (- timer 1))))))))
+
+      ; ── SEARCH: find food ──────────────────
+      (begin
+        (tag foraging)
+        (let ((food-dir (sense food)))
+          (if (!= food-dir 0)
+            ; Food adjacent — grab it
+            (begin
+              (move-track food-dir)
+              (pickup)
+              (set! timer 127))
+            ; No food — follow pheromone or wander
+            (let ((trail (smell ch_red)))
+              (if (!= trail 0)
+                (move-track trail)
+                (move-track (+ (random 4) 1))))))))))
