@@ -14,6 +14,11 @@ compile() {
 	echo "Compiled and copied $target"
 }
 
+# @cmd Run compiler tests
+selftest() {
+	node antlisp.test.js
+}
+
 if ! command -v argc >/dev/null; then
 	echo "This command requires argc. Install from https://github.com/sigoden/argc" >&2
 	exit 100

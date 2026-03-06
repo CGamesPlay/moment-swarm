@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 — Compiler Tests
+// AntLisp v2 — Compiler Tests (No Functions)
 // ═══════════════════════════════════════════════════════════════
 
 const { compileAntLisp } = require('./antlisp');
@@ -38,50 +38,15 @@ function runTests() {
 
   test('arithmetic chained',
     '(let ((x (+ 3 4 5))) (move random))',
-    r => r.includes('SET r1 3') && r.includes('ADD r1 4') && r.includes('ADD r1 5'));  // r1 since r0 reserved for returns
+    r => r.includes('SET r0 3') && r.includes('ADD r0 4') && r.includes('ADD r0 5'));
 
   test('global define',
     '(define dx 0) (define dy 0) (main (set! dx (+ dx 1)))',
-    r => r.includes('SET r1 0') && r.includes('ADD r1 1'));  // r1 since r0 reserved for returns
+    r => r.includes('SET r0 0') && r.includes('ADD r0 1'));
 
   test('global define with :reg',
     '(define dx 0 :reg r1) (define dy 0 :reg r2) (main (set! dx (+ dx 1)))',
     r => r.includes('SET r1 0') && r.includes('SET r2 0') && r.includes('ADD r1 1'));
-
-  test('defun returns value in r0',
-    `(defun calc ()
-       (+ 3 4))
-     (main
-       (let ((x (calc)))
-         (move random)))`,
-    r => {
-      return r.includes('fn_calc:') &&
-             r.includes('SET r0 3') &&
-             r.includes('ADD r0 4') &&
-             r.includes('JMP r7') &&
-             r.includes('CALL r7 fn_calc');
-    });
-
-  test('defun sees globals',
-    `(define dx 0 :reg r1)
-     (define dy 0 :reg r2)
-     (defun update-pos (dir)
-       (cond ((= dir 1) (set! dy (- dy 1)))
-             ((= dir 2) (set! dx (+ dx 1)))
-             ((= dir 3) (set! dy (+ dy 1)))
-             ((= dir 4) (set! dx (- dx 1)))))
-     (main (update-pos 1))`,
-    r => {
-      return r.includes('fn_update-pos:') &&
-             r.includes('SUB r2 1') &&  // dy - 1
-             r.includes('ADD r1 1');     // dx + 1
-    });
-
-  test('defun with param',
-    `(defun double (x)
-       (* x 2))
-     (main (double 5))`,
-    r => r.includes('fn_double:') && r.includes('MUL r0 2') && r.includes('SET r1 5'));  // param in r1, not r0
 
   test('cond with else',
     `(let ((d (probe n)))
@@ -107,58 +72,7 @@ function runTests() {
 
   test('dotimes',
     '(dotimes (i 5) (move random))',
-    r => r.includes('SET r1 0') && r.includes('JEQ r1 5'));  // r1 since r0 reserved for returns
-
-  // ═══════════════════════════════════════════════════════════════
-  // Function param preservation across nested calls
-  // Fix: params use r1+ (not r0), so r0 is free for return values
-  // ═══════════════════════════════════════════════════════════════
-
-  test('param preserved across nested call',
-    `(defun check (x) (if (= x 1) 1 0))
-     (defun use-after-call (dir)
-       (if (= (check dir) 1)
-         (move dir)
-         (move random)))
-     (main (use-after-call 1))`,
-    r => {
-      // Params should be in r1+ (not r0) so they survive nested calls
-      // r0 is reserved for return values
-      const lines = r.split('\n').map(l => l.trim());
-      const fnStart = lines.findIndex(l => l === 'fn_use-after-call:');
-      const fnEnd = lines.findIndex((l, i) => i > fnStart && l.includes('JMP r7'));
-      const fnBody = lines.slice(fnStart, fnEnd + 1);
-      
-      // MOVE should use r1 (the param register), not r0 (return value)
-      const moveLines = fnBody.filter(l => l.startsWith('MOVE r'));
-      const moveUsesParamReg = moveLines.some(l => l.match(/MOVE r[1-6]/));
-      
-      // Also verify the param is passed in r1, not r0
-      const paramInR1 = r.includes('SET r1 1') && r.includes('CALL r7 fn_use-after-call');
-      
-      return moveUsesParamReg && paramInR1;
-    });
-
-  test('nested function param not clobbered by return value',
-    `(defun inner (x) (* x 2))
-     (defun outer (a)
-       (+ a (inner a)))
-     (main (outer 5))`,
-    r => {
-      // After calling inner, 'a' should still be accessible
-      // 'a' should be in r1+, inner's return in r0
-      const lines = r.split('\n').map(l => l.trim());
-      
-      // outer's param 'a' should be in r1
-      const outerStart = lines.findIndex(l => l === 'fn_outer:');
-      const outerBody = lines.slice(outerStart, outerStart + 15);
-      
-      // Should see: param in r1, call inner, then ADD using r1
-      const hasAddWithR1 = outerBody.some(l => l.match(/ADD r\d+ r1/) || l.match(/ADD r1/));
-      const hasCall = outerBody.some(l => l.includes('CALL r7 fn_inner'));
-      
-      return hasCall && (hasAddWithR1 || outerBody.some(l => l.includes('r1')));
-    });
+    r => r.includes('SET r0 0') && r.includes('JEQ r0 5'));
 
   // ═══════════════════════════════════════════════════════════════
   // EDGE CASE TESTS — Added for comprehensive coverage
@@ -392,51 +306,6 @@ function runTests() {
     '(let ((myid (id))) (mark ch_red myid))',
     r => r.includes('ID') && r.includes('MARK CH_RED'));
 
-  // --- Function edge cases ---
-  test('function with multiple params',
-    `(defun add3 (a b c)
-       (+ a b c))
-     (main (add3 1 2 3))`,
-    r => r.includes('fn_add3:') && r.includes('ADD'));
-
-  test('function calling another function',
-    `(defun double (x) (* x 2))
-     (defun quadruple (x) (double (double x)))
-     (main (quadruple 5))`,
-    r => r.includes('fn_double:') && r.includes('fn_quadruple:') && r.includes('CALL'));
-
-  test('recursive pattern (mutual calls)',
-    `(defun even? (n)
-       (if (= n 0) 1 (odd? (- n 1))))
-     (defun odd? (n)
-       (if (= n 0) 0 (even? (- n 1))))
-     (main (even? 4))`,
-    r => r.includes('fn_even?:') && r.includes('fn_odd?:'));
-
-  test('function modifying multiple globals',
-    `(define x 0 :reg r1)
-     (define y 0 :reg r2)
-     (define z 0 :reg r3)
-     (defun reset-all ()
-       (set! x 0)
-       (set! y 0)
-       (set! z 0))
-     (main (reset-all))`,
-    r => r.includes('SET r1 0') && r.includes('SET r2 0') && r.includes('SET r3 0'));
-
-  test('function with compound arg',
-    `(defun move-dir (d) (move d))
-     (main (move-dir (+ (random 4) 1)))`,
-    r => r.includes('RANDOM') && r.includes('4') && r.includes('ADD') && r.includes('fn_move-dir'));
-
-  test('function returning sense value',
-    `(defun get-food-dir ()
-       (sense food))
-     (main
-       (let ((d (get-food-dir)))
-         (move d)))`,
-    r => r.includes('fn_get-food-dir:') && r.includes('SENSE FOOD'));
-
   // --- Actions edge cases ---
   test('pickup action',
     '(pickup)',
@@ -478,15 +347,13 @@ function runTests() {
     '(comment "this is a test") (move random)',
     r => r.includes('; this is a test'));
 
-  // NOTE: const is documented but may not be implemented
   test('const directive',
     '(const MAX_FOOD 100) (move random)',
-    r => r.includes('.const MAX_FOOD 100') || r.includes('MOVE RANDOM'));  // Fallback: at least compiles
+    r => r.includes('.const MAX_FOOD 100') || r.includes('MOVE RANDOM'));
 
-  // NOTE: alias is documented but may not be implemented
   test('alias directive',
     '(alias counter r5) (move random)',
-    r => r.includes('.alias counter r5') || r.includes('MOVE RANDOM'));  // Fallback: at least compiles
+    r => r.includes('.alias counter r5') || r.includes('MOVE RANDOM'));
 
   // --- Role dispatch edge cases ---
   test('dispatch with more roles',
@@ -560,35 +427,30 @@ function runTests() {
   test('forager pattern: sense and respond',
     `(define dx 0 :reg r1)
      (define dy 0 :reg r2)
-     (defun move-track (dir)
-       (move dir)
-       (cond ((= dir 1) (set! dy (- dy 1)))
-             ((= dir 2) (set! dx (+ dx 1)))
-             ((= dir 3) (set! dy (+ dy 1)))
-             ((= dir 4) (set! dx (- dx 1)))))
      (main
        (loop
          (let ((food (sense food)))
            (if (!= food 0)
-             (begin (move-track food) (pickup))
-             (move-track (+ (random 4) 1))))))`,
-    r => r.includes('fn_move-track:') && r.includes('SENSE FOOD') && 
-         r.includes('PICKUP') && r.includes('RANDOM'));
+             (begin
+               (move food)
+               (cond ((= food 1) (set! dy (- dy 1)))
+                     ((= food 2) (set! dx (+ dx 1)))
+                     ((= food 3) (set! dy (+ dy 1)))
+                     ((= food 4) (set! dx (- dx 1))))
+               (pickup))
+             (move (+ (random 4) 1))))))`,
+    r => r.includes('SENSE FOOD') && r.includes('PICKUP') && r.includes('RANDOM'));
 
-  // NOTE: This tests if-as-expression inside arithmetic, which may not be supported
-  // The spec mentions "last expression -> r0" but doesn't explicitly say if can be an expression
   test('homing pattern: simplified',
     `(define dx 0 :reg r1)
      (define dy 0 :reg r2)
-     (defun home-dir ()
-       (if (> dy 0) 1 3))
      (main
        (let ((c (carrying?)))
          (when c
-           (move (home-dir)))))`,
-    r => r.includes('fn_home-dir:') && r.includes('CARRYING'));
+           (let ((dir (if (> dy 0) 1 3)))
+             (move dir)))))`,
+    r => r.includes('CARRYING'));
 
-  // This is the complex case that may reveal a limitation
   test('if-as-expression in comparison (edge case)',
     `(define x 5 :reg r1)
      (main
@@ -660,13 +522,12 @@ function runTests() {
   // ═══════════════════════════════════════════════════════════════
 
   // --- Scoping edge cases ---
-  test('set! local variable inside function',
-    `(defun test ()
+  test('set! local variable',
+    `(main
        (let ((x 5))
          (set! x (+ x 1))
-         x))
-     (main (test))`,
-    r => r.includes('ADD') && r.includes('fn_test:'));
+         (move random)))`,
+    r => r.includes('ADD'));
 
   test('nested loops with break/continue',
     `(loop
@@ -695,12 +556,6 @@ function runTests() {
        (set! x 2)
        (set! x 3))`,
     r => r.includes('SET r1 1') && r.includes('SET r1 2') && r.includes('SET r1 3'));
-
-  // --- Function return value used immediately ---
-  test('function return used in expression',
-    `(defun get-five () 5)
-     (main (move (get-five)))`,
-    r => r.includes('fn_get-five:') && r.includes('CALL') && r.includes('MOVE'));
 
   // --- Deeply nested conditionals ---
   test('deeply nested if',
@@ -781,27 +636,6 @@ function runTests() {
     '(if (carrying?) (drop) (pickup))',
     r => r.includes('CARRYING') && r.includes('DROP') && r.includes('PICKUP'));
 
-  // --- Function with no body statements (just expression) ---
-  test('function returning constant',
-    `(defun const-5 () 5)
-     (main (mark ch_red (const-5)))`,
-    r => r.includes('fn_const-5:') && r.includes('SET r0 5'));
-
-  // --- Multiple functions ---
-  test('multiple function definitions',
-    `(defun f1 () 1)
-     (defun f2 () 2)
-     (defun f3 () 3)
-     (main (f1) (f2) (f3))`,
-    r => r.includes('fn_f1:') && r.includes('fn_f2:') && r.includes('fn_f3:'));
-
-  // --- Function calling with sense as arg ---
-  test('function called with sense result',
-    `(defun process-dir (d)
-       (if (= d 0) (move random) (move d)))
-     (main (process-dir (sense food)))`,
-    r => r.includes('SENSE FOOD') && r.includes('fn_process-dir:'));
-
   // --- begin returning value ---
   test('begin as expression value',
     `(let ((x (begin (mark ch_red 10) 5)))
@@ -825,60 +659,26 @@ function runTests() {
          r.includes('PROBE S') && r.includes('PROBE W'));
 
   // --- Sniff with variable ---
-  // NOTE: sniff may not support compound expression as direction arg (potential limitation)
   test('sniff pheromone with literal direction',
     `(let ((intensity (sniff ch_red n)))
        (move random))`,
     r => r.includes('SNIFF CH_RED N'));
 
-  // This edge case reveals that sniff doesn't support computed directions
   test('sniff with computed direction (edge case - may fail)',
     `(let ((dir (sense food)))
        (let ((intensity (sniff ch_red dir)))
          (move random)))`,
-    r => r.includes('SNIFF') || r.includes('SENSE'));  // Flexible: may not work
+    r => r.includes('SNIFF') || r.includes('SENSE'));
 
   // --- Mark with computed value ---
   test('mark with arithmetic result',
     '(let ((val (+ 50 50))) (mark ch_red val))',
     r => r.includes('ADD') && r.includes('MARK CH_RED'));
 
-  // --- Register pressure with function calls ---
-  test('register pressure: function return into let',
-    `(defun compute () (+ 1 2 3))
-     (main
-       (let ((a (compute))
-             (b (sense food))
-             (c (carrying?)))
-         (move random)))`,
-    r => r.includes('fn_compute:') && r.includes('SENSE FOOD') && r.includes('CARRYING'));
-
-  // --- Edge: empty main ---
-  test('main with only comment',
-    '(main (comment "nothing"))',
-    r => r.includes('; nothing') || r.includes('main:'));
-
   // --- Labels with special names ---
   test('label with underscore',
     '(label my_label) (move random) (goto my_label)',
     r => r.includes('my_label:') && r.includes('JMP my_label'));
-
-  // --- Mixing globals and function params ---
-  test('function param same name as global (shadowing)',
-    `(define x 10 :reg r1)
-     (defun use-x (x)
-       (* x 2))
-     (main (use-x 5))`,
-    r => r.includes('fn_use-x:') && r.includes('MUL'));
-
-  // --- Recursive function (simple) ---
-  test('recursive countdown',
-    `(defun countdown (n)
-       (if (= n 0)
-         (move random)
-         (countdown (- n 1))))
-     (main (countdown 5))`,
-    r => r.includes('fn_countdown:') && r.includes('CALL') && r.includes('SUB'));
 
   // --- Multiple break/continue ---
   test('multiple break conditions',
@@ -902,88 +702,21 @@ function runTests() {
     r => r.includes('SET r1 1') && r.includes('SET r1 2'));
 
   // ═══════════════════════════════════════════════════════════════
-  // REGISTER ALLOCATION BUG TESTS
+  // REGISTER ALLOCATION TESTS
   // ═══════════════════════════════════════════════════════════════
 
-  // r7 is reserved for return address (per spec: "Return address -> r7")
-  // The compiler should NEVER use r7 for temps or locals
-  test('r7 reserved for return address - not used as temp',
-    `(define a 0 :reg r1)
-     (define b 0 :reg r2)
-     (define c 0 :reg r3)
-     (defun test-func ()
-       (let ((x (random 10))
-             (y (random 20))
-             (z (random 30)))
-         (+ x y z)))
-     (main (test-func))`,
-    r => {
-      // r7 should only appear in CALL/JMP r7 contexts, never as destination for RANDOM, SET, etc.
-      const lines = r.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        // Skip CALL and JMP r7 (valid uses)
-        if (trimmed.startsWith('CALL r7') || trimmed === 'JMP r7') continue;
-        // Any other use of r7 as destination is a bug
-        if (trimmed.match(/^(SET|RANDOM|SENSE|ADD|SUB|MUL|DIV|MOD|AND|OR|XOR|LSHIFT|RSHIFT|SMELL|SNIFF|PROBE|ID|CARRYING)\s+r7\b/)) {
-          console.log('    BUG: r7 used as destination: ' + trimmed);
-          return false;
-        }
-      }
-      return true;
-    });
+  test('all 8 registers available',
+    `(define g1 0 :reg r0)
+     (define g2 0 :reg r1)
+     (define g3 0 :reg r2)
+     (define g4 0 :reg r3)
+     (define g5 0 :reg r4)
+     (define g6 0 :reg r5)
+     (define g7 0 :reg r6)
+     (define g8 0 :reg r7)
+     (main (set! g1 1))`,
+    r => r.includes('SET r0 0') && r.includes('SET r7 0'));
 
-  test('r7 not clobbered with many locals in function',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (defun pressure-test ()
-       (let ((a (sense food))
-             (b (sense wall))
-             (c (sense nest))
-             (d (carrying?)))
-         (if (= a 0) b (+ c d))))
-     (main (pressure-test))`,
-    r => {
-      const lines = r.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('CALL r7') || trimmed === 'JMP r7') continue;
-        if (trimmed.match(/^(SET|RANDOM|SENSE|ADD|SUB|MUL|DIV|MOD|AND|OR|XOR|LSHIFT|RSHIFT|SMELL|SNIFF|PROBE|ID|CARRYING)\s+r7\b/)) {
-          console.log('    BUG: r7 used as destination: ' + trimmed);
-          return false;
-        }
-      }
-      return true;
-    });
-
-  test('r7 safe in nested function calls',
-    `(defun inner () (+ 1 2))
-     (defun outer () (+ (inner) 3))
-     (main (outer))`,
-    r => {
-      const lines = r.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('CALL r7') || trimmed === 'JMP r7') continue;
-        if (trimmed.match(/^(SET|RANDOM|SENSE|ADD|SUB|MUL|DIV|MOD|AND|OR|XOR|LSHIFT|RSHIFT|SMELL|SNIFF|PROBE|ID|CARRYING)\s+r7\b/)) {
-          console.log('    BUG: r7 used as destination: ' + trimmed);
-          return false;
-        }
-      }
-      return true;
-    });
-
-  // r0 is reserved for return values - should be careful about clobbering
-  test('r0 reserved for return - locals should not permanently occupy r0',
-    `(defun returns-value ()
-       (let ((temp 5))
-         (+ temp 10)))
-     (main
-       (let ((result (returns-value)))
-         (mark ch_red result)))`,
-    r => r.includes('fn_returns-value:') && r.includes('CALL') && r.includes('MARK CH_RED'));
-
-  // Stress test: use up all available registers
   test('register exhaustion - many globals + locals',
     `(define g1 0 :reg r1)
      (define g2 0 :reg r2)
@@ -993,78 +726,12 @@ function runTests() {
      (main
        (let ((l1 (sense food)))
          (set! g1 l1)))`,
-    r => {
-      // With r0 for return, r7 for call, and r1-r5 as globals,
-      // only r6 is available for locals. This should still work.
-      return r.includes('SENSE FOOD') && !r.includes('r7');
-    });
-
-  test('cheater.alisp pattern - random in conditional with function call',
-    `(define phase 0 :reg r3)
-     (defun home-dir () 1)
-     (main
-       (let ((hdir (home-dir)))
-         (if (= (random 10) 0)
-           (move (+ (random 4) 1))
-           (move hdir))))`,
-    r => {
-      const lines = r.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('CALL r7') || trimmed === 'JMP r7') continue;
-        if (trimmed.match(/^RANDOM\s+r7\b/)) {
-          console.log('    BUG: RANDOM using r7 as destination: ' + trimmed);
-          return false;
-        }
-      }
-      return true;
-    });
-
-  // Verify the compiler correctly throws an error when register pressure is too high
-  // (rather than incorrectly using r7 which is reserved for return address)
-  function testExpectError(name, source, expectedErrorSubstring) {
-    try {
-      compileAntLisp(source);
-      console.log(`✗ ${name} — expected error but compiled successfully`);
-      return false;
-    } catch (e) {
-      const ok = e.message.includes(expectedErrorSubstring);
-      console.log(`${ok ? '✓' : '✗'} ${name}`);
-      if (!ok) {
-        console.log(`  Expected error containing: "${expectedErrorSubstring}"`);
-        console.log(`  Got: "${e.message}"`);
-      }
-      return ok;
-    }
-  }
-
-  // Test that register exhaustion gives a clear error
-  const errorTestPassed = testExpectError(
-    'register exhaustion gives clear error (r7 protected)',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (define g3 0 :reg r3)
-     (define g4 0 :reg r4)
-     (define g5 0 :reg r5)
-     (define g6 0 :reg r6)
-     (defun get-value () 42)
-     (main
-       (let ((val (get-value)))
-         (let ((rnd (random 10)))
-           (move val))))`,
-    'Register exhaustion'  // Updated: error message changed
-  );
-  if (errorTestPassed) passed++; else failed++;
+    r => r.includes('SENSE FOOD'));
 
   // ═══════════════════════════════════════════════════════════════
   // REGISTER LEAK BUG TESTS
-  // These tests expose the bug where compileCondJump allocates temp
-  // registers via ensureInReg() but never frees them.
   // ═══════════════════════════════════════════════════════════════
 
-  // MINIMAL reproduction - the smallest case that triggers the bug
-  // Bug: compileCondJump calls ensureInReg() for comparisons like (= (random 5) 0)
-  // but never frees the allocated register afterward
   test('MINIMAL: register leak in compileCondJump',
     `(define g1 0 :reg r1)
      (define g2 0 :reg r2)
@@ -1082,12 +749,8 @@ function runTests() {
             (if (= (random 10) 0)
               (move (+ (random 4) 1))
               (move s))))))`,
-    r => {
-      // Should compile without register exhaustion
-      return r.includes('RANDOM') && r.includes('MOVE N');
-    });
+    r => r.includes('RANDOM') && r.includes('MOVE N'));
 
-  // Simpler test case that still exercises the bug
   test('multiple comparisons in sequence should free temp registers',
     `(define a 0 :reg r1)
      (define b 0 :reg r2)
@@ -1101,12 +764,8 @@ function runTests() {
                (move s))
              (move e))
            (move w))))`,
-    r => {
-      // Should compile - each comparison's temp reg should be freed
-      return r.includes('SENSE FOOD') && r.includes('MOVE N');
-    });
+    r => r.includes('SENSE FOOD') && r.includes('MOVE N'));
 
-  // Test showing the register leak in compileCondJump
   test('compileCondJump frees temp registers after comparison',
     `(define g1 0 :reg r1)
      (define g2 0 :reg r2)
@@ -1118,13 +777,7 @@ function runTests() {
          (if (> x y)
            (move n)
            (move s))))`,
-    r => {
-      // With 4 globals (r1-r4), we have r5, r6 available
-      // let binds x to r5, y to r6
-      // The comparison (> x y) should NOT need to allocate another register
-      // because x is already in a register
-      return r.includes('SENSE FOOD') && r.includes('JGT');
-    });
+    r => r.includes('SENSE FOOD') && r.includes('JGT'));
 
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }

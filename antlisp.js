@@ -3,12 +3,8 @@
 // ═══════════════════════════════════════════════════════════════
 //
 // Changes from v1:
-//  - (define var expr) at top level creates GLOBALS visible inside defun
-//  - (define var expr reg) pins a global to a specific register
-//  - (defun name (params) body) — last expression value left in r0
-//    as return value; caller can read r0 after call
-//  - Functions see global bindings (define'd variables)
-//  - (call func args...) compiles args into param registers, returns r0
+//  - (define var expr) at top level creates GLOBALS
+//  - (define var expr :reg rN) pins a global to a specific register
 //  - Smarter register allocation: globals are permanently reserved
 
 // ─── TOKENIZER ───────────────────────────────────────────────
@@ -132,10 +128,7 @@ class Compiler {
     this.roles = [];
     this.aliases = [];
     this.constants = [];
-    this.funcDefs = new Map();     // func name -> { label, params, retReg }
-    this.funcLabels = new Map();   // func name -> label string
     this.loopStack = [];
-    this.retRegister = 'r7';      // default return-address register
     this.currentNode = null;       // track current AST node for error messages
     this.nodeStack = [];           // stack of nodes for context
   }
@@ -186,15 +179,14 @@ class Compiler {
   // ── Register Allocation ──
 
   allocReg() {
-    // r0 is reserved for return values, r7 for return address - never allocate them
-    for (let i = 1; i <= 6; i++) {
+    for (let i = 0; i <= 7; i++) {
       if (!this.usedRegs.has(i)) {
         this.usedRegs.add(i);
         return `r${i}`;
       }
     }
     const inUse = [...this.usedRegs].sort().map(r => `r${r}`).join(', ');
-    throw this.errorAt(`Register exhaustion — r1-r6 all in use (currently: ${inUse}). r0 reserved for return values, r7 for return address. Reduce nesting or free variables.`);
+    throw this.errorAt(`Register exhaustion — all registers in use (currently: ${inUse}). Reduce nesting or free variables.`);
   }
 
   allocSpecificReg(n) {
@@ -270,7 +262,6 @@ class Compiler {
         const head = node.value[0];
         if (head.type === 'symbol') {
           if (head.value === 'define-role') this.collectRole(node.value);
-          if (head.value === 'defun') this.collectFunc(node.value);
         }
       }
     }
@@ -293,16 +284,6 @@ class Compiler {
     this.roles.push({ name: list[1].value, id: list[2].value });
   }
 
-  collectFunc(list) {
-    const name = list[1].value;
-    const label = `fn_${name}`;
-    this.funcLabels.set(name, label);
-    this.funcDefs.set(name, {
-      label,
-      params: list[2].value.map(p => p.value),
-    });
-  }
-
   compileTopLevel(node) {
     if (node.type !== 'list' || node.value.length === 0) return;
     const head = node.value[0];
@@ -311,7 +292,6 @@ class Compiler {
     switch (head.value) {
       case 'define-role': return; // already collected, no code emission unless it has a body
       case 'define':      return this.compileGlobalDefine(node.value);
-      case 'defun':       return this.compileDefun(node.value);
       case 'alias':       return this.compileAlias(node.value);
       case 'const':       return this.compileConst(node.value);
       case 'main':        return this.compileMain(node.value);
@@ -353,69 +333,6 @@ class Compiler {
   compileMain(list) {
     this.emitLabel('main');
     for (let i = 1; i < list.length; i++) this.compileExpr(list[i]);
-  }
-
-  // ── (defun name (params) body...) ──
-  // Functions can see globals. Params are passed in dedicated temp registers.
-  // Return value (last expression) ends up in r0.
-  // Return address uses the register specified by this.retRegister (default r7).
-  compileDefun(list) {
-    const name = list[1].value;
-    const params = list[2].value.map(p => p.value);
-    const def = this.funcDefs.get(name);
-
-    const skipLabel = this.freshLabel(`${name}_skip`);
-    this.emit(`  JMP ${skipLabel}`);
-    this.emitLabel(def.label);
-
-    // Save current local bindings, keep globals
-    const savedBindings = new Map(this.bindings);
-    const savedUsedRegs = new Set(this.usedRegs);
-
-    // In function context: globals stay bound, params get temp regs
-    // We need to figure out which registers to use for params.
-    // Strategy: params go in the first available non-global registers.
-    // The caller will SET these registers before CALL.
-
-    // Build param register assignments (first N free registers, but NOT r0)
-    // r0 is reserved for return values, so params start from r1 or higher.
-    // This prevents params from being clobbered by nested function calls.
-    const paramRegs = [];
-    for (let i = 0; i < params.length; i++) {
-      // Find a free register for this param (skip r0 - reserved for return value)
-      let found = false;
-      for (let r = 1; r <= 6; r++) {  // Start from r1, skip r0 and r7
-        if (!this.globals.has([...this.globals.entries()].find(([, v]) => v === `r${r}`)?.[0]) &&
-            !paramRegs.includes(`r${r}`)) {
-          paramRegs.push(`r${r}`);
-          this.bindings.set(params[i], `r${r}`);
-          this.usedRegs.add(r);  // Mark param register as in use!
-          found = true;
-          break;
-        }
-      }
-      if (!found) throw this.errorAt(`Cannot allocate register for param ${params[i]}`);
-    }
-
-    // Store param register info so the caller knows where to put args
-    def.paramRegs = paramRegs;
-
-    // Mark return address register as used
-    const retRegNum = parseInt(this.retRegister.slice(1));
-
-    // Compile body — last expression's result goes to r0 if possible
-    let lastResult = null;
-    for (let i = 3; i < list.length; i++) {
-      const isLast = i === list.length - 1;
-      lastResult = this.compileExpr(list[i], isLast ? 'r0' : null);
-    }
-
-    this.emit(`  JMP ${this.retRegister}`);
-    this.emitLabel(skipLabel);
-
-    // Restore bindings
-    this.bindings = savedBindings;
-    this.usedRegs = savedUsedRegs;
   }
 
   // ── (alias name reg) ──
@@ -518,10 +435,6 @@ class Compiler {
         return null;
 
       default:
-        // Implicit function call: (func-name args...)
-        if (this.funcLabels.has(op)) {
-          return this.compileFuncCall(op, list.slice(1), destReg);
-        }
         throw this.errorAt(`Unknown form: ${op}`);
     }
   }
@@ -875,38 +788,6 @@ class Compiler {
     this.freeReg(idReg);
     return null;
   }
-
-  // ── Function calls ──
-  // (func-name arg1 arg2 ...) or (call func-name arg1 arg2 ...)
-  // Args are compiled into the param registers defined by defun.
-  // Return value ends up in r0.
-
-  compileFuncCall(name, argNodes, destReg) {
-    const def = this.funcDefs.get(name);
-    if (!def) throw this.errorAt(`Unknown function: ${name}`);
-
-    // Compile args into param registers
-    if (def.paramRegs) {
-      for (let i = 0; i < argNodes.length && i < def.paramRegs.length; i++) {
-        this.compileInto(argNodes[i], def.paramRegs[i]);
-      }
-    } else {
-      // Param regs not yet assigned (defun not compiled yet).
-      // Fall back to r0, r1, ... skipping globals and ret reg.
-      for (let i = 0; i < argNodes.length; i++) {
-        this.compileInto(argNodes[i], `r${i}`);
-      }
-    }
-
-    this.emit(`  CALL ${this.retRegister} ${def.label}`);
-
-    // Return value is in r0. If caller wants it in destReg, move it.
-    if (destReg && destReg !== 'r0') {
-      this.emit(`  SET ${destReg} r0`);
-      return destReg;
-    }
-    return 'r0';
-  }
 }
 
 // ─── COMPILE ERROR ───────────────────────────────────────────
@@ -934,7 +815,6 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.log('Usage: node antlisp.js <source.lisp>');
-    console.log('Tests: node antlisp.test.js');
   } else {
     try {
       const source = fs.readFileSync(args[0], 'utf-8');

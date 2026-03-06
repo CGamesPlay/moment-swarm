@@ -4,120 +4,192 @@
   SET r1 0
   SET r2 0
   SET r4 0
-  JMP __home-dir_skip_0
-fn_home-dir:
-  SET r0 r1
-  SET r3 r2
-  JGT r1 0 __endunless_1
-  SET r5 r0
-  SET r0 0
-  SUB r0 r5
-__endunless_1:
-  JGT r2 0 __endunless_2
-  SET r5 r3
-  SET r3 0
-  SUB r3 r5
-__endunless_2:
-  JGT r3 r0 __skip_5
-  JMP __else_3
-__skip_5:
-  JGT r2 0 __skip_8
-  JMP __else_6
-__skip_8:
-  SET r0 1
-  JMP __endif_7
-__else_6:
-  SET r0 3
-__endif_7:
-  JMP __endif_4
-__else_3:
-  JGT r1 0 __skip_11
-  JMP __else_9
-__skip_11:
-  SET r0 4
-  JMP __endif_10
-__else_9:
-  SET r0 2
-__endif_10:
-__endif_4:
-  JMP r7
-__home-dir_skip_0:
-  JMP __move-track_skip_12
-fn_move-track:
+main:
+__loop_0:
+  CARRYING r0
+  JEQ r0 0 __else_2
+  TAG 1
+  SENSE NEST r0
+  JEQ r0 0 __else_4
   MOVE r0
-  JNE r0 1 __cond_next_14
+  JNE r0 1 __cond_next_7
+  SUB r2 1
+  JMP __endcond_6
+__cond_next_7:
+  JNE r0 2 __cond_next_8
+  ADD r1 1
+  JMP __endcond_6
+__cond_next_8:
+  JNE r0 3 __cond_next_9
+  ADD r2 1
+  JMP __endcond_6
+__cond_next_9:
+  JNE r0 4 __cond_next_10
+  SUB r1 1
+  JMP __endcond_6
+__cond_next_10:
+__endcond_6:
+  DROP
+  SET r4 0
+  JMP __endif_5
+__else_4:
+  RANDOM r3 4
+  JNE r3 0 __else_11
+  RANDOM r5 4
+  ADD r5 1
+  MOVE r5
+  JNE r5 1 __cond_next_14
   SUB r2 1
   JMP __endcond_13
 __cond_next_14:
-  JNE r0 2 __cond_next_15
+  JNE r5 2 __cond_next_15
   ADD r1 1
   JMP __endcond_13
 __cond_next_15:
-  JNE r0 3 __cond_next_16
+  JNE r5 3 __cond_next_16
   ADD r2 1
   JMP __endcond_13
 __cond_next_16:
-  JNE r0 4 __cond_next_17
+  JNE r5 4 __cond_next_17
   SUB r1 1
   JMP __endcond_13
 __cond_next_17:
 __endcond_13:
-  JMP r7
-__move-track_skip_12:
-main:
-__loop_18:
-  CARRYING r0
-  JEQ r0 0 __else_20
-  TAG 1
-  SENSE NEST r0
-  JEQ r0 0 __else_22
-  CALL r7 fn_move-track
-  DROP
-  SET r4 0
-  JMP __endif_23
-__else_22:
-  RANDOM r3 4
-  JNE r3 0 __else_24
-  RANDOM r0 4
-  ADD r0 1
-  CALL r7 fn_move-track
-  SET r5 r4
-  MUL r5 2
-  MARK CH_RED r5
+  SET r6 r4
+  MUL r6 2
+  MARK CH_RED r6
   SUB r4 1
-  JMP __endif_25
-__else_24:
-  CALL r7 fn_home-dir
-  SET r5 r0
-  SET r0 r5
-  CALL r7 fn_move-track
-  SET r5 r4
-  MUL r5 2
-  MARK CH_RED r5
-  SUB r4 1
-__endif_25:
-__endif_23:
+  JMP __endif_12
+__else_11:
+  SET r5 r1
+  SET r6 r2
+  JGT r1 0 __endunless_18
+  SET r7 r5
+  SET r5 0
+  SUB r5 r7
+__endunless_18:
+  JGT r2 0 __endunless_19
+  SET r7 r6
+  SET r6 0
+  SUB r6 r7
+__endunless_19:
+  JGT r6 r5 __skip_22
+  JMP __else_20
+__skip_22:
+  JGT r2 0 __skip_25
+  JMP __else_23
+__skip_25:
+  SET r7 1
+  JMP __endif_24
+__else_23:
+  SET r7 3
+__endif_24:
   JMP __endif_21
 __else_20:
-  TAG 0
-  SENSE FOOD r0
-  JEQ r0 0 __else_26
-  CALL r7 fn_move-track
-  PICKUP
-  SET r4 127
+  JGT r1 0 __skip_28
+  JMP __else_26
+__skip_28:
+  SET r7 4
   JMP __endif_27
 __else_26:
-  SMELL CH_RED r3
-  JEQ r3 0 __else_28
-  SET r0 r3
-  CALL r7 fn_move-track
-  JMP __endif_29
-__else_28:
-  RANDOM r0 4
-  ADD r0 1
-  CALL r7 fn_move-track
-__endif_29:
+  SET r7 2
 __endif_27:
 __endif_21:
-  JMP __loop_18
-__endloop_19:
+  MOVE r7
+  JNE r7 1 __cond_next_30
+  SUB r2 1
+  JMP __endcond_29
+__cond_next_30:
+  JNE r7 2 __cond_next_31
+  ADD r1 1
+  JMP __endcond_29
+__cond_next_31:
+  JNE r7 3 __cond_next_32
+  ADD r2 1
+  JMP __endcond_29
+__cond_next_32:
+  JNE r7 4 __cond_next_33
+  SUB r1 1
+  JMP __endcond_29
+__cond_next_33:
+__endcond_29:
+  SET r5 r4
+  MUL r5 2
+  MARK CH_RED r5
+  SUB r4 1
+__endif_12:
+__endif_5:
+  JMP __endif_3
+__else_2:
+  TAG 0
+  SENSE FOOD r0
+  JEQ r0 0 __else_34
+  MOVE r0
+  JNE r0 1 __cond_next_37
+  SUB r2 1
+  JMP __endcond_36
+__cond_next_37:
+  JNE r0 2 __cond_next_38
+  ADD r1 1
+  JMP __endcond_36
+__cond_next_38:
+  JNE r0 3 __cond_next_39
+  ADD r2 1
+  JMP __endcond_36
+__cond_next_39:
+  JNE r0 4 __cond_next_40
+  SUB r1 1
+  JMP __endcond_36
+__cond_next_40:
+__endcond_36:
+  PICKUP
+  SET r4 127
+  JMP __endif_35
+__else_34:
+  SMELL CH_RED r3
+  JEQ r3 0 __else_41
+  MOVE r3
+  JNE r3 1 __cond_next_44
+  SUB r2 1
+  JMP __endcond_43
+__cond_next_44:
+  JNE r3 2 __cond_next_45
+  ADD r1 1
+  JMP __endcond_43
+__cond_next_45:
+  JNE r3 3 __cond_next_46
+  ADD r2 1
+  JMP __endcond_43
+__cond_next_46:
+  JNE r3 4 __cond_next_47
+  SUB r1 1
+  JMP __endcond_43
+__cond_next_47:
+__endcond_43:
+  JMP __endif_42
+__else_41:
+  RANDOM r5 4
+  ADD r5 1
+  MOVE r5
+  JNE r5 1 __cond_next_49
+  SUB r2 1
+  JMP __endcond_48
+__cond_next_49:
+  JNE r5 2 __cond_next_50
+  ADD r1 1
+  JMP __endcond_48
+__cond_next_50:
+  JNE r5 3 __cond_next_51
+  ADD r2 1
+  JMP __endcond_48
+__cond_next_51:
+  JNE r5 4 __cond_next_52
+  SUB r1 1
+  JMP __endcond_48
+__cond_next_52:
+__endcond_48:
+__endif_42:
+__endif_35:
+__endif_3:
+  JMP __loop_0
+__endloop_1:
