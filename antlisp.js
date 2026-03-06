@@ -118,13 +118,14 @@ class Compiler {
   // ── Register Allocation ──
 
   allocReg() {
-    for (let i = 0; i <= 7; i++) {
+    // r0 is reserved for return values, r7 for return address - never allocate them
+    for (let i = 1; i <= 6; i++) {
       if (!this.usedRegs.has(i)) {
         this.usedRegs.add(i);
         return `r${i}`;
       }
     }
-    throw new Error('Register exhaustion — all 8 in use. Reduce nesting or free variables.');
+    throw new Error('Register exhaustion — r1-r6 all in use (r0 reserved for return values, r7 for return address). Reduce nesting or free variables.');
   }
 
   allocSpecificReg(n) {
@@ -307,17 +308,19 @@ class Compiler {
     // Strategy: params go in the first available non-global registers.
     // The caller will SET these registers before CALL.
 
-    // Build param register assignments (first N free registers)
+    // Build param register assignments (first N free registers, but NOT r0)
+    // r0 is reserved for return values, so params start from r1 or higher.
+    // This prevents params from being clobbered by nested function calls.
     const paramRegs = [];
     for (let i = 0; i < params.length; i++) {
-      // Find a free register for this param
+      // Find a free register for this param (skip r0 - reserved for return value)
       let found = false;
-      for (let r = 0; r <= 7; r++) {
+      for (let r = 1; r <= 6; r++) {  // Start from r1, skip r0 and r7
         if (!this.globals.has([...this.globals.entries()].find(([, v]) => v === `r${r}`)?.[0]) &&
-            r !== parseInt(this.retRegister.slice(1)) &&
             !paramRegs.includes(`r${r}`)) {
           paramRegs.push(`r${r}`);
           this.bindings.set(params[i], `r${r}`);
+          this.usedRegs.add(r);  // Mark param register as in use!
           found = true;
           break;
         }
