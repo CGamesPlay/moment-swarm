@@ -1,0 +1,110 @@
+; ── SWARM FORAGER ────────────────────────────
+; Random walk to find food, dead reckoning to
+; navigate home. Pheromone marks food for others.
+; Hit play, then try improving it!
+
+; ── Registers ──
+.alias dx   r1           ; x displacement from nest
+.alias dy   r2           ; y displacement from nest
+.alias ret  r3           ; return address for CALL
+
+; ── Pheromone ──
+.const TRAIL CH_RED      ; marks food locations
+
+; ── Roles (visible in simulation viewer) ──
+.tag 0 foraging
+.tag 1 homing
+
+; ──────────────────────────────────────────────
+main:
+    CARRYING
+    JNE r0 0 go_home
+    TAG foraging
+
+; ── SEARCH: find food ─────────────────────────
+search:
+    SENSE FOOD
+    JNE r0 0 grab
+    SMELL TRAIL
+    JNE r0 0 step
+    RANDOM r0 4
+    ADD r0 1
+step:
+    CALL ret move_track
+    JMP main
+
+grab:
+    CALL ret move_track
+    PICKUP
+    MARK TRAIL 100
+    JMP main
+
+; ── GO HOME: dead reckon toward nest ──────────
+go_home:
+    TAG homing
+    SENSE NEST
+    JNE r0 0 deliver
+    RANDOM r0 4
+    JEQ r0 0 wander       ; 25% random to unstick walls
+    CALL ret home_dir
+    CALL ret move_track
+    JMP main
+wander:
+    RANDOM r0 4
+    ADD r0 1
+    CALL ret move_track
+    JMP main
+
+deliver:
+    CALL ret move_track
+    DROP
+    JMP main
+
+; ══════════════════════════════════════════════
+; SUBROUTINES — CALL ret <label>, return JMP ret
+; ══════════════════════════════════════════════
+
+; home_dir: set r0 = direction toward nest
+home_dir:
+    SET r4 dx
+    JGT dx 0 hd_dxp
+    SET r4 0
+    SUB r4 dx
+hd_dxp:
+    SET r5 dy
+    JGT dy 0 hd_dyp
+    SET r5 0
+    SUB r5 dy
+hd_dyp:
+    JGT r5 r4 hd_y
+    JGT dx 0 hd_w
+    SET r0 2
+    JMP ret
+hd_w:
+    SET r0 4
+    JMP ret
+hd_y:
+    JGT dy 0 hd_n
+    SET r0 3
+    JMP ret
+hd_n:
+    SET r0 1
+    JMP ret
+
+; move_track: MOVE r0, then update dx/dy
+move_track:
+    MOVE r0
+    JEQ r0 1 mt_n
+    JEQ r0 2 mt_e
+    JEQ r0 3 mt_s
+    SUB dx 1
+    JMP ret
+mt_n:
+    SUB dy 1
+    JMP ret
+mt_e:
+    ADD dx 1
+    JMP ret
+mt_s:
+    ADD dy 1
+    JMP ret
