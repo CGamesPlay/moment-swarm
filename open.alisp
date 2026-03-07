@@ -27,7 +27,7 @@
 (const S_LOST 1)
 (const S_RETURNING 2)
 
-(const EXPLORE_TIMEOUT 100)
+(const EXPLORE_TIMEOUT 400)
 
 ; ── Tags ──
 (define-role exploring 0)
