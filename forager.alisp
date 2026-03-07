@@ -20,11 +20,6 @@
 (const S_RETURNING 2)
 (const S_LOST 3)
 
-; ── Tags ──
-(define-role exploring 0)
-(define-role following 1)
-(define-role returning 2)
-(define-role lost 3)
 
 ; ══════════════════════════════════════════════
 ; MACROS
@@ -81,7 +76,7 @@
     ; ────────────────────────────────────────
     ((= state S_EXPLORING)
      (begin
-       (tag exploring)
+       (set-tag exploring)
 
        ; Check for food first
        (let ((food-dir (sense food)))
@@ -125,7 +120,7 @@
     ; ────────────────────────────────────────
     ((= state S_FOLLOWING)
      (begin
-       (tag following)
+       (set-tag following)
 
        ; Check for food first
        (let ((food-dir (sense food)))
@@ -162,7 +157,7 @@
     ; ────────────────────────────────────────
     ((= state S_RETURNING)
      (begin
-       (tag returning)
+       (set-tag returning)
 
        ; Check if at nest
        (let ((nest-dir (sense nest)))
@@ -203,7 +198,7 @@
     ; ────────────────────────────────────────
     ((= state S_LOST)
      (begin
-       (tag lost)
+       (set-tag lost)
 
        ; Check if at nest (lucky)
        (let ((nest-dir (sense nest)))

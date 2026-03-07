@@ -51,15 +51,6 @@ function runTests() {
              (else (move random))))`,
     r => r.includes('PROBE N') && r.includes('MOVE N') && r.includes('MOVE RANDOM'));
 
-  test('dispatch',
-    `(define-role forager 0)
-     (define-role scout 1)
-     (let ((role (mod (id) 2)))
-       (dispatch role
-         (forager (move n))
-         (scout (move s))))`,
-    r => r.includes('.tag 0 forager') && r.includes('TAG 0') && r.includes('TAG 1'));
-
   test('when/unless',
     `(let ((c (carrying?)))
        (when c (mark ch_red 50))
@@ -314,8 +305,8 @@ function runTests() {
     '(let ((amount 100)) (mark ch_red amount))',
     r => r.includes('MARK CH_RED'));
 
-  test('tag action',
-    '(tag 0)',
+  test('set-tag action',
+    '(set-tag 0)',
     r => r.includes('TAG 0'));
 
   test('move with all directions',
@@ -353,19 +344,6 @@ function runTests() {
   test('alias directive',
     '(alias counter r5) (move random)',
     r => r.includes('.alias counter r5') || r.includes('MOVE RANDOM'));
-
-  // --- Role dispatch edge cases ---
-  test('dispatch with more roles',
-    `(define-role forager 0)
-     (define-role scout 1)
-     (define-role guard 2)
-     (let ((role (mod (id) 3)))
-       (dispatch role
-         (forager (move n))
-         (scout (move e))
-         (guard (move s))))`,
-    r => r.includes('.tag 0 forager') && r.includes('.tag 1 scout') && 
-         r.includes('.tag 2 guard') && r.includes('TAG 0') && r.includes('TAG 1') && r.includes('TAG 2'));
 
   // --- Begin block edge cases ---
   test('begin with multiple expressions',

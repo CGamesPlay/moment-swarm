@@ -6,8 +6,6 @@
 (const TRAIL ch_red)
 
 ; ── Roles ──
-(define-role foraging 0)
-(define-role homing 1)
 
 ; ══════════════════════════════════════════════
 ; MACROS — inline at each call site
@@ -57,7 +55,7 @@
   (if (carrying?)
     ; ── GO HOME ──
     (begin
-      (tag homing)
+      (set-tag homing)
       (let ((nest-dir (sense nest)))
         (if (!= nest-dir 0)
           ; At nest — deliver
@@ -85,7 +83,7 @@
     
     ; ── SEARCH FOR FOOD ──
     (begin
-      (tag foraging)
+      (set-tag foraging)
       (let ((food-dir (sense food)))
         (if (!= food-dir 0)
           ; Found food — grab it

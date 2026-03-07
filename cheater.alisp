@@ -8,9 +8,6 @@
 (const TARGET_Y -10)
 
 ; ── Roles ──
-(define-role navigating 0)
-(define-role wandering 1)
-(define-role homing 2)
 
 ; ══════════════════════════════════════════════
 ; MACROS — inline at each call site
@@ -77,7 +74,7 @@
   (if (carrying?)
     ; ── CARRYING FOOD — GO HOME ──
     (begin
-      (tag homing)
+      (set-tag homing)
       (let ((nest-dir (sense nest)))
         (if (!= nest-dir 0)
           ; At nest — deliver and resume
@@ -100,7 +97,7 @@
     (if (= state 0)
       ; ── NAVIGATING TO TARGET ──
       (begin
-        (tag navigating)
+        (set-tag navigating)
         (let ((food-dir (sense food)))
           (if (!= food-dir 0)
             ; Found food along the way — grab it
@@ -124,7 +121,7 @@
 
       ; ── WANDERING AT TARGET ──
       (begin
-        (tag wandering)
+        (set-tag wandering)
         (let ((food-dir (sense food)))
           (if (!= food-dir 0)
             ; Found food — grab it

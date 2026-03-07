@@ -10,7 +10,7 @@ function tokenize(source) {
   let line = 1;
   let col = 1;
   let lineStart = 0;  // character index where current line starts
-  
+
   function makePos(startIdx) {
     // Calculate line/col for a given character index
     let l = 1, c = 1, ls = 0;
@@ -20,7 +20,7 @@ function tokenize(source) {
     }
     return { line: l, col: c, pos: startIdx };
   }
-  
+
   while (i < source.length) {
     const ch = source[i];
     if (ch === '\n') { line++; col = 1; lineStart = i + 1; i++; continue; }
@@ -38,9 +38,9 @@ function tokenize(source) {
       const startLine = line, startCol = col;
       let str = '';
       i++; col++;
-      while (i < source.length && source[i] !== '"') { 
+      while (i < source.length && source[i] !== '"') {
         if (source[i] === '\n') { line++; col = 1; } else { col++; }
-        str += source[i]; i++; 
+        str += source[i]; i++;
       }
       i++; col++;
       tokens.push({ type: 'string', value: str, pos: startPos, line: startLine, col: startCol });
@@ -124,7 +124,7 @@ class Compiler {
 
     this.macros = new Map();       // macro name -> { params: [...], body: [...] }
     this.constValues = new Map();  // const name -> resolved value (for inline substitution)
-    this.roles = [];
+    this.tags = [];
     this.aliases = [];
     this.loopStack = [];
     this.tagbodyStack = [];        // stack of { tags: Map<name, asmLabel> }
@@ -144,7 +144,7 @@ class Compiler {
   errorAt(message, node) {
     const loc = node || this.currentNode;
     const locStr = this.locInfo(loc);
-    
+
     // Build context from node stack
     let context = '';
     if (this.nodeStack.length > 0) {
@@ -156,7 +156,7 @@ class Compiler {
         return `${n.type} at ${this.locInfo(n)}`;
       }).join('\n    → ');
     }
-    
+
     return new CompileError(`${message}\n  at ${locStr}${context}`);
   }
 
@@ -224,8 +224,8 @@ class Compiler {
       if (this.isTarget(name)) return name.toUpperCase();
       if (name === '#t' || name === 'true') return '1';
       if (name === '#f' || name === 'false') return '0';
-      const role = this.roles.find(r => r.name === name);
-      if (role) return String(role.id);
+      const tag = this.tags.find(t => t.name === name);
+      if (tag) return String(tag.id);
       return name.toUpperCase();
     }
     throw this.errorAt(`Cannot resolve: ${JSON.stringify(node)}`, node);
@@ -246,21 +246,40 @@ class Compiler {
 
   // ── Compilation entry ──
 
-  compile(ast) {
-    // Pass 1: collect roles
-    for (const node of ast.body) {
-      if (node.type === 'list' && node.value.length > 0) {
-        const head = node.value[0];
-        if (head.type === 'symbol') {
-          if (head.value === 'define-role') this.collectRole(node.value);
+  // Recursively collect all set-tag usages to auto-allocate IDs
+  collectTagsFromAST(node, seen = new Set()) {
+    if (node.type === 'list' && node.value.length > 0) {
+      const head = node.value[0];
+      if (head.type === 'symbol' && head.value === 'set-tag') {
+        // (set-tag tagname)
+        if (node.value.length > 1 && node.value[1].type === 'symbol') {
+          const tagName = node.value[1].value;
+          if (!seen.has(tagName) && this.tags.findIndex(t => t.name === tagName) === -1) {
+            seen.add(tagName);
+            const id = this.tags.length;
+            if (id < 8) {  // Tags 0-7 only
+              this.tags.push({ name: tagName, id });
+            }
+          }
         }
       }
+      // Recurse into sub-expressions
+      for (let i = 1; i < node.value.length; i++) {
+        this.collectTagsFromAST(node.value[i], seen);
+      }
+    }
+  }
+
+  compile(ast) {
+    // Pass 1: collect tags from set-tag calls (auto-allocate)
+    for (const node of ast.body) {
+      this.collectTagsFromAST(node);
     }
 
     // Emit directives (constants are resolved inline, not emitted)
-    for (const r of this.roles) this.emit(`.tag ${r.id} ${r.name}`);
+    for (const t of this.tags) this.emit(`.tag ${t.id} ${t.name}`);
     for (const a of this.aliases) this.emit(`.alias ${a.name} ${a.reg}`);
-    if (this.roles.length || this.aliases.length) this.emit('');
+    if (this.tags.length || this.aliases.length) this.emit('');
 
     // Pass 2: compile
     for (const node of ast.body) {
@@ -451,24 +470,19 @@ class Compiler {
   }
 
 
-  collectRole(list) {
-    this.roles.push({ name: list[1].value, id: list[2].value });
-  }
-
   compileTopLevel(node) {
     if (node.type !== 'list' || node.value.length === 0) return;
     const head = node.value[0];
-    if (head.type !== 'symbol') { 
-      this.compileExpr(node); 
-      return; 
+    if (head.type !== 'symbol') {
+      this.compileExpr(node);
+      return;
     }
 
     switch (head.value) {
-      case 'define-role': return; // already collected
-      case 'defmacro':    return this.collectMacro(node.value);
-      case 'define':      throw this.errorAt('(define ...) is not supported — use (let ((var expr)) ...) instead', node);
-      case 'alias':       return this.compileAlias(node.value);
-      case 'const':       return this.compileConst(node.value);
+      case 'defmacro': return this.collectMacro(node.value);
+      case 'define': throw this.errorAt('(define ...) is not supported — use (let ((var expr)) ...) instead', node);
+      case 'alias': return this.compileAlias(node.value);
+      case 'const': return this.compileConst(node.value);
 
       default:
         this.compileExpr(node);
@@ -517,29 +531,29 @@ class Compiler {
     const op = head.value;
 
     switch (op) {
-      case 'if':       return this.compileIf(list, destReg);
-      case 'when':     return this.compileWhen(list);
-      case 'unless':   return this.compileUnless(list);
-      case 'cond':     return this.compileCond(list, destReg);
-      case 'begin':    return this.compileBegin(list, destReg);
-      case 'loop':     return this.compileLoop(list);
-      case 'while':    return this.compileWhile(list);
-      case 'dotimes':  return this.compileDotimes(list);
-      case 'break':    return this.compileBreak();
+      case 'if': return this.compileIf(list, destReg);
+      case 'when': return this.compileWhen(list);
+      case 'unless': return this.compileUnless(list);
+      case 'cond': return this.compileCond(list, destReg);
+      case 'begin': return this.compileBegin(list, destReg);
+      case 'loop': return this.compileLoop(list);
+      case 'while': return this.compileWhile(list);
+      case 'dotimes': return this.compileDotimes(list);
+      case 'break': return this.compileBreak();
       case 'continue': return this.compileContinue();
-      case 'tagbody':  return this.compileTagbody(list);
-      case 'go':       return this.compileGo(list);
+      case 'tagbody': return this.compileTagbody(list);
+      case 'go': return this.compileGo(list);
 
-      case 'let':      return this.compileLet(list, destReg);
-      case 'set!':     return this.compileSet(list);
+      case 'let': return this.compileLet(list, destReg);
+      case 'set!': return this.compileSet(list);
       case 'defmacro': this.collectMacro(list); return null;
 
-      case 'sense':    return this.compileSenseOp('SENSE', list, destReg);
-      case 'smell':    return this.compileSenseOp('SMELL', list, destReg);
-      case 'probe':    return this.compileSenseOp('PROBE', list, destReg);
-      case 'sniff':    return this.compileSniff(list, destReg);
-      case 'carrying?':return this.compileNullaryOp('CARRYING', destReg);
-      case 'id':       return this.compileNullaryOp('ID', destReg);
+      case 'sense': return this.compileSenseOp('SENSE', list, destReg);
+      case 'smell': return this.compileSenseOp('SMELL', list, destReg);
+      case 'probe': return this.compileSenseOp('PROBE', list, destReg);
+      case 'sniff': return this.compileSniff(list, destReg);
+      case 'carrying?': return this.compileNullaryOp('CARRYING', destReg);
+      case 'id': return this.compileNullaryOp('ID', destReg);
 
       case 'move': {
         const a = this.resolveArg(list[1]);
@@ -547,8 +561,8 @@ class Compiler {
         if (a.tempReg) this.freeReg(a.tempReg);
         return null;
       }
-      case 'pickup':   this.emit('  PICKUP'); return null;
-      case 'drop':     this.emit('  DROP'); return null;
+      case 'pickup': this.emit('  PICKUP'); return null;
+      case 'drop': this.emit('  DROP'); return null;
       case 'mark': {
         const ch = this.resolveArg(list[1]);
         const amt = this.resolveArg(list[2]);
@@ -557,7 +571,7 @@ class Compiler {
         if (amt.tempReg) this.freeReg(amt.tempReg);
         return null;
       }
-      case 'tag': {
+      case 'set-tag': {
         const t = this.resolveArg(list[1]);
         this.emit(`  TAG ${t.val}`);
         if (t.tempReg) this.freeReg(t.tempReg);
@@ -573,7 +587,6 @@ class Compiler {
       case 'lshift': case 'rshift': case 'random':
         return this.compileArith(list, destReg);
 
-      case 'dispatch': return this.compileDispatch(list);
       case 'comment':
         if (list.length > 1) this.emitComment(String(list[1].value));
         return null;
@@ -668,12 +681,12 @@ class Compiler {
     const op = list[0].value;
 
     const jmpOps = {
-      '=':  { t: 'JEQ', f: 'JNE' },
+      '=': { t: 'JEQ', f: 'JNE' },
       '!=': { t: 'JNE', f: 'JEQ' },
-      '>':  { t: 'JGT', f: null },
-      '<':  { t: 'JLT', f: null },
-      '>=': { t: null,  f: 'JLT' },
-      '<=': { t: null,  f: 'JGT' },
+      '>': { t: 'JGT', f: null },
+      '<': { t: 'JLT', f: null },
+      '>=': { t: null, f: 'JLT' },
+      '<=': { t: null, f: 'JGT' },
     };
 
     const info = jmpOps[op];
@@ -692,8 +705,8 @@ class Compiler {
     // jumping-on-true would not, swap then/else bodies and use the
     // direct single-instruction jump instead.
     if (hasElse &&
-        this.needsTrampoline(list[1], true) &&
-        !this.needsTrampoline(list[1], false)) {
+      this.needsTrampoline(list[1], true) &&
+      !this.needsTrampoline(list[1], false)) {
       const thenLabel = this.freshLabel('then');
       const endLabel = this.freshLabel('endif');
       // Jump directly to then-body when condition is true
@@ -934,12 +947,12 @@ class Compiler {
     const op = list[0].value;
 
     const jmpOps = {
-      '=':  { t: 'JEQ', f: 'JNE' },
+      '=': { t: 'JEQ', f: 'JNE' },
       '!=': { t: 'JNE', f: 'JEQ' },
-      '>':  { t: 'JGT', f: null },
-      '<':  { t: 'JLT', f: null },
-      '>=': { t: null,  f: 'JLT' },
-      '<=': { t: null,  f: 'JGT' },
+      '>': { t: 'JGT', f: null },
+      '<': { t: 'JLT', f: null },
+      '>=': { t: null, f: 'JLT' },
+      '<=': { t: null, f: 'JGT' },
     };
 
     if (jmpOps[op]) {
@@ -1003,29 +1016,6 @@ class Compiler {
     this.emit(`  SET ${reg} 1`);
     this.emitLabel(endLabel);
     return reg;
-  }
-
-  // ── dispatch ──
-
-  compileDispatch(list) {
-    const idReg = this.allocReg();
-    this.compileInto(list[1], idReg);
-    const endLabel = this.freshLabel('end_dispatch');
-    for (let i = 2; i < list.length; i++) {
-      const clause = list[i].value;
-      const roleName = clause[0].value;
-      const role = this.roles.find(r => r.name === roleName);
-      if (!role) throw this.errorAt(`Unknown role: ${roleName}`);
-      const nextLabel = this.freshLabel('next_role');
-      this.emit(`  JNE ${idReg} ${role.id} ${nextLabel}`);
-      this.emit(`  TAG ${role.id}`);
-      for (let j = 1; j < clause.length; j++) this.compileExpr(clause[j]);
-      this.emit(`  JMP ${endLabel}`);
-      this.emitLabel(nextLabel);
-    }
-    this.emitLabel(endLabel);
-    this.freeReg(idReg);
-    return null;
   }
 }
 

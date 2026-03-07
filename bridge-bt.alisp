@@ -20,12 +20,6 @@
 (const TRAIL_STRENGTH 100)
 (const SCAN_STEPS 40)
 
-; ── Tags ──
-(define-role exploring 0)
-(define-role lost 1)
-(define-role returning 2)
-(define-role scanning 3)
-(define-role backtracking 4)
 
 ; ══════════════════════════════════════════════
 ; MACROS (from packed-dr-bt.unit.alisp)
@@ -189,7 +183,7 @@
     ; EXPLORING
     ; ────────────────────────────────────────
     exploring
-    (tag exploring)
+    (set-tag exploring)
 
     ; Timeout — too long without food, go home
     (when (>= explore-age EXPLORE_TIMEOUT)
@@ -251,7 +245,7 @@
     ; explore-age = steps remaining in wall-follow
     ; ────────────────────────────────────────
     scanning
-    (tag scanning)
+    (set-tag scanning)
 
     ; Food check — grab even while scanning
     (let ((food-dir (sense food)))
@@ -298,7 +292,7 @@
     ; path = packed directions to pop
     ; ────────────────────────────────────────
     backtracking
-    (tag backtracking)
+    (set-tag backtracking)
 
     ; At nest — drop and explore
     (let ((nest-dir (sense nest)))
@@ -341,7 +335,7 @@
     ; LOST
     ; ────────────────────────────────────────
     lost
-    (tag lost)
+    (set-tag lost)
 
     ; Nest adjacent → back to exploring
     (let ((nest-dir (sense nest)))
@@ -369,7 +363,7 @@
     ; (entered after backtracking is exhausted)
     ; ────────────────────────────────────────
     returning
-    (tag returning)
+    (set-tag returning)
 
     ; At nest — drop and explore
     (let ((nest-dir (sense nest)))

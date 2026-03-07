@@ -41,10 +41,11 @@ node antlisp.js program.alisp > out.asm # save to file
 ### Top-Level Forms
 
 ```lisp
-(define-role name id)           ; emit .tag directive
 (const name value)              ; inline constant (no register)
 (alias name reg)                ; emit .alias
 ```
+
+**Tags are automatically allocated** from all `(set-tag name)` calls in the order they first appear in the program (0–7). There is no need to declare tags explicitly.
 
 ### Binding & Mutation
 
@@ -121,17 +122,7 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
 (move n)  (move (+ (random 4) 1))  ; compound expressions OK
 (pickup)  (drop)
 (mark ch_red (* timer 2))          ; compound amount OK
-(tag 0)
-```
-
-### Role Dispatch
-
-```lisp
-(define-role forager 0)
-(define-role scout 1)
-(dispatch (mod (id) 2)
-  (forager body...)
-  (scout body...))
+(set-tag tagname)                  ; set ant tag for viewer visualization (auto-allocated)
 ```
 
 ### Macros

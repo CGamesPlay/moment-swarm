@@ -23,11 +23,6 @@
 (const TRAIL_STRENGTH 100)
 (const SCAN_STEPS 40)
 
-; ── Tags ──
-(define-role exploring 0)
-(define-role lost 1)
-(define-role returning 2)
-(define-role scanning 3)
 
 ; ══════════════════════════════════════════════
 ; MACROS (from packed-dr.unit.alisp)
