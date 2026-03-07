@@ -11,12 +11,17 @@
 ;    whether the blocked direction has opened up (gap found).
 
 ; ── Registers ──
-(define dx 0 :reg r1)           ; x displacement from nest
-(define dy 0 :reg r2)           ; y displacement from nest
-(define dir 0 :reg r0)          ; current movement direction
-(define state 0 :reg r3)        ; current state
-(define steps 0 :reg r4)        ; steps remaining on current heading
-(define ticks 0 :reg r5)        ; ticks in current exploring run / blocked-dir in scanning
+; r0  dir     (required by packed-dr macros)
+; r1  homepos (packed dx/dy displacement from nest; bits 7:0 = dx, bits 15:8 = dy)
+; r2  state
+; r3  steps   (steps remaining on current heading; reused as blocked-dir in SCANNING)
+; r4  ticks   (ticks in current exploring run)
+; r5–r7 free
+(define dir    0 :reg r0)
+(define homepos 0 :reg r1)
+(define state  0 :reg r2)
+(define steps  0 :reg r3)
+(define ticks  0 :reg r4)
 
 ; ── Constants ──
 (const TRAIL_PH ch_red)
@@ -38,8 +43,105 @@
 (define-role scanning 3)
 
 ; ══════════════════════════════════════════════
-; MACROS
+; MACROS (from packed-dr.unit.alisp)
 ; ══════════════════════════════════════════════
+
+; Pack a signed integer into bits 7:0 of `packed`.
+(defmacro pack-dx! (packed dx)
+  (set! packed (and packed 0xFFFFFF00))
+  (set! packed (or  packed (and dx 0xFF))))
+
+; Pack a signed integer into bits 15:8 of `packed`.
+(defmacro pack-dy! (packed dy)
+  (set! packed (and packed 0xFFFF00FF))
+  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+
+; Unpack bits 7:0 into `out` as a signed 8-bit integer.
+(defmacro unpack-dx! (out packed)
+  (set! out (and packed 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Unpack bits 15:8 into `out` as a signed 8-bit integer.
+(defmacro unpack-dy! (out packed)
+  (set! out (and (rshift packed 8) 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Add 1 to the dx field of `packed`.
+(defmacro inc-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+; Subtract 1 from the dx field of `packed`.
+(defmacro dec-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+; Add 1 to the dy field of `packed`.
+(defmacro inc-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; Subtract 1 from the dy field of `packed`.
+(defmacro dec-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; Move in `dir` with wall check; update homepos dx/dy on success.
+; Requires globals: dir, homepos.
+(defmacro move-with-tracking-packed ()
+  (unless (= (probe dir) 1)
+    (move dir)
+    (cond ((= dir 1) (dec-dy! homepos))
+          ((= dir 2) (inc-dx! homepos))
+          ((= dir 3) (inc-dy! homepos))
+          ((= dir 4) (dec-dx! homepos)))))
+
+; Set dir toward nest based on homepos dx/dy.
+; Requires globals: dir, homepos.
+(defmacro home-dir-packed ()
+  (let ((dx 0)
+        (dy 0)
+        (abs-dx 0))
+    (unpack-dx! dx homepos)
+    (unpack-dy! dy homepos)
+    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
+    (if (< dy 0)
+      (begin
+        (set! dy (- dy))
+        (if (> dy abs-dx)
+          (set! dir 3)
+          (if (> dx 0)
+            (set! dir 4)
+            (set! dir 2))))
+      (if (> dy abs-dx)
+        (set! dir 1)
+        (if (> dx 0)
+          (set! dir 4)
+          (set! dir 2))))))
+
+; ── Local macros ──────────────────────────────────────────────
 
 ; Opposite cardinal direction: N↔S, E↔W
 (defmacro invert-dir (d)
@@ -48,26 +150,6 @@
 ; Turn right: N→E, E→S, S→W, W→N
 (defmacro turn-right (d)
   (+ (mod d 4) 1))
-
-; Move in 'dir' with wall check and displacement tracking
-(defmacro move-with-tracking ()
-  (unless (= (probe dir) 1)
-    (move dir)
-    (cond ((= dir 1) (set! dy (- dy 1)))
-          ((= dir 2) (set! dx (+ dx 1)))
-          ((= dir 3) (set! dy (+ dy 1)))
-          ((= dir 4) (set! dx (- dx 1))))))
-
-; Set dir toward nest based on accumulated dx/dy.
-(defmacro home-dir ()
-  (let ((scratch (if (< dx 0) (- dx) dx)))
-    (if (< dy 0)
-      (if (> (- dy) scratch)
-        (set! dir 3)
-        (if (> dx 0) (set! dir 4) (set! dir 2)))
-      (if (> dy scratch)
-        (set! dir 1)
-        (if (> dx 0) (set! dir 4) (set! dir 2))))))
 
 ; Pick a random direction, rotating past walls
 (defmacro pick-random-nonwall ()
@@ -81,7 +163,7 @@
 
 ; Navigate home: dead-reckon first, trail fallback when blocked.
 (defmacro navigate-home ()
-  (home-dir)
+  (home-dir-packed)
   (when (= (probe dir) 1)
     (let ((scratch (smell TRAIL_PH)))
       (if (!= scratch 0)
@@ -112,7 +194,7 @@
        (let ((scratch (sense food)))
          (when (!= scratch 0)
            (set! dir scratch)
-           (move-with-tracking)
+           (move-with-tracking-packed)
            (pickup)
            (set! state S_RETURNING)
            (set! steps 0)
@@ -137,7 +219,7 @@
        ; Wall check — if blocked, enter SCANNING state
        (when (= (probe dir) 1)
          ; Save the direction we want to go (through the wall)
-         ; ticks register is reused as blocked-dir in scanning state
+         ; steps register is reused as blocked-dir in scanning state
          (let ((scratch dir))
            (set! state S_SCANNING)
            ; Pick perpendicular direction (random left or right turn)
@@ -149,17 +231,17 @@
              (set! dir (invert-dir dir))
              (when (= (probe dir) 1)
                (set! dir (invert-dir scratch))))
-           (set! ticks scratch))     ; save blocked dir in ticks
-         (set! steps SCAN_STEPS)
+           (set! steps scratch))     ; save blocked dir in steps
+         (set! ticks SCAN_STEPS)
          (break))
 
-       (move-with-tracking)
+       (move-with-tracking-packed)
        (set! steps (- steps 1))
        (set! ticks (+ ticks 1))))
 
     ; ────────────────────────────────────────
     ; SCANNING — walk along wall, probing for gap
-    ; ticks = the direction we want to go through
+    ; steps = the direction we want to go through
     ; ────────────────────────────────────────
     ((= state S_SCANNING)
      (loop
@@ -169,7 +251,7 @@
        (let ((scratch (sense food)))
          (when (!= scratch 0)
            (set! dir scratch)
-           (move-with-tracking)
+           (move-with-tracking-packed)
            (pickup)
            (set! state S_RETURNING)
            (set! steps 0)
@@ -179,20 +261,20 @@
        (mark TRAIL_PH TRAIL_STRENGTH)
 
        ; Check if the blocked direction is now open (gap!)
-       (when (!= (probe ticks) 1)
+       (when (!= (probe steps) 1)
          ; Gap found — go through!
-         (set! dir ticks)
-         (set! ticks 0)
+         (set! dir steps)
+         (set! steps 0)
          (set! state S_EXPLORING)
-         (set! steps (+ (random 4) 1))
-         (move-with-tracking)
+         (set! ticks (+ (random 4) 1))
+         (move-with-tracking-packed)
          (break))
 
        ; Scan limit reached — go back to exploring
-       (when (<= steps 0)
-         (set! ticks 0)
-         (set! state S_EXPLORING)
+       (when (<= ticks 0)
          (set! steps 0)
+         (set! state S_EXPLORING)
+         (set! ticks 0)
          (break))
 
        ; Keep walking along wall
@@ -202,8 +284,8 @@
          (when (= (probe dir) 1)
            (pick-random-nonwall)))
 
-       (move-with-tracking)
-       (set! steps (- steps 1))))
+       (move-with-tracking-packed)
+       (set! ticks (- ticks 1))))
 
     ; ────────────────────────────────────────
     ; LOST
@@ -230,7 +312,7 @@
 
        ; Navigate home
        (navigate-home)
-       (move-with-tracking)))
+       (move-with-tracking-packed)))
 
     ; ────────────────────────────────────────
     ; RETURNING
@@ -243,10 +325,9 @@
        (let ((scratch (sense nest)))
          (when (!= scratch 0)
            (set! dir scratch)
-           (move-with-tracking)
+           (move-with-tracking-packed)
            (drop)
-           (set! dx 0)
-           (set! dy 0)
+           (set! homepos 0)
            (set! ticks 0)
            (set! state S_EXPLORING)
            (set! steps 0)
@@ -257,6 +338,6 @@
 
        ; Dead-reckon home; follow trail when blocked
        (navigate-home)
-       (move-with-tracking)))))
+       (move-with-tracking-packed)))))
 
 ; vim:ft=lisp:sw=2

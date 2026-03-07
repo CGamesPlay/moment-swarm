@@ -43,6 +43,8 @@ To compile an alisp file to antssembly, use `argc compile file.alisp`. To compil
 
 The language is very limited, due to only having 8 registers and no stack. We may wish to improve compiler optimizations if it becomes difficult to create the kinds of programs we want to.
 
+Avoid using pinned registers, instead prefer to use a let binding, which is mutable and more narrowly scoped.
+
 ## ISA notes
 
 - SMELL, SNIFF, and SENSE work at a distance of 1 cell only. A wall never has pheremone. Pheremone on the other side of a wall doesn't matter, because it's further than 1 cell away.
