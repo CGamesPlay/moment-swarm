@@ -25,13 +25,14 @@
   (+ (mod (+ d 1) 4) 1))
 
 ; move-with-tracking: move in 'dir', update dx/dy
-; Tracks displacement from nest: positive means we moved away in that axis
+; Checks for wall first — if blocked, skips both move and tracking update
 (defmacro move-with-tracking ()
-  (move dir)
-  (cond ((= dir 1) (set! dy (- dy 1)))   ; N: dy becomes more negative (went north)
-        ((= dir 2) (set! dx (+ dx 1)))   ; E: dx becomes positive (went east)
-        ((= dir 3) (set! dy (+ dy 1)))   ; S: dy becomes positive (went south)
-        ((= dir 4) (set! dx (- dx 1))))) ; W: dx becomes negative (went west)
+  (unless (= (probe dir) 1)
+    (move dir)
+    (cond ((= dir 1) (set! dy (- dy 1)))   ; N
+          ((= dir 2) (set! dx (+ dx 1)))   ; E
+          ((= dir 3) (set! dy (+ dy 1)))   ; S
+          ((= dir 4) (set! dx (- dx 1))))))
 
 ; home-dir: set 'dir' = direction toward nest based on dx/dy
 ; Displacement convention (from move-with-tracking):
@@ -86,7 +87,7 @@
                   (home-dir)
                   (move-with-tracking))))
             ; Mark trail at full strength
-            (mark TRAIL 255)
+            (mark TRAIL 100)
             (set! timer (- timer 1))))))
     
     ; ── SEARCH FOR FOOD ──
