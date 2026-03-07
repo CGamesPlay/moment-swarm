@@ -332,11 +332,15 @@ function runTests() {
          r.includes('MOVE W') && r.includes('MOVE NW'));
 
   // --- Low-level escape hatches ---
-  test('label and goto',
-    `(label start)
-     (move random)
-     (goto start)`,
-    r => r.includes('start:') && r.includes('JMP start'));
+  test('tagbody and go',
+    `(tagbody
+       start
+       (move random)
+       (go start))`,
+    r => {
+      const m = r.match(/(__tag_start_\d+):/);
+      return m && r.includes(`JMP ${m[1]}`) && r.includes('MOVE RANDOM');
+    });
 
   test('comment',
     '(comment "this is a test") (move random)',
@@ -661,10 +665,118 @@ function runTests() {
     '(let ((val (+ 50 50))) (mark ch_red val))',
     r => r.includes('ADD') && r.includes('MARK CH_RED'));
 
-  // --- Labels with special names ---
-  test('label with underscore',
-    '(label my_label) (move random) (goto my_label)',
-    r => r.includes('my_label:') && r.includes('JMP my_label'));
+  // --- tagbody / go ---
+  test('tagbody with underscore tag',
+    `(tagbody
+       my_label
+       (move random)
+       (go my_label))`,
+    r => {
+      const m = r.match(/(__tag_my_label_\d+):/);
+      return m && r.includes(`JMP ${m[1]}`);
+    });
+
+  test('tagbody: multiple tags',
+    `(tagbody
+       first
+       (move n)
+       second
+       (move s)
+       third
+       (move e))`,
+    r => r.includes('MOVE N') && r.includes('MOVE S') && r.includes('MOVE E') &&
+         /__tag_first_\d+:/.test(r) && /__tag_second_\d+:/.test(r) && /__tag_third_\d+:/.test(r));
+
+  test('tagbody: go jumps backward',
+    `(let ((x 0))
+       (tagbody
+         top
+         (set! x (+ x 1))
+         (when (< x 5)
+           (go top))
+         (move random)))`,
+    r => {
+      const m = r.match(/(__tag_top_\d+):/);
+      return m && r.includes(`JMP ${m[1]}`) && r.includes('ADD');
+    });
+
+  test('tagbody: go jumps forward',
+    `(tagbody
+       (go skip)
+       (move n)
+       skip
+       (move s))`,
+    r => {
+      const m = r.match(/(__tag_skip_\d+):/);
+      return m && r.includes(`JMP ${m[1]}`) && r.includes('MOVE N') && r.includes('MOVE S');
+    });
+
+  test('tagbody: two separate tagbodies with same tag names do not collide',
+    `(tagbody
+       start
+       (move n)
+       (go start))
+     (tagbody
+       start
+       (move s)
+       (go start))`,
+    r => {
+      const labels = r.match(/__tag_start_\d+:/g) || [];
+      return labels.length === 2 && labels[0] !== labels[1];
+    });
+
+  test('nested tagbody: go resolves to innermost',
+    `(tagbody
+       point
+       (move n)
+       (tagbody
+         point
+         (move s)
+         (go point)))`,
+    r => {
+      // The go should resolve to the inner tagbody's tag, not the outer
+      const labels = r.match(/__tag_point_(\d+):/g) || [];
+      if (labels.length !== 2) return false;
+      // Extract the inner label (the second one in source order)
+      const innerMatch = labels[1].match(/__tag_point_(\d+):/);
+      const innerLabel = `__tag_point_${innerMatch[1]}`;
+      return r.includes(`JMP ${innerLabel}`);
+    });
+
+  test('nested tagbody: go can reach outer tag',
+    `(tagbody
+       outer
+       (move n)
+       (tagbody
+         (move s)
+         (go outer)))`,
+    r => {
+      const outerMatch = r.match(/(__tag_outer_\d+):/);
+      return outerMatch && r.includes(`JMP ${outerMatch[1]}`);
+    });
+
+  // Error cases for tagbody/go
+  (function() {
+    let caught = false;
+    try {
+      compileAntLisp('(go nowhere)');
+    } catch (e) {
+      caught = e.message.includes('no such tag');
+    }
+    console.log(`${caught ? '✓' : '✗'} go: error on unknown tag`);
+    if (caught) passed++; else failed++;
+  })();
+
+  (function() {
+    let caught = false;
+    try {
+      compileAntLisp('(tagbody dup (move n) dup (move s))');
+    } catch (e) {
+      caught = e.message.includes('Duplicate tag');
+    }
+    console.log(`${caught ? '✓' : '✗'} tagbody: error on duplicate tag`);
+    if (caught) passed++; else failed++;
+  })();
 
   // --- Multiple break/continue ---
   test('multiple break conditions',
@@ -750,9 +862,9 @@ function runTests() {
     r => r.includes('RANDOM') && r.includes('ADD') && r.includes('MOVE'));
 
   test('macro with one param',
-    `(defmacro go (dir)
+    `(defmacro step (dir)
        (move dir))
-     (go n)`,
+     (step n)`,
     r => r.includes('MOVE N'));
 
   test('macro with multiple params',
@@ -762,9 +874,9 @@ function runTests() {
     r => r.includes('MARK CH_RED 100'));
 
   test('macro with expression param',
-    `(defmacro go (dir)
+    `(defmacro step (dir)
        (move dir))
-     (go (+ (random 4) 1))`,
+     (step (+ (random 4) 1))`,
     r => r.includes('RANDOM') && r.includes('ADD') && r.includes('MOVE'));
 
   test('macro with multi-statement body',
@@ -806,24 +918,25 @@ function runTests() {
       return unique.size === labels.length;
     });
 
-  test('macro with explicit label/goto - freshened',
+  test('macro with tagbody/go - freshened',
     `(defmacro skip-if-carrying ()
-       (when (carrying?)
-         (goto done))
-       (move n)
-       (label done))
+       (tagbody
+         (when (carrying?)
+           (go done))
+         (move n)
+         done))
      (skip-if-carrying) (skip-if-carrying)`,
     r => {
-      // Should have two distinct "done" labels
-      const doneLabels = r.match(/__skip-if-carrying_\d+_done:/g) || [];
+      // Should have two distinct "done" labels (freshened by compileTagbody)
+      const doneLabels = r.match(/__tag_done_\d+:/g) || [];
       return doneLabels.length === 2 && doneLabels[0] !== doneLabels[1];
     });
 
   test('nested macro calls',
-    `(defmacro go (dir)
+    `(defmacro step (dir)
        (move dir))
      (defmacro wander ()
-       (go (+ (random 4) 1)))
+       (step (+ (random 4) 1)))
      (wander)`,
     r => r.includes('RANDOM') && r.includes('MOVE'));
 
@@ -1052,9 +1165,10 @@ function runTests() {
 
   test('dead-store: does NOT eliminate when label intervenes',
     `(let ((tmp 0))
-       (label target)
-       (set! tmp 42)
-       (move random))`,
+       (tagbody
+         target
+         (set! tmp 42)
+         (move random)))`,
     r => {
       // A label between the two SETs means the first might be a jump
       // target — it must NOT be eliminated.

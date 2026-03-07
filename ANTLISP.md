@@ -161,7 +161,7 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 **Key properties:**
 - **Hygienic**: Free variables in the macro body resolve at the **definition site**, not the call site. A caller's `let` variable with the same name won't accidentally shadow the macro's reference.
 - **Parameters**: Evaluated at the call site, then bound by name inside the macro. Variable args alias the caller's register (allowing `set!`); literal/constant args are inlined.
-- **Hygienic labels**: `(label foo)` and `(goto foo)` inside macros get freshened at each expansion site to avoid collisions
+- **Hygienic tags**: `tagbody` tags and `(go ...)` inside macros get freshened at each expansion site to avoid collisions
 - **Multi-statement bodies**: All forms in the body are emitted inline
 
 ```lisp
@@ -172,14 +172,15 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
       (move dir)
       (pickup))))
 
-;; Macro with explicit labels (freshened per expansion)
+;; Macro with tagbody/go (freshened per expansion)
 (defmacro skip-if-carrying ()
-  (when (carrying?)
-    (goto done))
-  (move n)
-  (label done))
+  (tagbody
+    (when (carrying?)
+      (go done))
+    (move n)
+    done))
 
-;; Safe: two calls get distinct labels
+;; Safe: two calls get distinct tags
 (skip-if-carrying)
 (skip-if-carrying)
 
@@ -192,12 +193,32 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
     (bump)))   ; increments outer counter (r0), not inner (r1)
 ```
 
-### Low-Level Escape Hatches
+### Low-Level Control Flow
 
 ```lisp
-(label my-label)                ; emit a label
-(goto my-label)                 ; JMP to label
+(tagbody                        ; scoped label block
+  tag-name                      ;   bare symbol = label
+  (expr ...)                    ;   interleaved code
+  (go tag-name))                ;   jump to tag (validated at compile time)
+
 (comment "text")                ; emit ; text
+```
+
+`tagbody` tags are scoped — two separate `tagbody` forms with the same
+tag name never collide. `(go name)` is validated at compile time and
+must refer to a tag in an enclosing `tagbody`. Inside macros, each
+expansion gets its own fresh tags automatically.
+
+```lisp
+;; Example: manual retry loop using tagbody
+(tagbody
+  retry
+  (let ((dir (sense food)))
+    (when (= dir 0)
+      (move (+ (random 4) 1))
+      (go retry))
+    (move dir)
+    (pickup)))
 ```
 
 ---

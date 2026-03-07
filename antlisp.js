@@ -127,6 +127,7 @@ class Compiler {
     this.roles = [];
     this.aliases = [];
     this.loopStack = [];
+    this.tagbodyStack = [];        // stack of { tags: Map<name, asmLabel> }
     this.currentNode = null;       // track current AST node for error messages
     this.nodeStack = [];           // stack of nodes for context
   }
@@ -431,37 +432,14 @@ class Compiler {
     return result;
   }
 
-  // Recursively freshen (label ...) and (goto ...) names in an AST node
+  // Recursively freshen AST nodes for macro expansion.
+  // tagbody/go don't need freshening here — compileTagbody always generates
+  // unique assembly labels via freshLabel(), and compileGo resolves tags
+  // via the tagbodyStack at compile time.
   freshenLabels(node, labelPrefix) {
     if (node.type !== 'list') return node;
     const list = node.value;
     if (list.length === 0) return node;
-
-    const head = list[0];
-
-    // Handle (label foo) — freshen the label name
-    if (head.type === 'symbol' && head.value === 'label' && list.length >= 2) {
-      const labelName = list[1].value;
-      const freshLabel = `${labelPrefix}_${labelName}`;
-      return {
-        type: 'list',
-        value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
-        line: node.line,
-        col: node.col
-      };
-    }
-
-    // Handle (goto foo) — freshen the label name
-    if (head.type === 'symbol' && head.value === 'goto' && list.length >= 2) {
-      const labelName = list[1].value;
-      const freshLabel = `${labelPrefix}_${labelName}`;
-      return {
-        type: 'list',
-        value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
-        line: node.line,
-        col: node.col
-      };
-    }
 
     // Recurse into list elements
     return {
@@ -549,8 +527,8 @@ class Compiler {
       case 'dotimes':  return this.compileDotimes(list);
       case 'break':    return this.compileBreak();
       case 'continue': return this.compileContinue();
-      case 'goto':     this.emit(`  JMP ${list[1].value}`); return null;
-      case 'label':    this.emitLabel(list[1].value); return null;
+      case 'tagbody':  return this.compileTagbody(list);
+      case 'go':       return this.compileGo(list);
 
       case 'let':      return this.compileLet(list, destReg);
       case 'set!':     return this.compileSet(list);
@@ -845,6 +823,53 @@ class Compiler {
     if (!this.loopStack.length) throw this.errorAt('continue outside loop');
     this.emit(`  JMP ${this.loopStack[this.loopStack.length - 1].top}`);
     return null;
+  }
+
+  // ── tagbody / go ──
+
+  compileTagbody(list) {
+    // Scan body for tags (bare symbols at top level of tagbody)
+    const tags = new Map();  // tagName → freshened assembly label
+    for (let i = 1; i < list.length; i++) {
+      const item = list[i];
+      if (item.type === 'symbol') {
+        const name = item.value;
+        if (tags.has(name)) {
+          throw this.errorAt(`Duplicate tag '${name}' in tagbody`, item);
+        }
+        tags.set(name, this.freshLabel(`tag_${name}`));
+      }
+    }
+
+    // Push tag scope
+    this.tagbodyStack.push({ tags });
+
+    // Emit body — tags become labels, forms get compiled
+    for (let i = 1; i < list.length; i++) {
+      const item = list[i];
+      if (item.type === 'symbol' && tags.has(item.value)) {
+        this.emitLabel(tags.get(item.value));
+      } else {
+        this.compileExpr(item);
+      }
+    }
+
+    // Pop tag scope
+    this.tagbodyStack.pop();
+    return null;
+  }
+
+  compileGo(list) {
+    const tagName = list[1].value;
+    // Search tagbodyStack from innermost to outermost
+    for (let i = this.tagbodyStack.length - 1; i >= 0; i--) {
+      const scope = this.tagbodyStack[i];
+      if (scope.tags.has(tagName)) {
+        this.emit(`  JMP ${scope.tags.get(tagName)}`);
+        return null;
+      }
+    }
+    throw this.errorAt(`(go ${tagName}): no such tag in any enclosing tagbody`, list[1]);
   }
 
   // ── Arithmetic ──
