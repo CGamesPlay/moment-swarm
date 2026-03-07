@@ -17,7 +17,6 @@
 (define state 0 :reg r3)        ; current state
 (define steps 0 :reg r4)        ; steps remaining on current heading
 (define ticks 0 :reg r5)        ; ticks in current exploring run / blocked-dir in scanning
-(define scratch 0 :reg r6)      ; reusable scratch register
 
 ; ── Constants ──
 (const TRAIL_PH ch_red)
@@ -61,14 +60,14 @@
 
 ; Set dir toward nest based on accumulated dx/dy.
 (defmacro home-dir ()
-  (if (< dx 0) (set! scratch (- dx)) (set! scratch dx))
-  (if (< dy 0)
-    (if (> (- dy) scratch)
-      (set! dir 3)
-      (if (> dx 0) (set! dir 4) (set! dir 2)))
-    (if (> dy scratch)
-      (set! dir 1)
-      (if (> dx 0) (set! dir 4) (set! dir 2)))))
+  (let ((scratch (if (< dx 0) (- dx) dx)))
+    (if (< dy 0)
+      (if (> (- dy) scratch)
+        (set! dir 3)
+        (if (> dx 0) (set! dir 4) (set! dir 2)))
+      (if (> dy scratch)
+        (set! dir 1)
+        (if (> dx 0) (set! dir 4) (set! dir 2))))))
 
 ; Pick a random direction, rotating past walls
 (defmacro pick-random-nonwall ()
@@ -84,10 +83,10 @@
 (defmacro navigate-home ()
   (home-dir)
   (when (= (probe dir) 1)
-    (set! scratch (smell TRAIL_PH))
-    (if (!= scratch 0)
-      (set! dir scratch)
-      (pick-random-nonwall))
+    (let ((scratch (smell TRAIL_PH)))
+      (if (!= scratch 0)
+        (set! dir scratch)
+        (pick-random-nonwall)))
     (when (= (probe dir) 1)
       (pick-random-nonwall))))
 
@@ -110,14 +109,14 @@
          (break))
 
        ; Food check — grab and switch to returning
-       (set! scratch (sense food))
-       (when (!= scratch 0)
-         (set! dir scratch)
-         (move-with-tracking)
-         (pickup)
-         (set! state S_RETURNING)
-         (set! steps 0)
-         (break))
+       (let ((scratch (sense food)))
+         (when (!= scratch 0)
+           (set! dir scratch)
+           (move-with-tracking)
+           (pickup)
+           (set! state S_RETURNING)
+           (set! steps 0)
+           (break)))
 
        ; Mark trail breadcrumb
        (mark TRAIL_PH TRAIL_STRENGTH)
@@ -125,32 +124,32 @@
        ; Pick new heading when counter runs out
        (when (<= steps 0)
          ; DELIVERING pheromone → head opposite (toward food sources)
-         (set! scratch (sniff DELIVERING_PH here))
-         (if (!= scratch 0)
-           (begin
-             (set! dir (invert-dir (smell DELIVERING_PH)))
-             (set! steps (+ (random 4) 1)))
-           ; No delivering — random
-           (begin
-             (pick-random-nonwall)
-             (set! steps (+ (random 4) 1)))))
+         (let ((scratch (sniff DELIVERING_PH here)))
+           (if (!= scratch 0)
+             (begin
+               (set! dir (invert-dir (smell DELIVERING_PH)))
+               (set! steps (+ (random 4) 1)))
+             ; No delivering — random
+             (begin
+               (pick-random-nonwall)
+               (set! steps (+ (random 4) 1))))))
 
        ; Wall check — if blocked, enter SCANNING state
        (when (= (probe dir) 1)
          ; Save the direction we want to go (through the wall)
          ; ticks register is reused as blocked-dir in scanning state
-         (set! scratch dir)
-         (set! state S_SCANNING)
-         ; Pick perpendicular direction (random left or right turn)
-         (if (< (random 2) 1)
-           (set! dir (turn-right scratch))
-           (set! dir (invert-dir (turn-right scratch))))
-         ; If perpendicular is also blocked, try the other one
-         (when (= (probe dir) 1)
-           (set! dir (invert-dir dir))
+         (let ((scratch dir))
+           (set! state S_SCANNING)
+           ; Pick perpendicular direction (random left or right turn)
+           (if (< (random 2) 1)
+             (set! dir (turn-right scratch))
+             (set! dir (invert-dir (turn-right scratch))))
+           ; If perpendicular is also blocked, try the other one
            (when (= (probe dir) 1)
-             (set! dir (invert-dir scratch))))
-         (set! ticks scratch)     ; save blocked dir in ticks
+             (set! dir (invert-dir dir))
+             (when (= (probe dir) 1)
+               (set! dir (invert-dir scratch))))
+           (set! ticks scratch))     ; save blocked dir in ticks
          (set! steps SCAN_STEPS)
          (break))
 
@@ -167,14 +166,14 @@
        (tag scanning)
 
        ; Food check — grab even while scanning
-       (set! scratch (sense food))
-       (when (!= scratch 0)
-         (set! dir scratch)
-         (move-with-tracking)
-         (pickup)
-         (set! state S_RETURNING)
-         (set! steps 0)
-         (break))
+       (let ((scratch (sense food)))
+         (when (!= scratch 0)
+           (set! dir scratch)
+           (move-with-tracking)
+           (pickup)
+           (set! state S_RETURNING)
+           (set! steps 0)
+           (break)))
 
        ; Mark trail
        (mark TRAIL_PH TRAIL_STRENGTH)
@@ -214,20 +213,20 @@
        (tag lost)
 
        ; Nest adjacent → back to exploring
-       (set! scratch (sense nest))
-       (when (!= scratch 0)
-         (set! ticks 0)
-         (set! state S_EXPLORING)
-         (set! steps 0)
-         (break))
+       (let ((scratch (sense nest)))
+         (when (!= scratch 0)
+           (set! ticks 0)
+           (set! state S_EXPLORING)
+           (set! steps 0)
+           (break)))
 
        ; Delivering trail found → back to exploring
-       (set! scratch (sniff DELIVERING_PH here))
-       (when (!= scratch 0)
-         (set! ticks 0)
-         (set! state S_EXPLORING)
-         (set! steps 0)
-         (break))
+       (let ((scratch (sniff DELIVERING_PH here)))
+         (when (!= scratch 0)
+           (set! ticks 0)
+           (set! state S_EXPLORING)
+           (set! steps 0)
+           (break)))
 
        ; Navigate home
        (navigate-home)
@@ -241,17 +240,17 @@
        (tag returning)
 
        ; At nest — drop and explore
-       (set! scratch (sense nest))
-       (when (!= scratch 0)
-         (set! dir scratch)
-         (move-with-tracking)
-         (drop)
-         (set! dx 0)
-         (set! dy 0)
-         (set! ticks 0)
-         (set! state S_EXPLORING)
-         (set! steps 0)
-         (break))
+       (let ((scratch (sense nest)))
+         (when (!= scratch 0)
+           (set! dir scratch)
+           (move-with-tracking)
+           (drop)
+           (set! dx 0)
+           (set! dy 0)
+           (set! ticks 0)
+           (set! state S_EXPLORING)
+           (set! steps 0)
+           (break)))
 
        ; Mark delivering trail
        (mark DELIVERING_PH 100)
