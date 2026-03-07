@@ -28,17 +28,19 @@
         ((= dir 4) (set! dx (- dx 1))))) ; W
 
 ; home-dir: set 'dir' = direction toward nest based on dx/dy
+; NOTE: matches brain.ant which uses r4 (timer) as abs_dx, clobbering timer
 (defmacro home-dir ()
-  (let ((abs-dx dx)
-        (abs-dy dy))
-    ; abs-dx = |dx|
+  ; Use timer as abs_dx (matches brain.ant clobbering r4)
+  (set! timer dx)
+  (let ((abs-dy dy))
+    ; timer = |dx|
     (when (<= dx 0)
-      (set! abs-dx (- dx)))
+      (set! timer (- dx)))
     ; abs-dy = |dy|  
     (when (<= dy 0)
       (set! abs-dy (- dy)))
     ; pick axis with larger displacement
-    (if (> abs-dy abs-dx)
+    (if (> abs-dy timer)
       ; Y-axis dominant
       (if (> dy 0)
         (set! dir 1)    ; N (dy > 0 means south of nest, go north)
@@ -94,15 +96,11 @@
             (move-with-tracking)
             (pickup)
             (set! timer 127))
-          ; No food — follow trail 75%, wander 25%
+          ; No food — follow trail if detected, else random
           (begin
-            (let ((rnd (random 4)))
-              (if (!= rnd 0)
-                ; 75%: try to follow trail
-                (let ((trail-dir (smell TRAIL)))
-                  (if (!= trail-dir 0)
-                    (set! dir trail-dir)
-                    (set! dir (+ (random 4) 1))))
-                ; 25%: wander randomly
-                (set! dir (+ (random 4) 1))))
+            (let ((trail-dir (smell TRAIL)))
+              (if (!= trail-dir 0)
+                (set! dir trail-dir)
+                (begin
+                  (set! dir (+ (random 4) 1)))))
             (move-with-tracking)))))))

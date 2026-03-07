@@ -18,6 +18,15 @@ compile() {
 	fi
 }
 
+# @cmd Run an alisp file through the simulator
+# @arg  file!         alisp file
+# @option -m --map    Run only a specific map (e.g. "open-38bs6g")
+test() {
+	local asm
+	asm="$(node antlisp.js "${argc_file:?}")" || exit $?
+	echo "$asm" | node run.js ${argc_map+-m "$argc_map"}
+}
+
 # @cmd Run compiler tests
 selftest() {
 	node antlisp.test.js
