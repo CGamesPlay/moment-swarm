@@ -31,7 +31,7 @@
 ;
 ;   (home-dir-packed)           sets dir toward nest from packed dx/dy
 ;                               requires globals: dir, packed
-;                               31 instructions, 4 scratch regs (r2–r5)
+;                               31 instructions, 3 scratch regs (r2–r4)
 ;
 ; ── Register budget (when both macros are used together) ────
 ;   r0  dir         (caller-assigned)
@@ -39,10 +39,9 @@
 ;   r2  scratch     (tmp byte / unpacked dx)
 ;   r3  scratch     (tmp packed word / unpacked dy)
 ;   r4  scratch     (abs-dx; home-dir-packed only)
-;   r5  scratch     (abs-dy; home-dir-packed only)
 ;   ──  ──────────────────────────────────────────────────
-;   6 registers consumed, 2 free (r6, r7) for caller use
-;   86 instructions for one expansion of each macro
+;   5 registers consumed, 3 free (r5, r6, r7) for caller use
+;   89 instructions for one expansion of each macro
 ;
 ; ── Testing note ────────────────────────────────────────────
 ; MOVE is an action opcode that ends the tick, so displacement
@@ -129,17 +128,24 @@
 ; Requires globals: dir, packed.
 (defmacro home-dir-packed ()
   (let ((dx 0)
-        (dy 0))
+        (dy 0)
+        (abs-dx 0))
     (unpack-dx! dx packed)
     (unpack-dy! dy packed)
-    (let ((abs-dx (if (< dx 0) (- dx) dx)))
-      (if (> (if (< dy 0) (- dy) dy) abs-dx)
-        (if (> dy 0)
-          (set! dir 1)      ; went south → return north
-          (set! dir 3))     ; went north → return south
+    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
+    (if (< dy 0)
+      (begin
+        (set! dy (- dy))            ; dy = |dy|, reuses register (MUL -1)
+        (if (> dy abs-dx)
+          (set! dir 3)              ; |dy| dominates, was negative → south
+          (if (> dx 0)
+            (set! dir 4)            ; |dx| dominates → west
+            (set! dir 2))))         ; |dx| dominates → east
+      (if (> dy abs-dx)
+        (set! dir 1)                ; |dy| dominates, was positive → north
         (if (> dx 0)
-          (set! dir 4)      ; went east  → return west
-          (set! dir 2))))))  ; went west  → return east
+          (set! dir 4)              ; |dx| dominates → west
+          (set! dir 2))))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 1 — pack/unpack round-trips

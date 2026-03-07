@@ -8,7 +8,7 @@ The original forager program (dead-reckoning + pheromones, ~70 instructions of h
 
 - **`(define var expr :reg rN)`** — pin globals to specific registers
 - **Compound expression arguments** — `(mark ch_red (* timer 2))` and `(move (+ (random 4) 1))` now work; sub-expressions auto-compile to temp registers
-- **Safe unary negation** — `(set! x (- x))` correctly uses a temp when operand = dest register
+- **Safe unary negation** — `(set! x (- x))` compiles to `MUL x -1` (1 instruction, no temp register)
 
 ## Quick Example
 
@@ -100,7 +100,7 @@ In `let` bindings they materialize as 0/1 values.
 
 ```lisp
 (+ a b c)    ; chained: a + b + c
-(- x)        ; unary negation (safe when x = dest)
+(- x)        ; unary negation (MUL -1 when x = dest)
 (* a b)  (/ a b)  (mod a b)  (random n)
 (and a b) (or a b) (xor a b)
 (lshift a n) (rshift a n)

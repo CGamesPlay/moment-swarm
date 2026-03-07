@@ -94,15 +94,15 @@ function runTests() {
   // --- Unary negation edge cases ---
   test('unary negation simple',
     '(define x 5 :reg r1) (set! x (- x))',
-    r => r.includes('SET r1 5'));  // Should negate x
+    r => r.includes('SET r1 5') && r.includes('MUL r1 -1'));  // In-place negate via MUL
 
   test('unary negation in expression',
     '(let ((x 5)) (let ((y (- x))) (move random)))',
-    r => r.includes('SET'));  // Should handle negation properly
+    r => r.includes('SUB') && !r.includes('MUL'));  // Different dest — uses SET 0 + SUB, no MUL
 
   test('unary negation same register safe',
     '(define dx 5 :reg r1) (set! dx (- dx))',
-    r => r.includes('SET r1 5'));  // Safe negation when operand = dest
+    r => r.includes('MUL r1 -1') && !r.includes('SET r1 0'));  // MUL -1 in-place, no temp
 
   // --- Nested let bindings ---
   test('nested let scopes',

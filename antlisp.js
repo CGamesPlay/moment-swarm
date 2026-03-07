@@ -844,12 +844,8 @@ class Compiler {
       const reg = destReg || this.allocReg();
       const a = this.resolveArg(list[1]);
       if (a.val === reg) {
-        // Operand is same register as dest — need temp
-        const tmp = this.allocReg();
-        this.emit(`  SET ${tmp} ${a.val}`);
-        this.emit(`  SET ${reg} 0`);
-        this.emit(`  SUB ${reg} ${tmp}`);
-        this.freeReg(tmp);
+        // Operand is same register as dest — negate in-place
+        this.emit(`  MUL ${reg} -1`);
       } else {
         this.emit(`  SET ${reg} 0`);
         this.emit(`  SUB ${reg} ${a.val}`);
