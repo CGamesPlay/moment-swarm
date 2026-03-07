@@ -13,142 +13,140 @@
 
 ; ─── Basic register operations ───────────────────────────────
 
-(test "define and set! updates register"
+(test "let and set! updates register"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (set! x 1))
-  (assert-reg r1 1))
-
-(test "user example: define x 0 :reg r1, set! x 1"
-  :run-once
-  (begin
-    (define x 0 :reg r1)
-    (set! x 1))
-  (assert-reg r1 1)
+    (let ((x 0))
+      (set! x 1)))
   (assert-reg-name x 1))
 
-(test "define preserves initial value without mutation"
+(test "user example: let x 0, set! x 1"
   :run-once
   (begin
-    (define x 42 :reg r2))
-  (assert-reg r2 42))
+    (let ((x 0))
+      (set! x 1)))
+  (assert-reg-name x 1))
 
-(test "multiple defines are independent"
+(test "let preserves initial value without mutation"
   :run-once
   (begin
-    (define a 1 :reg r1)
-    (define b 2 :reg r2)
-    (define c 3 :reg r3))
-  (assert-reg r1 1)
-  (assert-reg r2 2)
-  (assert-reg r3 3))
+    (let ((x 42))
+      x))
+  (assert-reg-name x 42))
+
+(test "multiple let bindings are independent"
+  :run-once
+  (begin
+    (let ((a 1) (b 2) (c 3))
+      (begin a b c)))
+  (assert-reg-name a 1)
+  (assert-reg-name b 2)
+  (assert-reg-name c 3))
 
 ; ─── Arithmetic ──────────────────────────────────────────────
 
 (test "addition: a + b into c"
   :run-once
   (begin
-    (define a 3 :reg r1)
-    (define b 4 :reg r2)
-    (define c 0 :reg r3)
-    (set! c (+ a b)))
-  (assert-reg r3 7))
+    (let ((a 3) (b 4) (c 0))
+      (set! c (+ a b))))
+  (assert-reg-name c 7))
 
 (test "subtraction: x - 3"
   :run-once
   (begin
-    (define x 10 :reg r1)
-    (set! x (- x 3)))
-  (assert-reg r1 7))
+    (let ((x 10))
+      (set! x (- x 3))))
+  (assert-reg-name x 7))
 
 (test "multiplication: x * 7"
   :run-once
   (begin
-    (define x 6 :reg r1)
-    (set! x (* x 7)))
-  (assert-reg r1 42))
+    (let ((x 6))
+      (set! x (* x 7))))
+  (assert-reg-name x 42))
 
 (test "division: x / 4"
   :run-once
   (begin
-    (define x 20 :reg r1)
-    (set! x (/ x 4)))
-  (assert-reg r1 5))
+    (let ((x 20))
+      (set! x (/ x 4))))
+  (assert-reg-name x 5))
 
 (test "modulo: 17 mod 5"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (set! x (mod 17 5)))
-  (assert-reg r1 2))
+    (let ((x 0))
+      (set! x (mod 17 5))))
+  (assert-reg-name x 2))
 
 (test "chained addition: 1+2+3+4"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (set! x (+ 1 2 3 4)))
-  (assert-reg r1 10))
+    (let ((x 0))
+      (set! x (+ 1 2 3 4))))
+  (assert-reg-name x 10))
 
 (test "bitwise and: 15 and 6 = 6"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (set! x (and 15 6)))
-  (assert-reg r1 6))
+    (let ((x 0))
+      (set! x (and 15 6))))
+  (assert-reg-name x 6))
 
 (test "bitwise or: 8 or 5 = 13"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (set! x (or 8 5)))
-  (assert-reg r1 13))
+    (let ((x 0))
+      (set! x (or 8 5))))
+  (assert-reg-name x 13))
 
 (test "left shift: 1 << 3 = 8"
   :run-once
   (begin
-    (define x 1 :reg r1)
-    (set! x (lshift x 3)))
-  (assert-reg r1 8))
+    (let ((x 1))
+      (set! x (lshift x 3))))
+  (assert-reg-name x 8))
 
 (test "right shift: 16 >> 2 = 4"
   :run-once
   (begin
-    (define x 16 :reg r1)
-    (set! x (rshift x 2)))
-  (assert-reg r1 4))
+    (let ((x 16))
+      (set! x (rshift x 2))))
+  (assert-reg-name x 4))
 
 (test "unary negation: (- x) on 5 = -5"
   :run-once
   (begin
-    (define x 5 :reg r1)
-    (set! x (- x)))
-  (assert-reg r1 -5))
+    (let ((x 5))
+      (set! x (- x))))
+  (assert-reg-name x -5))
 
-(test "assert-reg with comparison operators"
+(test "assert-reg-name with comparison operators"
   :run-once
   (begin
-    (define x 10 :reg r1))
-  (assert-reg r1 > 5)
-  (assert-reg r1 < 20)
-  (assert-reg r1 >= 10)
-  (assert-reg r1 <= 10)
-  (assert-reg r1 != 9))
+    (let ((x 10))
+      x))
+  (assert-reg-name x > 5)
+  (assert-reg-name x < 20)
+  (assert-reg-name x >= 10)
+  (assert-reg-name x <= 10)
+  (assert-reg-name x != 9))
 
 ; ─── Named register assertions ───────────────────────────────
 
 (test "assert-reg-name: counter set to 99"
   :run-once
   (begin
-    (define counter 0 :reg r1)
-    (set! counter 99))
+    (let ((counter 0))
+      (set! counter 99)))
   (assert-reg-name counter 99))
 
 (test "assert-reg-name with comparison"
   :run-once
   (begin
-    (define score 50 :reg r1)
-    (set! score (+ score 10)))
+    (let ((score 50))
+      (set! score (+ score 10))))
   (assert-reg-name score > 55)
   (assert-reg-name score 60))
 
@@ -157,122 +155,112 @@
 (test "if: then branch taken when condition true"
   :run-once
   (begin
-    (define x 1 :reg r1)
-    (define result 0 :reg r2)
-    (if (= x 1)
-      (set! result 10)
-      (set! result 20)))
-  (assert-reg r2 10))
+    (let ((x 1) (result 0))
+      (if (= x 1)
+        (set! result 10)
+        (set! result 20))))
+  (assert-reg-name result 10))
 
 (test "if: else branch taken when condition false"
   :run-once
   (begin
-    (define x 5 :reg r1)
-    (define result 0 :reg r2)
-    (if (= x 1)
-      (set! result 10)
-      (set! result 20)))
-  (assert-reg r2 20))
+    (let ((x 5) (result 0))
+      (if (= x 1)
+        (set! result 10)
+        (set! result 20))))
+  (assert-reg-name result 20))
 
 (test "cond: correct branch matched"
   :run-once
   (begin
-    (define x 3 :reg r1)
-    (define result 0 :reg r2)
-    (cond ((= x 1) (set! result 100))
-          ((= x 2) (set! result 200))
-          ((= x 3) (set! result 300))
-          (else    (set! result 999))))
-  (assert-reg r2 300))
+    (let ((x 3) (result 0))
+      (cond ((= x 1) (set! result 100))
+            ((= x 2) (set! result 200))
+            ((= x 3) (set! result 300))
+            (else    (set! result 999)))))
+  (assert-reg-name result 300))
 
 (test "cond: else branch taken when no match"
   :run-once
   (begin
-    (define x 99 :reg r1)
-    (define result 0 :reg r2)
-    (cond ((= x 1) (set! result 1))
-          ((= x 2) (set! result 2))
-          (else    (set! result 42))))
-  (assert-reg r2 42))
+    (let ((x 99) (result 0))
+      (cond ((= x 1) (set! result 1))
+            ((= x 2) (set! result 2))
+            (else    (set! result 42)))))
+  (assert-reg-name result 42))
 
 (test "when: body runs when condition true"
   :run-once
   (begin
-    (define x 5 :reg r1)
-    (define flag 0 :reg r2)
-    (when (> x 3)
-      (set! flag 1)))
-  (assert-reg r2 1))
+    (let ((x 5) (flag 0))
+      (when (> x 3)
+        (set! flag 1))))
+  (assert-reg-name flag 1))
 
 (test "when: body skipped when condition false"
   :run-once
   (begin
-    (define x 1 :reg r1)
-    (define flag 0 :reg r2)
-    (when (> x 3)
-      (set! flag 1)))
-  (assert-reg r2 0))
+    (let ((x 1) (flag 0))
+      (when (> x 3)
+        (set! flag 1))))
+  (assert-reg-name flag 0))
 
 (test "unless: body skipped when condition true"
   :run-once
   (begin
-    (define x 5 :reg r1)
-    (define flag 0 :reg r2)
-    (unless (> x 3)
-      (set! flag 1)))
-  (assert-reg r2 0))
+    (let ((x 5) (flag 0))
+      (unless (> x 3)
+        (set! flag 1))))
+  (assert-reg-name flag 0))
 
 (test "unless: body runs when condition false"
   :run-once
   (begin
-    (define x 1 :reg r1)
-    (define flag 0 :reg r2)
-    (unless (> x 3)
-      (set! flag 1)))
-  (assert-reg r2 1))
+    (let ((x 1) (flag 0))
+      (unless (> x 3)
+        (set! flag 1))))
+  (assert-reg-name flag 1))
 
 ; ─── Loops ───────────────────────────────────────────────────
 
 (test "dotimes: loops exactly N times"
   :run-once
   (begin
-    (define count 0 :reg r1)
-    (dotimes (i 5)
-      (set! count (+ count 1))))
+    (let ((count 0))
+      (dotimes (i 5)
+        (set! count (+ count 1)))))
   (assert-reg-name count 5))
 
 (test "while: loops while condition holds"
   :run-once
   (begin
-    (define x 10 :reg r1)
-    (define steps 0 :reg r2)
-    (while (> x 5)
-      (set! x (- x 1))
-      (set! steps (+ steps 1))))
-  (assert-reg r1 5)
-  (assert-reg r2 5))
+    (let ((x 10) (steps 0))
+      (while (> x 5)
+        (set! x (- x 1))
+        (set! steps (+ steps 1)))))
+  (assert-reg-name x 5)
+  (assert-reg-name steps 5))
 
 (test "loop with break exits"
   :run-once
   (begin
-    (define x 0 :reg r1)
-    (loop
-      (set! x (+ x 1))
-      (if (= x 3)
-        (break))))
-  (assert-reg r1 3))
+    (let ((x 0))
+      (loop
+        (set! x (+ x 1))
+        (if (= x 3)
+          (break)))))
+  (assert-reg-name x 3))
 
 (test "loop with continue skips rest of body"
   :run-once
   (begin
-    (define i 0 :reg r1)
-    (define evens 0 :reg r2)
-    (while (< i 10)
-      (set! i (+ i 1))
-      (if (!= (mod i 2) 0)
-        (continue))
-      (set! evens (+ evens 1))))
-  (assert-reg r2 5))
+    (let ((i 0) (evens 0))
+      (while (< i 10)
+        (set! i (+ i 1))
+        (if (!= (mod i 2) 0)
+          (continue))
+        (set! evens (+ evens 1)))))
+  (assert-reg-name evens 5))
 
 ; ─── Multi-tick accumulation ─────────────────────────────────
 ;
@@ -282,20 +270,20 @@
 (test "register accumulates across ticks via loop+move"
   :ticks 3
   (begin
-    (define count 0 :reg r1)
-    (loop
-      (set! count (+ count 1))
-      (move random)))
-  (assert-reg r1 3))
+    (let ((count 0))
+      (loop
+        (set! count (+ count 1))
+        (move random))))
+  (assert-reg-name count 3))
 
 (test "register accumulates +2 per tick over 5 ticks"
   :ticks 5
   (begin
-    (define total 0 :reg r1)
-    (loop
-      (set! total (+ total 2))
-      (move random)))
-  (assert-reg r1 10))
+    (let ((total 0))
+      (loop
+        (set! total (+ total 2))
+        (move random))))
+  (assert-reg-name total 10))
 
 ; ─── Food / action tests ─────────────────────────────────────
 
@@ -344,47 +332,45 @@
 (test "smell ch_red returns 0 on blank map"
   :run-once
   (begin
-    (define dir 5 :reg r1)
-    (set! dir (smell ch_red)))
-  (assert-reg r1 0))
+    (let ((dir 5))
+      (set! dir (smell ch_red))))
+  (assert-reg-name dir 0))
 
 (test "sense food returns 0 when no adjacent food"
   :run-once
   (begin
-    (define dir 5 :reg r1)
-    (set! dir (sense food)))
-  (assert-reg r1 0))
+    (let ((dir 5))
+      (set! dir (sense food))))
+  (assert-reg-name dir 0))
 
 (test "carrying? returns 0 when not carrying"
   :run-once
   (begin
-    (define c 255 :reg r1)
-    (set! c (carrying?)))
-  (assert-reg r1 0))
+    (let ((c 255))
+      (set! c (carrying?))))
+  (assert-reg-name c 0))
 
 ; ─── Integration ─────────────────────────────────────────────
 
 (test "forager pattern: dx/dy accumulate each tick"
   :ticks 4
   (begin
-    (define dx 0 :reg r1)
-    (define dy 0 :reg r2)
-    (loop
-      (set! dx (+ dx 1))
-      (set! dy (- dy 1))
-      (move random)))
-  (assert-reg r1 4)
-  (assert-reg r2 -4))
+    (let ((dx 0) (dy 0))
+      (loop
+        (set! dx (+ dx 1))
+        (set! dy (- dy 1))
+        (move random))))
+  (assert-reg-name dx 4)
+  (assert-reg-name dy -4))
 
 (test "conditional accumulation: only even ticks increment flag"
   :ticks 10
   (begin
-    (define tick-count 0 :reg r1)
-    (define flag 0 :reg r2)
-    (loop
-      (set! tick-count (+ tick-count 1))
-      (when (= (mod tick-count 2) 0)
-        (set! flag (+ flag 1)))
-      (move random)))
-  (assert-reg r1 10)
-  (assert-reg r2 5))
+    (let ((tick-count 0) (flag 0))
+      (loop
+        (set! tick-count (+ tick-count 1))
+        (when (= (mod tick-count 2) 0)
+          (set! flag (+ flag 1)))
+        (move random))))
+  (assert-reg-name tick-count 10)
+  (assert-reg-name flag 5))

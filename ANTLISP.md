@@ -6,27 +6,25 @@ A Scheme-like language that compiles to flat Antssembly for the SWARM ant colony
 
 The original forager program (dead-reckoning + pheromones, ~70 instructions of hand-written assembly) exposed several gaps in v1. v2 fixes them:
 
-- **`(define var expr :reg rN)`** — pin globals to specific registers
+- **`let` for all bindings** — use `(let ((var expr)) ...)` for both long-lived state and short-lived locals; registers are freed when the scope exits
 - **Compound expression arguments** — `(mark ch_red (* timer 2))` and `(move (+ (random 4) 1))` now work; sub-expressions auto-compile to temp registers
 - **Safe unary negation** — `(set! x (- x))` compiles to `MUL x -1` (1 instruction, no temp register)
 
 ## Quick Example
 
 ```lisp
-(define dx 0 :reg r1)
-(define dy 0 :reg r2)
-
-(loop
-  (let ((food (sense food)))
-    (if (!= food 0)
-      (begin
-        (move food)
-        (cond ((= food 1) (set! dy (- dy 1)))
-              ((= food 2) (set! dx (+ dx 1)))
-              ((= food 3) (set! dy (+ dy 1)))
-              ((= food 4) (set! dx (- dx 1))))
-        (pickup))
-      (move (+ (random 4) 1)))))
+(let ((dx 0) (dy 0))
+  (loop
+    (let ((food (sense food)))
+      (if (!= food 0)
+        (begin
+          (move food)
+          (cond ((= food 1) (set! dy (- dy 1)))
+                ((= food 2) (set! dx (+ dx 1)))
+                ((= food 3) (set! dy (+ dy 1)))
+                ((= food 4) (set! dx (- dx 1))))
+          (pickup))
+        (move (+ (random 4) 1))))))
 ```
 
 ## Usage
@@ -43,25 +41,23 @@ node antlisp.js program.alisp > out.asm # save to file
 ### Top-Level Forms
 
 ```lisp
-(define var expr)               ; global, auto-allocated register
-(define var expr :reg r3)       ; global, pinned to r3
 (define-role name id)           ; emit .tag directive
-(const name value)              ; emit .const
+(const name value)              ; inline constant (no register)
 (alias name reg)                ; emit .alias
 ```
 
 ### Binding & Mutation
 
 ```lisp
-(let ((dir (sense food))        ; local bindings (scoped registers)
+(let ((dir (sense food))        ; bindings — scoped registers
       (ch  (carrying?)))
   body...)
 
-(set! var expr)                 ; mutate any define or let variable
+(set! var expr)                 ; mutate any let variable
 ```
 
-`define` variables are global — visible everywhere.
-`let` variables are local — freed when the scope exits.
+`let` variables are freed when the scope exits. Place long-lived state
+(dead-reckoning, FSM state, etc.) in a `let` that wraps the main loop.
 
 ### Control Flow
 
@@ -141,14 +137,12 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
 ### Macros
 
 Macros expand inline at each call site — no CALL/return overhead, no register conflicts.
+`defmacro` can appear at the top level or inside a `let` body.
 
 ```lisp
 ;; Define a macro with (defmacro name (params...) body...)
 (defmacro wander ()
   (move (+ (random 4) 1)))
-
-(define dx 0)
-(define dy 0)
 
 (defmacro move-track (dir dx dy)
   (move dir)
@@ -157,13 +151,15 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
         ((= dir 3) (set! dy (+ dy 1)))
         ((= dir 4) (set! dx (- dx 1)))))
 
-;; Usage — expands inline
-(wander)                        ; random direction
-(move-track (sense food) dx dy) ; compound expr as param
+(let ((dx 0) (dy 0))
+  ;; Usage — expands inline
+  (wander)                        ; random direction
+  (move-track (sense food) dx dy) ; compound expr as param
+)
 ```
 
 **Key properties:**
-- **Hygienic**: Free variables in the macro body resolve at the **definition site**, not the call site. A caller's local variable with the same name as a global won't accidentally capture the macro's reference.
+- **Hygienic**: Free variables in the macro body resolve at the **definition site**, not the call site. A caller's `let` variable with the same name won't accidentally shadow the macro's reference.
 - **Parameters**: Evaluated at the call site, then bound by name inside the macro. Variable args alias the caller's register (allowing `set!`); literal/constant args are inlined.
 - **Hygienic labels**: `(label foo)` and `(goto foo)` inside macros get freshened at each expansion site to avoid collisions
 - **Multi-statement bodies**: All forms in the body are emitted inline
@@ -187,13 +183,13 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 (skip-if-carrying)
 (skip-if-carrying)
 
-;; Hygiene example: macro references global, not caller's local
-(define counter 0)
-(defmacro bump ()
-  (set! counter (+ counter 1)))  ; always refers to the global 'counter'
+;; Hygiene example: macro references outer let binding, not caller's inner one
+(let ((counter 0))
+  (defmacro bump ()
+    (set! counter (+ counter 1)))  ; always refers to the outer 'counter'
 
-(let ((counter 99))
-  (bump))   ; increments the global counter (r0), not the local (r1)
+  (let ((counter 99))
+    (bump)))   ; increments outer counter (r0), not inner (r1)
 ```
 
 ### Low-Level Escape Hatches
@@ -208,8 +204,7 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 
 ## Register Allocation Strategy
 
-- **Globals** (`define`): permanently reserved, never freed
-- **Locals** (`let`): allocated on entry, freed on scope exit
+- **Bindings** (`let`): allocated on entry, freed on scope exit; a `let` wrapping the main loop is effectively permanent for the program's lifetime
 - **Temps**: allocated by `resolveArg` for compound sub-expressions, freed immediately
 
-With 8 registers (r0-r7), you have plenty of room for globals and locals.
+With 8 registers (r0-r7), a typical program uses 3–5 for long-lived state and leaves the rest for temporaries.

@@ -2,12 +2,6 @@
 ; Port of brain.ant using macros for subroutines
 ; Random walk to find food, dead reckoning home
 
-; ── Registers (pinned to match original) ──
-(define dx 0 :reg r1)           ; x displacement from nest
-(define dy 0 :reg r2)           ; y displacement from nest
-(define timer 0 :reg r4)        ; countdown for marking trail home
-(define dir 0 :reg r0)          ; current direction (for move-with-tracking)
-
 ; ── Constants ──
 (const TRAIL ch_red)
 
@@ -54,6 +48,10 @@
 ; MAIN PROGRAM
 ; ══════════════════════════════════════════════
 
+(let ((dx 0)    ; x displacement from nest
+      (dy 0)    ; y displacement from nest
+      (timer 0) ; countdown for marking trail home
+      (dir 0))  ; current direction (for move-with-tracking)
 (loop
   ; Check if carrying food
   (if (carrying?)
@@ -103,4 +101,4 @@
                 (set! dir trail-dir)
                 (begin
                   (set! dir (+ (random 4) 1)))))
-            (move-with-tracking dir dx dy)))))))
+            (move-with-tracking dir dx dy))))))))

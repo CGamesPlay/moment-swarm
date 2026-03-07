@@ -10,19 +10,6 @@
 ;    blocked direction and walks perpendicular, checking each step
 ;    whether the blocked direction has opened up (gap found).
 
-; ── Registers ──
-; r0  dir     (required by packed-dr macros)
-; r1  homepos (packed dx/dy displacement from nest; bits 7:0 = dx, bits 15:8 = dy)
-; r2  state
-; r3  steps   (steps remaining on current heading; reused as blocked-dir in SCANNING)
-; r4  ticks   (ticks in current exploring run)
-; r5–r7 free
-(define dir    0 :reg r0)
-(define homepos 0 :reg r1)
-(define state  0 :reg r2)
-(define steps  0 :reg r3)
-(define ticks  0 :reg r4)
-
 ; ── Constants ──
 (const TRAIL_PH ch_red)
 (const DELIVERING_PH ch_blue)
@@ -109,21 +96,21 @@
     (set! packed (or packed tmp))))
 
 ; Move in `dir` with wall check; update homepos dx/dy on success.
-(defmacro move-with-tracking-packed (dir packed)
+(defmacro move-with-tracking-packed (dir homepos)
   (unless (= (probe dir) 1)
     (move dir)
-    (cond ((= dir 1) (dec-dy! packed))
-          ((= dir 2) (inc-dx! packed))
-          ((= dir 3) (inc-dy! packed))
-          ((= dir 4) (dec-dx! packed)))))
+    (cond ((= dir 1) (dec-dy! homepos))
+          ((= dir 2) (inc-dx! homepos))
+          ((= dir 3) (inc-dy! homepos))
+          ((= dir 4) (dec-dx! homepos)))))
 
 ; Set dir toward nest based on homepos dx/dy.
-(defmacro home-dir-packed (dir packed)
+(defmacro home-dir (dir homepos)
   (let ((dx 0)
         (dy 0)
         (abs-dx 0))
-    (unpack-dx! dx packed)
-    (unpack-dy! dy packed)
+    (unpack-dx! dx homepos)
+    (unpack-dy! dy homepos)
     (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
     (if (< dy 0)
       (begin
@@ -161,7 +148,7 @@
 
 ; Navigate home: dead-reckon first, trail fallback when blocked.
 (defmacro navigate-home (dir homepos)
-  (home-dir-packed dir homepos)
+  (home-dir dir homepos)
   (when (= (probe dir) 1)
     (let ((scratch (smell TRAIL_PH)))
       (if (!= scratch 0)
@@ -174,168 +161,173 @@
 ; MAIN LOOP
 ; ══════════════════════════════════════════════
 
-(loop
-  (cond
-    ; ────────────────────────────────────────
-    ; EXPLORING
-    ; ────────────────────────────────────────
-    ((= state S_EXPLORING)
-     (loop
-       (tag exploring)
+(let ((dir    0)   ; required by packed-dr macros
+      (homepos 0)  ; packed dx/dy displacement from nest
+      (state  0)
+      (steps  0)   ; steps on heading; reused as blocked-dir in SCANNING
+      (ticks  0))  ; ticks in current exploring run
+  (loop
+    (cond
+      ; ────────────────────────────────────────
+      ; EXPLORING
+      ; ────────────────────────────────────────
+      ((= state S_EXPLORING)
+       (loop
+         (tag exploring)
 
-       ; Timeout — too long without food, go home
-       (when (>= ticks EXPLORE_TIMEOUT)
-         (set! state S_LOST)
-         (break))
+         ; Timeout — too long without food, go home
+         (when (>= ticks EXPLORE_TIMEOUT)
+           (set! state S_LOST)
+           (break))
 
-       ; Food check — grab and switch to returning
-       (let ((scratch (sense food)))
-         (when (!= scratch 0)
-           (set! dir scratch)
-           (move-with-tracking-packed dir homepos)
-           (pickup)
-           (set! state S_RETURNING)
-           (set! steps 0)
-           (break)))
+         ; Food check — grab and switch to returning
+         (let ((scratch (sense food)))
+           (when (!= scratch 0)
+             (set! dir scratch)
+             (move-with-tracking-packed dir homepos)
+             (pickup)
+             (set! state S_RETURNING)
+             (set! steps 0)
+             (break)))
 
-       ; Mark trail breadcrumb
-       (mark TRAIL_PH TRAIL_STRENGTH)
+         ; Mark trail breadcrumb
+         (mark TRAIL_PH TRAIL_STRENGTH)
 
-       ; Pick new heading when counter runs out
-       (when (<= steps 0)
-         ; DELIVERING pheromone → head opposite (toward food sources)
-         (let ((scratch (sniff DELIVERING_PH here)))
-           (if (!= scratch 0)
-             (begin
-               (set! dir (invert-dir (smell DELIVERING_PH)))
-               (set! steps (+ (random 4) 1)))
-             ; No delivering — random
-             (begin
-               (pick-random-nonwall dir)
-               (set! steps (+ (random 4) 1))))))
+         ; Pick new heading when counter runs out
+         (when (<= steps 0)
+           ; DELIVERING pheromone → head opposite (toward food sources)
+           (let ((scratch (sniff DELIVERING_PH here)))
+             (if (!= scratch 0)
+               (begin
+                 (set! dir (invert-dir (smell DELIVERING_PH)))
+                 (set! steps (+ (random 4) 1)))
+               ; No delivering — random
+               (begin
+                 (pick-random-nonwall dir)
+                 (set! steps (+ (random 4) 1))))))
 
-       ; Wall check — if blocked, enter SCANNING state
-       (when (= (probe dir) 1)
-         ; Save the direction we want to go (through the wall)
-         ; steps register is reused as blocked-dir in scanning state
-         (let ((scratch dir))
-           (set! state S_SCANNING)
-           ; Pick perpendicular direction (random left or right turn)
-           (if (< (random 2) 1)
-             (set! dir (turn-right scratch))
-             (set! dir (invert-dir (turn-right scratch))))
-           ; If perpendicular is also blocked, try the other one
-           (when (= (probe dir) 1)
-             (set! dir (invert-dir dir))
-             (when (= (probe dir) 1)
-               (set! dir (invert-dir scratch))))
-           (set! steps scratch))     ; save blocked dir in steps
-         (set! ticks SCAN_STEPS)
-         (break))
-
-       (move-with-tracking-packed dir homepos)
-       (set! steps (- steps 1))
-       (set! ticks (+ ticks 1))))
-
-    ; ────────────────────────────────────────
-    ; SCANNING — walk along wall, probing for gap
-    ; steps = the direction we want to go through
-    ; ────────────────────────────────────────
-    ((= state S_SCANNING)
-     (loop
-       (tag scanning)
-
-       ; Food check — grab even while scanning
-       (let ((scratch (sense food)))
-         (when (!= scratch 0)
-           (set! dir scratch)
-           (move-with-tracking-packed dir homepos)
-           (pickup)
-           (set! state S_RETURNING)
-           (set! steps 0)
-           (break)))
-
-       ; Mark trail
-       (mark TRAIL_PH TRAIL_STRENGTH)
-
-       ; Check if the blocked direction is now open (gap!)
-       (when (!= (probe steps) 1)
-         ; Gap found — go through!
-         (set! dir steps)
-         (set! steps 0)
-         (set! state S_EXPLORING)
-         (set! ticks (+ (random 4) 1))
-         (move-with-tracking-packed dir homepos)
-         (break))
-
-       ; Scan limit reached — go back to exploring
-       (when (<= ticks 0)
-         (set! steps 0)
-         (set! state S_EXPLORING)
-         (set! ticks 0)
-         (break))
-
-       ; Keep walking along wall
-       (when (= (probe dir) 1)
-         ; Hit end of wall or corner — turn
-         (set! dir (invert-dir dir))
+         ; Wall check — if blocked, enter SCANNING state
          (when (= (probe dir) 1)
-           (pick-random-nonwall dir)))
+           ; Save the direction we want to go (through the wall)
+           ; steps register is reused as blocked-dir in scanning state
+           (let ((scratch dir))
+             (set! state S_SCANNING)
+             ; Pick perpendicular direction (random left or right turn)
+             (if (< (random 2) 1)
+               (set! dir (turn-right scratch))
+               (set! dir (invert-dir (turn-right scratch))))
+             ; If perpendicular is also blocked, try the other one
+             (when (= (probe dir) 1)
+               (set! dir (invert-dir dir))
+               (when (= (probe dir) 1)
+                 (set! dir (invert-dir scratch))))
+             (set! steps scratch))     ; save blocked dir in steps
+           (set! ticks SCAN_STEPS)
+           (break))
 
-       (move-with-tracking-packed dir homepos)
-       (set! ticks (- ticks 1))))
+         (move-with-tracking-packed dir homepos)
+         (set! steps (- steps 1))
+         (set! ticks (+ ticks 1))))
 
-    ; ────────────────────────────────────────
-    ; LOST
-    ; ────────────────────────────────────────
-    ((= state S_LOST)
-     (loop
-       (tag lost)
+      ; ────────────────────────────────────────
+      ; SCANNING — walk along wall, probing for gap
+      ; steps = the direction we want to go through
+      ; ────────────────────────────────────────
+      ((= state S_SCANNING)
+       (loop
+         (tag scanning)
 
-       ; Nest adjacent → back to exploring
-       (let ((scratch (sense nest)))
-         (when (!= scratch 0)
-           (set! ticks 0)
-           (set! state S_EXPLORING)
+         ; Food check — grab even while scanning
+         (let ((scratch (sense food)))
+           (when (!= scratch 0)
+             (set! dir scratch)
+             (move-with-tracking-packed dir homepos)
+             (pickup)
+             (set! state S_RETURNING)
+             (set! steps 0)
+             (break)))
+
+         ; Mark trail
+         (mark TRAIL_PH TRAIL_STRENGTH)
+
+         ; Check if the blocked direction is now open (gap!)
+         (when (!= (probe steps) 1)
+           ; Gap found — go through!
+           (set! dir steps)
            (set! steps 0)
-           (break)))
-
-       ; Delivering trail found → back to exploring
-       (let ((scratch (sniff DELIVERING_PH here)))
-         (when (!= scratch 0)
-           (set! ticks 0)
            (set! state S_EXPLORING)
-           (set! steps 0)
-           (break)))
-
-       ; Navigate home
-       (navigate-home dir homepos)
-       (move-with-tracking-packed dir homepos)))
-
-    ; ────────────────────────────────────────
-    ; RETURNING
-    ; ────────────────────────────────────────
-    ((= state S_RETURNING)
-     (loop
-       (tag returning)
-
-       ; At nest — drop and explore
-       (let ((scratch (sense nest)))
-         (when (!= scratch 0)
-           (set! dir scratch)
+           (set! ticks (+ (random 4) 1))
            (move-with-tracking-packed dir homepos)
-           (drop)
-           (set! homepos 0)
-           (set! ticks 0)
-           (set! state S_EXPLORING)
+           (break))
+
+         ; Scan limit reached — go back to exploring
+         (when (<= ticks 0)
            (set! steps 0)
-           (break)))
+           (set! state S_EXPLORING)
+           (set! ticks 0)
+           (break))
 
-       ; Mark delivering trail
-       (mark DELIVERING_PH 100)
+         ; Keep walking along wall
+         (when (= (probe dir) 1)
+           ; Hit end of wall or corner — turn
+           (set! dir (invert-dir dir))
+           (when (= (probe dir) 1)
+             (pick-random-nonwall dir)))
 
-       ; Dead-reckon home; follow trail when blocked
-       (navigate-home dir homepos)
-       (move-with-tracking-packed dir homepos)))))
+         (move-with-tracking-packed dir homepos)
+         (set! ticks (- ticks 1))))
+
+      ; ────────────────────────────────────────
+      ; LOST
+      ; ────────────────────────────────────────
+      ((= state S_LOST)
+       (loop
+         (tag lost)
+
+         ; Nest adjacent → back to exploring
+         (let ((scratch (sense nest)))
+           (when (!= scratch 0)
+             (set! ticks 0)
+             (set! state S_EXPLORING)
+             (set! steps 0)
+             (break)))
+
+         ; Delivering trail found → back to exploring
+         (let ((scratch (sniff DELIVERING_PH here)))
+           (when (!= scratch 0)
+             (set! ticks 0)
+             (set! state S_EXPLORING)
+             (set! steps 0)
+             (break)))
+
+         ; Navigate home
+         (navigate-home dir homepos)
+         (move-with-tracking-packed dir homepos)))
+
+      ; ────────────────────────────────────────
+      ; RETURNING
+      ; ────────────────────────────────────────
+      ((= state S_RETURNING)
+       (loop
+         (tag returning)
+
+         ; At nest — drop and explore
+         (let ((scratch (sense nest)))
+           (when (!= scratch 0)
+             (set! dir scratch)
+             (move-with-tracking-packed dir homepos)
+             (drop)
+             (set! homepos 0)
+             (set! ticks 0)
+             (set! state S_EXPLORING)
+             (set! steps 0)
+             (break)))
+
+         ; Mark delivering trail
+         (mark DELIVERING_PH 100)
+
+         ; Dead-reckon home; follow trail when blocked
+         (navigate-home dir homepos)
+         (move-with-tracking-packed dir homepos))))))
 
 ; vim:ft=lisp:sw=2

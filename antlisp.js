@@ -1,11 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 // AntLisp v2 — S-Expression Compiler for Antssembly
 // ═══════════════════════════════════════════════════════════════
-//
-// Changes from v1:
-//  - (define var expr) at top level creates GLOBALS
-//  - (define var expr :reg rN) pins a global to a specific register
-//  - Smarter register allocation: globals are permanently reserved
 
 // ─── TOKENIZER ───────────────────────────────────────────────
 
@@ -124,7 +119,8 @@ class Compiler {
     this.labelCounter = 0;
     this.usedRegs = new Set();     // registers currently in use
     this.bindings = new Map();     // variable name -> register string
-    this.globals = new Map();      // global variable name -> register string
+
+    this.allBindings = new Map();  // every let-binding ever made: name -> reg (for debug/assert-reg-name)
 
     this.macros = new Map();       // macro name -> { params: [...], body: [...] }
     this.constValues = new Map();  // const name -> resolved value (for inline substitution)
@@ -191,14 +187,6 @@ class Compiler {
     throw this.errorAt(`Register exhaustion — all registers in use (currently: ${inUse}). Reduce nesting or free variables.`);
   }
 
-  allocSpecificReg(n) {
-    if (this.usedRegs.has(n)) {
-      throw this.errorAt(`Register r${n} is already allocated`);
-    }
-    this.usedRegs.add(n);
-    return `r${n}`;
-  }
-
   freeReg(reg) {
     const idx = parseInt(reg.slice(1));
     this.usedRegs.delete(idx);
@@ -229,7 +217,6 @@ class Compiler {
     if (node.type === 'symbol') {
       const name = node.value;
       if (this.bindings.has(name)) return this.bindings.get(name);
-      if (this.globals.has(name)) return this.globals.get(name);
       if (this.constValues.has(name)) return this.constValues.get(name);  // inline constants
       if (this.isDirection(name)) return name.toUpperCase();
       if (this.isChannel(name)) return name.toUpperCase();
@@ -259,8 +246,7 @@ class Compiler {
   // ── Compilation entry ──
 
   compile(ast) {
-    // Pass 1: collect metadata (roles only; macros collected in Pass 2
-    // so their definition-site bindings capture preceding globals)
+    // Pass 1: collect roles
     for (const node of ast.body) {
       if (node.type === 'list' && node.value.length > 0) {
         const head = node.value[0];
@@ -360,9 +346,8 @@ class Compiler {
     // When the macro body is compiled, free variables resolve against
     // these bindings rather than the call-site bindings.
     const closedBindings = new Map(this.bindings);
-    const closedGlobals = new Map(this.globals);
     const closedConsts = new Map(this.constValues);
-    this.macros.set(name, { params, body, closedBindings, closedGlobals, closedConsts });
+    this.macros.set(name, { params, body, closedBindings, closedConsts });
   }
 
   // Compile a hygienic macro call.
@@ -408,11 +393,9 @@ class Compiler {
 
     // Step 2: Switch to definition-site bindings, overlay params
     const savedBindings = this.bindings;
-    const savedGlobals = this.globals;
     const savedConsts = this.constValues;
 
     this.bindings = new Map(macro.closedBindings);
-    this.globals = new Map(macro.closedGlobals);
     this.constValues = new Map(macro.closedConsts);
 
     // Overlay parameter bindings (these take priority over closed-over names).
@@ -420,7 +403,6 @@ class Compiler {
     // then add it to the correct map.
     for (const pb of paramBindings) {
       this.bindings.delete(pb.paramName);
-      this.globals.delete(pb.paramName);
       this.constValues.delete(pb.paramName);
       if (pb.reg) {
         this.bindings.set(pb.paramName, pb.reg);
@@ -440,7 +422,6 @@ class Compiler {
 
     // Step 4: Restore call-site bindings, free allocated param registers
     this.bindings = savedBindings;
-    this.globals = savedGlobals;
     this.constValues = savedConsts;
 
     for (const pb of paramBindings) {
@@ -500,58 +481,19 @@ class Compiler {
     if (node.type !== 'list' || node.value.length === 0) return;
     const head = node.value[0];
     if (head.type !== 'symbol') { 
-      this.seenCode = true;
       this.compileExpr(node); 
       return; 
     }
 
     switch (head.value) {
       case 'define-role': return; // already collected
-      case 'defmacro':    return this.collectMacro(node.value); // collected in pass 2 for hygienic bindings
-      case 'define':      return this.compileGlobalDefine(node.value, node);
+      case 'defmacro':    return this.collectMacro(node.value);
+      case 'define':      throw this.errorAt('(define ...) is not supported — use (let ((var expr)) ...) instead', node);
       case 'alias':       return this.compileAlias(node.value);
       case 'const':       return this.compileConst(node.value);
 
       default:
-        this.seenCode = true;
         this.compileExpr(node);
-    }
-  }
-
-  // ── (define var expr) or (define var expr :reg rN) ──
-  // Top-level defines create globals with permanently reserved registers
-  // Must appear before any code to avoid use-before-initialize
-  compileGlobalDefine(list, node) {
-    if (this.seenCode) {
-      throw this.errorAt('(define ...) must appear before any code', node);
-    }
-
-    const name = list[1].value;
-    let reg;
-
-    // Check for :reg annotation: (define var expr :reg r3)
-    const regAnnotIdx = list.findIndex((n, i) => i >= 2 && n.type === 'symbol' && n.value === ':reg');
-    if (regAnnotIdx !== -1) {
-      const regName = list[regAnnotIdx + 1].value;
-      const regNum = parseInt(regName.slice(1));
-      reg = this.allocSpecificReg(regNum);
-    } else {
-      reg = this.allocReg();
-    }
-
-    this.globals.set(name, reg);
-    this.bindings.set(name, reg);
-
-    // Find init expression (skip :reg annotation)
-    const initExpr = list.length > 2 && list[2].type !== 'symbol' ? list[2] :
-                     list.length > 2 && list[2].value !== ':reg' ? list[2] : null;
-    
-    // Emit initialization immediately
-    if (initExpr) {
-      this.compileInto(initExpr, reg);
-    } else {
-      // default to 0 if no init
-      this.emit(`  SET ${reg} 0`);
     }
   }
 
@@ -612,6 +554,7 @@ class Compiler {
 
       case 'let':      return this.compileLet(list, destReg);
       case 'set!':     return this.compileSet(list);
+      case 'defmacro': this.collectMacro(list); return null;
 
       case 'sense':    return this.compileSenseOp('SENSE', list, destReg);
       case 'smell':    return this.compileSenseOp('SMELL', list, destReg);
@@ -715,6 +658,7 @@ class Compiler {
       allocatedRegs.push(reg);
       this.compileInto(pair[1], reg);
       this.bindings.set(name, reg);
+      this.allBindings.set(name, reg);  // record for assert-reg-name
     }
 
     let result = null;
@@ -729,7 +673,7 @@ class Compiler {
 
   compileSet(list) {
     const name = list[1].value;
-    const reg = this.bindings.get(name) || this.globals.get(name);
+    const reg = this.bindings.get(name);
     if (!reg) throw this.errorAt(`Undefined variable: ${name}`);
     this.compileInto(list[2], reg);
     return reg;
@@ -1079,15 +1023,15 @@ function compileAntLisp(source) {
 }
 
 // Like compileAntLisp but returns { asm, varMap } where varMap is a
-// Map<varName, regString> of all globals defined in the program.
+// Map<varName, regString> of all let-bindings ever created in the program.
 // Used by the unit test harness for assert-reg-name lookups.
 function compileAntLispDebug(source) {
   const tokens = tokenize(source);
   const ast = parse(tokens);
   const compiler = new Compiler();
   const asm = compiler.compile(ast);
-  // compiler.globals is Map<name, regString> built during compileGlobalDefine
-  return { asm, varMap: new Map(compiler.globals) };
+  // compiler.allBindings is Map<name, regString> built during compileLet
+  return { asm, varMap: new Map(compiler.allBindings) };
 }
 
 // ─── CLI ─────────────────────────────────────────────────────

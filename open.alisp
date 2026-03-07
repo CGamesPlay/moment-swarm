@@ -13,13 +13,6 @@
 ;   RETURNING  — carry food home, MARK DELIVERING 100
 ;                nest → drop + EXPLORING
 
-; ── Registers ──
-(define dx 0 :reg r1)           ; x displacement from nest
-(define dy 0 :reg r2)           ; y displacement from nest
-(define dir 0 :reg r0)          ; current movement direction
-(define state 0 :reg r3)        ; current state
-(define steps 0 :reg r4)        ; steps remaining on current heading
-
 ; ── Constants ──
 (const DELIVERING_PH ch_blue)
 
@@ -76,6 +69,11 @@
 ; MAIN LOOP — dispatch to per-state inner loops
 ; ══════════════════════════════════════════════
 
+(let ((dx 0)    ; x displacement from nest
+      (dy 0)    ; y displacement from nest
+      (dir 0)   ; current movement direction
+      (state 0) ; current state
+      (steps 0)); steps remaining on current heading
 (loop
   (cond
     ; ────────────────────────────────────────
@@ -176,4 +174,4 @@
        (when (= (probe dir) 1)
          (pick-random-nonwall dir))
 
-       (move-with-tracking dir dx dy)))))
+       (move-with-tracking dir dx dy))))))

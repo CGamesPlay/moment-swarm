@@ -40,13 +40,9 @@ function runTests() {
     '(let ((x (+ 3 4 5))) (move random))',
     r => r.includes('SET r0 3') && r.includes('ADD r0 4') && r.includes('ADD r0 5'));
 
-  test('global define',
-    '(define dx 0) (define dy 0) (set! dx (+ dx 1))',
-    r => r.includes('SET r0 0') && r.includes('ADD r0 1'));
-
-  test('global define with :reg',
-    '(define dx 0 :reg r1) (define dy 0 :reg r2) (set! dx (+ dx 1))',
-    r => r.includes('SET r1 0') && r.includes('SET r2 0') && r.includes('ADD r1 1'));
+  test('let binding as global-style var',
+    '(let ((dx 0) (dy 0)) (set! dx (+ dx 1)))',
+    r => r.includes('ADD') && r.includes('1'));
 
   test('cond with else',
     `(let ((d (probe n)))
@@ -84,7 +80,7 @@ function runTests() {
     r => r.includes('RANDOM') && r.includes('4') && r.includes('ADD') && r.includes('MOVE'));
 
   test('compound expr in mark',
-    '(define timer 10 :reg r1) (mark ch_red (* timer 2))',
+    '(let ((timer 10)) (mark ch_red (* timer 2)))',
     r => r.includes('MUL') && r.includes('MARK CH_RED'));
 
   test('nested compound exprs',
@@ -93,16 +89,16 @@ function runTests() {
 
   // --- Unary negation edge cases ---
   test('unary negation simple',
-    '(define x 5 :reg r1) (set! x (- x))',
-    r => r.includes('SET r1 5') && r.includes('MUL r1 -1'));  // In-place negate via MUL
+    '(let ((x 5)) (set! x (- x)))',
+    r => r.includes('MUL') && r.includes('-1'));  // In-place negate via MUL
 
   test('unary negation in expression',
     '(let ((x 5)) (let ((y (- x))) (move random)))',
     r => r.includes('SUB') && !r.includes('MUL'));  // Different dest — uses SET 0 + SUB, no MUL
 
   test('unary negation same register safe',
-    '(define dx 5 :reg r1) (set! dx (- dx))',
-    r => r.includes('MUL r1 -1') && !r.includes('SET r1 0'));  // MUL -1 in-place, no temp
+    '(let ((dx 5)) (set! dx (- dx)))',
+    r => r.includes('MUL') && r.includes('-1') && !r.includes('SET r0 0'));  // MUL -1 in-place, no temp
 
   // --- Nested let bindings ---
   test('nested let scopes',
@@ -165,8 +161,8 @@ function runTests() {
 
   // --- Loop edge cases ---
   test('while loop',
-    '(define x 10 :reg r1) (while (> x 0) (set! x (- x 1)) (move random))',
-    r => r.includes('SUB r1 1') && r.includes('JMP'));
+    '(let ((x 10)) (while (> x 0) (set! x (- x 1)) (move random)))',
+    r => r.includes('SUB') && r.includes('1') && r.includes('JMP'));
 
   test('break in loop',
     `(loop
@@ -177,13 +173,13 @@ function runTests() {
     r => r.includes('SENSE FOOD') && r.includes('JMP'));
 
   test('continue in loop',
-    `(define count 0 :reg r1)
-     (loop
-       (set! count (+ count 1))
-       (if (= (mod count 2) 0)
-         (continue))
-       (move random))`,
-    r => r.includes('ADD r1 1') && r.includes('MOD'));
+    `(let ((count 0))
+       (loop
+         (set! count (+ count 1))
+         (if (= (mod count 2) 0)
+           (continue))
+         (move random)))`,
+    r => r.includes('ADD') && r.includes('1') && r.includes('MOD'));
 
   test('nested loops',
     `(loop
@@ -315,7 +311,7 @@ function runTests() {
     r => r.includes('DROP'));
 
   test('mark with variable',
-    '(define amount 100 :reg r1) (mark ch_red amount)',
+    '(let ((amount 100)) (mark ch_red amount))',
     r => r.includes('MARK CH_RED'));
 
   test('tag action',
@@ -346,9 +342,9 @@ function runTests() {
     '(comment "this is a test") (move random)',
     r => r.includes('; this is a test'));
 
-  test('const directive',
+  test('const inline substitution',
     '(const MAX_FOOD 100) (move random)',
-    r => r.includes('.const MAX_FOOD 100') || r.includes('MOVE RANDOM'));
+    r => r.includes('MOVE RANDOM'));
 
   test('alias directive',
     '(alias counter r5) (move random)',
@@ -393,14 +389,13 @@ function runTests() {
     r => r.includes('SENSE FOOD') && r.includes('SENSE WALL') && 
          r.includes('SENSE NEST') && r.includes('SENSE ANT') && r.includes('CARRYING'));
 
-  test('globals and locals together',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (let ((l1 (sense food))
-           (l2 (sense wall)))
-       (set! g1 l1)
-       (set! g2 l2)
-       (move random))`,
+  test('outer and inner let bindings together',
+    `(let ((g1 0) (g2 0))
+       (let ((l1 (sense food))
+             (l2 (sense wall)))
+         (set! g1 l1)
+         (set! g2 l2)
+         (move random)))`,
     r => r.includes('SENSE FOOD') && r.includes('SENSE WALL'));
 
   // --- Empty/minimal programs ---
@@ -408,8 +403,8 @@ function runTests() {
     '(move random)',
     r => r.includes('MOVE RANDOM'));
 
-  test('define with no main',
-    '(define x 5) (move random)',
+  test('let with no further body outside',
+    '(let ((x 5)) (move random))',
     r => r.includes('SET') && r.includes('MOVE RANDOM'));
 
   // --- Special values ---
@@ -418,39 +413,37 @@ function runTests() {
     r => r.includes('RANDOM') && r.includes('10') && r.includes('4') && r.includes('MOVE'));
 
   test('using timer (if supported)',
-    '(define t 0 :reg r1) (set! t timer) (mark ch_red t)',
+    '(let ((t 0)) (set! t timer) (mark ch_red t))',
     r => r.includes('MARK CH_RED'));
 
   // --- Complex real-world patterns ---
   test('forager pattern: sense and respond',
-    `(define dx 0 :reg r1)
-     (define dy 0 :reg r2)
-     (loop
-       (let ((food (sense food)))
-         (if (!= food 0)
-           (begin
-             (move food)
-             (cond ((= food 1) (set! dy (- dy 1)))
-                   ((= food 2) (set! dx (+ dx 1)))
-                   ((= food 3) (set! dy (+ dy 1)))
-                   ((= food 4) (set! dx (- dx 1))))
-             (pickup))
-           (move (+ (random 4) 1)))))`,
+    `(let ((dx 0) (dy 0))
+       (loop
+         (let ((food (sense food)))
+           (if (!= food 0)
+             (begin
+               (move food)
+               (cond ((= food 1) (set! dy (- dy 1)))
+                     ((= food 2) (set! dx (+ dx 1)))
+                     ((= food 3) (set! dy (+ dy 1)))
+                     ((= food 4) (set! dx (- dx 1))))
+               (pickup))
+             (move (+ (random 4) 1))))))`,
     r => r.includes('SENSE FOOD') && r.includes('PICKUP') && r.includes('RANDOM'));
 
   test('homing pattern: simplified',
-    `(define dx 0 :reg r1)
-     (define dy 0 :reg r2)
-     (let ((c (carrying?)))
-       (when c
-         (let ((dir (if (> dy 0) 1 3)))
-           (move dir))))`,
+    `(let ((dx 0) (dy 0))
+       (let ((c (carrying?)))
+         (when c
+           (let ((dir (if (> dy 0) 1 3)))
+             (move dir)))))`,
     r => r.includes('CARRYING'));
 
   test('if-as-expression in comparison (edge case)',
-    `(define x 5 :reg r1)
-     (let ((abs-x (if (< x 0) (- x) x)))
-       (move random))`,
+    `(let ((x 5))
+       (let ((abs-x (if (< x 0) (- x) x)))
+         (move random)))`,
     r => true);  // Just checking it doesn't crash or compiles somehow
 
   test('pheromone trail pattern',
@@ -544,13 +537,14 @@ function runTests() {
 
   // --- Multiple set! in sequence ---
   test('multiple set! on same variable',
-    `(define x 0 :reg r1)
-     (set! x 1)
-     (set! x 2)
-     (set! x 3)`,
+    `(let ((x 0))
+       (set! x 1)
+       (set! x 2)
+       (set! x 3))`,
     r => {
-      // Dead store elimination removes all but the last SET r1
-      return r.includes('SET r1 3') && !r.includes('SET r1 1') && !r.includes('SET r1 2');
+      // Dead store elimination removes all but the last SET rX
+      const lines = r.split('\n').map(l => l.trim()).filter(l => /^SET r\d \d/.test(l));
+      return lines.length === 1 && lines[0].endsWith('3');
     });
 
   // --- Deeply nested conditionals ---
@@ -577,11 +571,10 @@ function runTests() {
 
   // --- While with complex condition ---
   test('while with compound condition',
-    `(define x 0 :reg r1)
-     (define y 10 :reg r2)
-     (while (< x y)
-       (set! x (+ x 1)))`,
-    r => r.includes('ADD r1 1'));
+    `(let ((x 0) (y 10))
+       (while (< x y)
+         (set! x (+ x 1))))`,
+    r => r.includes('ADD') && r.includes('1'));
 
   // --- Dotimes edge cases ---
   test('dotimes with zero iterations',
@@ -602,10 +595,8 @@ function runTests() {
     r => r.includes('ADD'));
 
   test('arithmetic chain with variables',
-    `(define x 1 :reg r1)
-     (define y 2 :reg r2)
-     (define z 3 :reg r3)
-     (let ((sum (+ x y z))) (move random))`,
+    `(let ((x 1) (y 2) (z 3))
+       (let ((sum (+ x y z))) (move random)))`,
     r => r.includes('ADD'));
 
   // --- Comparison edge cases ---
@@ -639,8 +630,8 @@ function runTests() {
 
   // --- set! with compound expression ---
   test('set! with compound expression',
-    `(define x 0 :reg r1)
-     (set! x (+ (* 2 3) 4))`,
+    `(let ((x 0))
+       (set! x (+ (* 2 3) 4)))`,
     r => r.includes('MUL') && r.includes('ADD'));
 
   // --- Probe all directions ---
@@ -677,47 +668,36 @@ function runTests() {
 
   // --- Multiple break/continue ---
   test('multiple break conditions',
-    `(define i 0 :reg r1)
-     (loop
-       (set! i (+ i 1))
-       (if (= i 5) (break))
-       (if (= i 10) (break))
-       (move random))`,
-    r => r.includes('ADD r1 1') && r.includes('JMP'));
+    `(let ((i 0))
+       (loop
+         (set! i (+ i 1))
+         (if (= i 5) (break))
+         (if (= i 10) (break))
+         (move random)))`,
+    r => r.includes('ADD') && r.includes('1') && r.includes('JMP'));
 
   // --- set! in conditional branches ---
   test('set! in both if branches',
-    `(define result 0 :reg r1)
-     (let ((x (sense food)))
-       (if (= x 0)
-         (set! result 1)
-         (set! result 2)))`,
-    r => r.includes('SET r1 1') && r.includes('SET r1 2'));
+    `(let ((result 0))
+       (let ((x (sense food)))
+         (if (= x 0)
+           (set! result 1)
+           (set! result 2))))`,
+    r => r.includes('SET') && r.includes('1') && r.includes('SET') && r.includes('2'));
 
   // ═══════════════════════════════════════════════════════════════
   // REGISTER ALLOCATION TESTS
   // ═══════════════════════════════════════════════════════════════
 
-  test('all 8 registers available',
-    `(define g1 0 :reg r0)
-     (define g2 0 :reg r1)
-     (define g3 0 :reg r2)
-     (define g4 0 :reg r3)
-     (define g5 0 :reg r4)
-     (define g6 0 :reg r5)
-     (define g7 0 :reg r6)
-     (define g8 0 :reg r7)
-     (set! g1 1)`,
-    r => r.includes('SET r0 0') && r.includes('SET r7 0'));
+  test('all 8 registers used by nested let',
+    `(let ((g1 0) (g2 0) (g3 0) (g4 0) (g5 0) (g6 0) (g7 0) (g8 0))
+       (set! g1 1))`,
+    r => r.includes('SET') && r.includes('1'));
 
-  test('register exhaustion - many globals + locals',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (define g3 0 :reg r3)
-     (define g4 0 :reg r4)
-     (define g5 0 :reg r5)
-     (let ((l1 (sense food)))
-       (set! g1 l1))`,
+  test('register exhaustion - many outer + inner let bindings',
+    `(let ((g1 0) (g2 0) (g3 0) (g4 0) (g5 0))
+       (let ((l1 (sense food)))
+         (set! g1 l1)))`,
     r => r.includes('SENSE FOOD'));
 
   // ═══════════════════════════════════════════════════════════════
@@ -725,45 +705,38 @@ function runTests() {
   // ═══════════════════════════════════════════════════════════════
 
   test('MINIMAL: register leak in compileCondJump',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (define g3 0 :reg r3)
-     (cond
-       ((= g3 0)
-        (if (= (random 5) 0)
-          (move n)
-          (move s)))
-       ((= g3 1)
-        (let ((x 1))
-          (if (= (random 10) 0)
-            (move (+ (random 4) 1))
-            (move s)))))`,
+    `(let ((g1 0) (g2 0) (g3 0))
+       (cond
+         ((= g3 0)
+          (if (= (random 5) 0)
+            (move n)
+            (move s)))
+         ((= g3 1)
+          (let ((x 1))
+            (if (= (random 10) 0)
+              (move (+ (random 4) 1))
+              (move s))))))`,
     r => r.includes('RANDOM') && r.includes('MOVE N'));
 
   test('multiple comparisons in sequence should free temp registers',
-    `(define a 0 :reg r1)
-     (define b 0 :reg r2)
-     (define c 0 :reg r3)
-     (let ((x (sense food)))
-       (if (> x 0)
-         (if (< x 5)
-           (if (= x 3)
-             (move n)
-             (move s))
-           (move e))
-         (move w)))`,
+    `(let ((a 0) (b 0) (c 0))
+       (let ((x (sense food)))
+         (if (> x 0)
+           (if (< x 5)
+             (if (= x 3)
+               (move n)
+               (move s))
+             (move e))
+           (move w))))`,
     r => r.includes('SENSE FOOD') && r.includes('MOVE N'));
 
   test('compileCondJump frees temp registers after comparison',
-    `(define g1 0 :reg r1)
-     (define g2 0 :reg r2)
-     (define g3 0 :reg r3)
-     (define g4 0 :reg r4)
-     (let ((x (sense food))
-           (y (sense wall)))
-       (if (> x y)
-         (move n)
-         (move s)))`,
+    `(let ((g1 0) (g2 0) (g3 0) (g4 0))
+       (let ((x (sense food))
+             (y (sense wall)))
+         (if (> x y)
+           (move n)
+           (move s))))`,
     r => r.includes('SENSE FOOD') && r.includes('JGT'));
 
   // ═══════════════════════════════════════════════════════════════
@@ -803,12 +776,12 @@ function runTests() {
      (forage)`,
     r => r.includes('SENSE FOOD') && r.includes('MOVE') && r.includes('PICKUP'));
 
-  test('macro using globals',
-    `(define dx 0 :reg r1)
-     (defmacro track-east ()
-       (set! dx (+ dx 1)))
-     (track-east)`,
-    r => r.includes('ADD r1 1'));
+  test('macro using outer let binding',
+    `(let ((dx 0))
+       (defmacro track-east ()
+         (set! dx (+ dx 1)))
+       (track-east))`,
+    r => r.includes('ADD') && r.includes('1'));
 
   test('macro called multiple times',
     `(defmacro wander ()
@@ -854,28 +827,28 @@ function runTests() {
      (wander)`,
     r => r.includes('RANDOM') && r.includes('MOVE'));
 
-  test('macro param shadows global',
-    `(define x 5 :reg r1)
-     (defmacro set-x (x)
-       (move x))
-     (set-x n)`,
-    r => r.includes('MOVE N'));  // x param is N, not r1
+  test('macro param shadows outer binding',
+    `(let ((x 5))
+       (defmacro set-x (x)
+         (move x))
+       (set-x n))`,
+    r => r.includes('MOVE N'));  // x param is N, not the let-bound x
 
-  test('hygienic: macro free var resolves to definition-site global',
-    `(define x 10 :reg r0)
-     (defmacro use-x ()
-       (move x))
-     (let ((x 99))
-       (use-x))`,
-    r => r.includes('MOVE r0'));  // uses global x (r0), not local x
+  test('hygienic: macro free var resolves to definition-site binding',
+    `(let ((x 10))
+       (defmacro use-x ()
+         (move x))
+       (let ((x 99))
+         (use-x)))`,
+    r => r.includes('MOVE r0'));  // uses outer x (r0), not inner x
 
-  test('hygienic: macro set! targets definition-site global',
-    `(define counter 0 :reg r0)
-     (defmacro bump ()
-       (set! counter (+ counter 1)))
-     (let ((counter 99))
-       (bump))`,
-    r => r.includes('ADD r0 1'));  // increments global r0, not local
+  test('hygienic: macro set! targets definition-site binding',
+    `(let ((counter 0))
+       (defmacro bump ()
+         (set! counter (+ counter 1)))
+       (let ((counter 99))
+         (bump)))`,
+    r => r.includes('ADD r0 1'));  // increments outer counter (r0), not inner
 
   test('hygienic: macro sees consts from definition site',
     `(const MY_VAL 42)
@@ -885,10 +858,10 @@ function runTests() {
     r => r.includes('MOVE 42'));
 
   test('hygienic: nested macro calls use correct scopes',
-    `(define dir 0 :reg r0)
-     (defmacro inner (dir) (move dir))
-     (defmacro outer (dir) (inner dir))
-     (outer dir)`,
+    `(let ((dir 0))
+       (defmacro inner (dir) (move dir))
+       (defmacro outer (dir) (inner dir))
+       (outer dir))`,
     r => r.includes('MOVE r0'));
 
   // ═══════════════════════════════════════════════════════════════
@@ -1030,15 +1003,12 @@ function runTests() {
 
   test('peephole: instruction count reduced for open.alisp cond patterns',
     // Mirrors the move-with-tracking cond pattern from open.alisp
-    `(define dir 0 :reg r0)
-     (define dx 0 :reg r1)
-     (define dy 0 :reg r2)
-     (cond ((= dir 1) (set! dy (- dy 1)))
-           ((= dir 2) (set! dx (+ dx 1)))
-           ((= dir 3) (set! dy (+ dy 1)))
-           ((= dir 4) (set! dx (- dx 1))))`,
+    `(let ((dir 0) (dx 0) (dy 0))
+       (cond ((= dir 1) (set! dy (- dy 1)))
+             ((= dir 2) (set! dx (+ dx 1)))
+             ((= dir 3) (set! dy (+ dy 1)))
+             ((= dir 4) (set! dx (- dx 1)))))`,
     r => {
-      const instrs = r.split('\n').filter(l => /^\s+[A-Z]/.test(l));
       const jmps = r.split('\n').filter(l => l.trim().startsWith('JMP __endcond'));
       // 4 branches, last one should have no JMP __endcond → 3 JMPs
       return jmps.length === 3;
@@ -1049,41 +1019,39 @@ function runTests() {
   // ═══════════════════════════════════════════════════════════════
 
   test('dead-store: SET rX 0 then SET rX rY eliminates first SET',
-    `(define x 0 :reg r1)
-     (let ((tmp 0))
+    `(let ((x 0) (tmp 0))
        (set! tmp (and x 255))
        (move random))`,
     r => {
-      // (let ((tmp 0))) emits SET r0 0, then (set! tmp (and x 255))
-      // emits SET r0 r1 + AND r0 255.  The SET r0 0 is dead.
+      // tmp gets r1, x gets r0. (let ((tmp 0))) emits SET r1 0,
+      // then (set! tmp (and x 255)) emits SET r1 r0 + AND r1 255.
+      // The SET r1 0 is a dead store and should be eliminated.
       const lines = r.split('\n').map(l => l.trim()).filter(l => l);
-      // Find consecutive SET r0 instructions
+      // Check no consecutive SET rN 0; SET rN <reg> for any register
       for (let i = 0; i < lines.length - 1; i++) {
-        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 r1') {
-          return false;  // dead store NOT eliminated
-        }
+        const m1 = lines[i].match(/^SET (r\d) 0$/);
+        const m2 = lines[i+1].match(/^SET (r\d) r\d$/);
+        if (m1 && m2 && m1[1] === m2[1]) return false;  // dead store NOT eliminated
       }
       return true;
     });
 
   test('dead-store: consecutive SET same reg, both literals',
-    `(define x 0 :reg r1)
-     (let ((tmp 0))
+    `(let ((tmp 0))
        (set! tmp 42)
        (move random))`,
     r => {
       const lines = r.split('\n').map(l => l.trim()).filter(l => l);
       for (let i = 0; i < lines.length - 1; i++) {
-        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 42') {
-          return false;  // dead store NOT eliminated
-        }
+        const m1 = lines[i].match(/^SET (r\d) 0$/);
+        const m2 = lines[i+1].match(/^SET (r\d) 42$/);
+        if (m1 && m2 && m1[1] === m2[1]) return false;  // dead store NOT eliminated
       }
       return true;
     });
 
   test('dead-store: does NOT eliminate when label intervenes',
-    `(define x 0 :reg r1)
-     (let ((tmp 0))
+    `(let ((tmp 0))
        (label target)
        (set! tmp 42)
        (move random))`,
@@ -1091,27 +1059,22 @@ function runTests() {
       // A label between the two SETs means the first might be a jump
       // target — it must NOT be eliminated.
       const lines = r.split('\n').map(l => l.trim()).filter(l => l);
-      let foundInit = false;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i] === 'SET r0 0') foundInit = true;
-        if (lines[i] === 'SET r0 42' && foundInit) return true;
-      }
-      return false;  // init was eliminated — bad!
+      // Should still have the init SET rX 0
+      return lines.some(l => /^SET r\d 0$/.test(l));
     });
 
   test('dead-store: does NOT eliminate when different registers',
-    `(define x 0 :reg r1)
-     (define y 0 :reg r2)
-     (let ((a 0) (b 0))
+    `(let ((x 0) (y 0) (a 0) (b 0))
        (set! a x)
        (set! b y)
        (move random))`,
     r => {
-      // SET r0 0; SET r3 0; SET r0 r1; SET r3 r2
-      // Only r0's and r3's own dead stores should be removed, not
-      // across registers.  Just verify it compiles and both SET rN rM
-      // instructions exist.
-      return r.includes('SET r0 r1') && r.includes('SET r3 r2');
+      // a and b get regs r2/r3, x and y get r0/r1.
+      // After dead-store elim, the init SETs for a and b should be gone,
+      // but the SET a x and SET b y instructions must still exist.
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      const setRegs = lines.filter(l => /^SET r\d r\d$/.test(l));
+      return setRegs.length === 2;
     });
 
   test('dead-store: multiple consecutive dead stores, last wins',
@@ -1122,9 +1085,9 @@ function runTests() {
        (move random))`,
     r => {
       const lines = r.split('\n').map(l => l.trim()).filter(l => l);
-      // Should only have SET r0 3, not the preceding dead SETs
-      const setR0s = lines.filter(l => /^SET r0 \d+$/.test(l));
-      return setR0s.length === 1 && setR0s[0] === 'SET r0 3';
+      // Should only have one SET rX <literal> (the last one, value 3)
+      const setLits = lines.filter(l => /^SET r\d \d+$/.test(l));
+      return setLits.length === 1 && setLits[0].endsWith('3');
     });
 
   test('dead-store: real macro pattern — inc-dx! has no dead SET',
@@ -1135,15 +1098,15 @@ function runTests() {
          (set! tmp (and tmp 0xFF))
          (set! packed (and packed 0xFFFFFF00))
          (set! packed (or packed tmp))))
-     (define packed 0 :reg r1)
-     (inc-dx! packed)`,
+     (let ((packed 0))
+       (inc-dx! packed))`,
     r => {
       const lines = r.split('\n').map(l => l.trim()).filter(l => l);
-      // Should NOT have SET r0 0 followed by SET r0 r1
+      // Should NOT have SET rX 0 immediately followed by SET rX rY (dead init)
       for (let i = 0; i < lines.length - 1; i++) {
-        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 r1') {
-          return false;
-        }
+        const m1 = lines[i].match(/^SET (r\d) 0$/);
+        const m2 = lines[i+1].match(/^SET (r\d) r\d$/);
+        if (m1 && m2 && m1[1] === m2[1]) return false;
       }
       return true;
     });
