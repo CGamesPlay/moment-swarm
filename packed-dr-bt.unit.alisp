@@ -1,0 +1,485 @@
+; ═══════════════════════════════════════════════════════════════
+; Packed Path Backtracking — Macro Library and Unit Tests
+; ═══════════════════════════════════════════════════════════════
+;
+; A single 32-bit register stores up to 16 directions (2 bits each).
+; New directions are pushed at the low end; old directions shift up.
+;
+;   bits  1:0  → most recent direction
+;   bits  3:2  → second most recent
+;   ...
+;   bits 31:30 → oldest (16th) direction
+;
+; Direction encoding (2-bit):
+;   N=0  E=1  S=2  W=3     (ISA direction - 1)
+;
+; ISA directions:
+;   N=1  E=2  S=3  W=4
+;
+; ── Primitives ──────────────────────────────────────────────
+;   (push-path! path dir)          shift path left 2, store (dir-1) in low 2 bits
+;   (pop-path-dir! dir path)       extract low 2 bits as ISA dir (1-4), shift path right 2
+;   (peek-path-dir! dir path)      extract low 2 bits as ISA dir without modifying path
+;
+; ── High-level macros ───────────────────────────────────────
+;   (move-with-tracking-bt dir packed path)
+;       Wall-checked move; updates packed dx/dy AND path on success.
+;
+;   (reverse-dir! dir)
+;       Reverse a direction: N↔S, E↔W
+;
+; ── Register budget ─────────────────────────────────────────
+;   path     — 1 register for the packed path
+;   packed   — 1 register for dx/dy (from packed-dr)
+;   dir      — 1 register for current direction
+;   + scratch registers from packed-dr macros
+;
+; Run with: argc unit packed-dr-bt.unit.alisp
+; ═══════════════════════════════════════════════════════════════
+
+; ─── Include packed-dr primitives ────────────────────────────
+; (We redefine the dx/dy macros here for self-containment)
+
+; Pack a signed integer into bits 7:0 of `packed`.
+(defmacro pack-dx! (packed dx)
+  (set! packed (and packed 0xFFFFFF00))
+  (set! packed (or  packed (and dx 0xFF))))
+
+; Pack a signed integer into bits 15:8 of `packed`.
+(defmacro pack-dy! (packed dy)
+  (set! packed (and packed 0xFFFF00FF))
+  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+
+; Unpack bits 7:0 into `out` as a signed 8-bit integer.
+(defmacro unpack-dx! (out packed)
+  (set! out (and packed 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Unpack bits 15:8 into `out` as a signed 8-bit integer.
+(defmacro unpack-dy! (out packed)
+  (set! out (and (rshift packed 8) 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Increment/decrement dx/dy in-place.
+(defmacro inc-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro inc-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; ─── Path packing primitives ────────────────────────────────
+
+; Push a direction onto the path register.
+; Shifts existing path left by 2 bits, stores (dir - 1) in low 2 bits.
+; dir must be an ISA direction (1-4).
+(defmacro push-path! (path dir)
+  (set! path (lshift path 2))
+  (set! path (or path (- dir 1))))
+
+; Pop the most recent direction from the path register.
+; Extracts the low 2 bits, converts to ISA direction (+ 1), then
+; shifts path right by 2 bits. Uses AND to clear sign-extended bits
+; since RSHIFT is arithmetic.
+(defmacro pop-path-dir! (dir path)
+  (set! dir (+ (and path 3) 1))
+  (set! path (rshift path 2))
+  (set! path (and path 0x3FFFFFFF)))
+
+; Peek at the most recent direction without modifying the path.
+(defmacro peek-path-dir! (dir path)
+  (set! dir (+ (and path 3) 1)))
+
+; ─── Reverse direction ───────────────────────────────────────
+
+; Reverse an ISA direction: N(1)↔S(3), E(2)↔W(4).
+; Uses the identity: reverse = ((dir + 1) mod 4) + 1
+;   N=1: (2 mod 4)+1 = 3=S ✓   E=2: (3 mod 4)+1 = 4=W ✓
+;   S=3: (4 mod 4)+1 = 1=N ✓   W=4: (5 mod 4)+1 = 2=E ✓
+(defmacro reverse-dir! (dir)
+  (set! dir (+ (mod (+ dir 1) 4) 1)))
+
+; ─── High-level macros ───────────────────────────────────────
+
+; Move in `dir` with wall check; update packed dx/dy AND path on success.
+(defmacro move-with-tracking-bt (dir packed path)
+  (unless (= (probe dir) 1)
+    (push-path! path dir)
+    (move dir)
+    (cond ((= dir 1) (dec-dy! packed))
+          ((= dir 2) (inc-dx! packed))
+          ((= dir 3) (inc-dy! packed))
+          ((= dir 4) (dec-dx! packed)))))
+
+; ═════════════════════════════════════════════════════════════
+; TESTS
+; ═════════════════════════════════════════════════════════════
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 1 — push-path! / pop-path-dir! round-trips
+; ─────────────────────────────────────────────────────────────
+
+(test "push N, pop → N"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 1)
+      (pop-path-dir! dir path)))
+  (assert-reg-name dir 1)
+  (assert-reg-name path 0))
+
+(test "push E, pop → E"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 2)
+      (pop-path-dir! dir path)))
+  (assert-reg-name dir 2)
+  (assert-reg-name path 0))
+
+(test "push S, pop → S"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 3)
+      (pop-path-dir! dir path)))
+  (assert-reg-name dir 3)
+  (assert-reg-name path 0))
+
+(test "push W, pop → W"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 4)
+      (pop-path-dir! dir path)))
+  (assert-reg-name dir 4)
+  (assert-reg-name path 0))
+
+(test "push N,E pop → E then N (LIFO)"
+  :run-once
+  (begin
+    (let ((path 0) (d1 0) (d2 0))
+      (push-path! path 1)
+      (push-path! path 2)
+      (pop-path-dir! d1 path)
+      (pop-path-dir! d2 path)))
+  (assert-reg-name d1 2)
+  (assert-reg-name d2 1)
+  (assert-reg-name path 0))
+
+(test "push N,E,S,W pop → W,S,E,N"
+  :run-once
+  (begin
+    (let ((path 0) (d1 0) (d2 0) (d3 0) (d4 0))
+      (push-path! path 1)
+      (push-path! path 2)
+      (push-path! path 3)
+      (push-path! path 4)
+      (pop-path-dir! d1 path)
+      (pop-path-dir! d2 path)
+      (pop-path-dir! d3 path)
+      (pop-path-dir! d4 path)))
+  (assert-reg-name d1 4)
+  (assert-reg-name d2 3)
+  (assert-reg-name d3 2)
+  (assert-reg-name d4 1)
+  (assert-reg-name path 0))
+
+(test "push 16 directions, pop all back (capacity test)"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0) (ok 1))
+      ; Push N,E,S,W repeated 4 times = 16 directions
+      (push-path! path 1) (push-path! path 2) (push-path! path 3) (push-path! path 4)
+      (push-path! path 1) (push-path! path 2) (push-path! path 3) (push-path! path 4)
+      (push-path! path 1) (push-path! path 2) (push-path! path 3) (push-path! path 4)
+      (push-path! path 1) (push-path! path 2) (push-path! path 3) (push-path! path 4)
+      ; Pop: expect W,S,E,N repeated 4 times
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 3) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 2) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 3) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 2) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 3) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 2) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 3) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 2) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))))
+  (assert-reg-name ok 1)
+  (assert-reg-name path 0))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 2 — peek-path-dir!
+; ─────────────────────────────────────────────────────────────
+
+(test "peek does not modify path"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 3)
+      (push-path! path 1)
+      ; path = (S=2 << 2) | (N=0) = 8
+      (peek-path-dir! dir path)))
+  (assert-reg-name dir 1)
+  (assert-reg-name path 8))
+
+(test "peek then pop gives same direction"
+  :run-once
+  (begin
+    (let ((path 0) (peeked 0) (popped 0))
+      (push-path! path 2)
+      (push-path! path 4)
+      (peek-path-dir! peeked path)
+      (pop-path-dir! popped path)))
+  (assert-reg-name peeked 4)
+  (assert-reg-name popped 4))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 3 — reverse-dir!
+; ─────────────────────────────────────────────────────────────
+
+(test "reverse N → S"
+  :run-once
+  (begin
+    (let ((dir 1))
+      (reverse-dir! dir)))
+  (assert-reg-name dir 3))
+
+(test "reverse E → W"
+  :run-once
+  (begin
+    (let ((dir 2))
+      (reverse-dir! dir)))
+  (assert-reg-name dir 4))
+
+(test "reverse S → N"
+  :run-once
+  (begin
+    (let ((dir 3))
+      (reverse-dir! dir)))
+  (assert-reg-name dir 1))
+
+(test "reverse W → E"
+  :run-once
+  (begin
+    (let ((dir 4))
+      (reverse-dir! dir)))
+  (assert-reg-name dir 2))
+
+(test "reverse is involution (double reverse)"
+  :run-once
+  (begin
+    (let ((dir 1))
+      (reverse-dir! dir)
+      (reverse-dir! dir)))
+  (assert-reg-name dir 1))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 4 — move-with-tracking-bt (move + dx/dy + path)
+; ─────────────────────────────────────────────────────────────
+
+(test "bt move N: dy decrements, path records N"
+  :ticks 2
+  (begin
+    (let ((dir 1) (packed 0) (path 0) (xout 0) (yout 0) (pdir 0) (done 0))
+      (loop
+        (when (= done 0)
+          (set! done 1)
+          (move-with-tracking-bt dir packed path))
+        (unpack-dx! xout packed)
+        (unpack-dy! yout packed)
+        (peek-path-dir! pdir path)
+        (break))
+      (move random)))
+  (assert-reg-name xout 0)
+  (assert-reg-name yout -1)
+  (assert-reg-name pdir 1))
+
+(test "bt move E: dx increments, path records E"
+  :ticks 2
+  (begin
+    (let ((dir 2) (packed 0) (path 0) (xout 0) (yout 0) (pdir 0) (done 0))
+      (loop
+        (when (= done 0)
+          (set! done 1)
+          (move-with-tracking-bt dir packed path))
+        (unpack-dx! xout packed)
+        (unpack-dy! yout packed)
+        (peek-path-dir! pdir path)
+        (break))
+      (move random)))
+  (assert-reg-name xout 1)
+  (assert-reg-name yout 0)
+  (assert-reg-name pdir 2))
+
+(test "bt move S: dy increments, path records S"
+  :ticks 2
+  (begin
+    (let ((dir 3) (packed 0) (path 0) (xout 0) (yout 0) (pdir 0) (done 0))
+      (loop
+        (when (= done 0)
+          (set! done 1)
+          (move-with-tracking-bt dir packed path))
+        (unpack-dx! xout packed)
+        (unpack-dy! yout packed)
+        (peek-path-dir! pdir path)
+        (break))
+      (move random)))
+  (assert-reg-name xout 0)
+  (assert-reg-name yout 1)
+  (assert-reg-name pdir 3))
+
+(test "bt move W: dx decrements, path records W"
+  :ticks 2
+  (begin
+    (let ((dir 4) (packed 0) (path 0) (xout 0) (yout 0) (pdir 0) (done 0))
+      (loop
+        (when (= done 0)
+          (set! done 1)
+          (move-with-tracking-bt dir packed path))
+        (unpack-dx! xout packed)
+        (unpack-dy! yout packed)
+        (peek-path-dir! pdir path)
+        (break))
+      (move random)))
+  (assert-reg-name xout -1)
+  (assert-reg-name yout 0)
+  (assert-reg-name pdir 4))
+
+(test "bt wall blocks: packed and path unchanged"
+  :run-once
+  :ant-x 1
+  :ant-y 16
+  (begin
+    (let ((dir 4) (packed 0) (path 0))
+      (move-with-tracking-bt dir packed path)))
+  (assert-reg-name packed 0)
+  (assert-reg-name path 0)
+  (assert-at 1 16))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 5 — pop-path for backtracking (reverse direction)
+; ─────────────────────────────────────────────────────────────
+
+(test "pop and reverse: pushed E → pop gives E, reverse gives W"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      (push-path! path 2)
+      (pop-path-dir! dir path)
+      (reverse-dir! dir)))
+  (assert-reg-name dir 4))
+
+(test "push N,E,S: pop+reverse → N,W,S (backtrack order)"
+  :run-once
+  (begin
+    (let ((path 0) (d1 0) (d2 0) (d3 0))
+      (push-path! path 1)
+      (push-path! path 2)
+      (push-path! path 3)
+      ; Pop S → reverse → N
+      (pop-path-dir! d1 path)
+      (reverse-dir! d1)
+      ; Pop E → reverse → W
+      (pop-path-dir! d2 path)
+      (reverse-dir! d2)
+      ; Pop N → reverse → S
+      (pop-path-dir! d3 path)
+      (reverse-dir! d3)))
+  (assert-reg-name d1 1)
+  (assert-reg-name d2 4)
+  (assert-reg-name d3 3)
+  (assert-reg-name path 0))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 6 — sign bit stress (RSHIFT is arithmetic)
+; ─────────────────────────────────────────────────────────────
+
+(test "path with bit 31 set: pop clears sign-extended bits"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0))
+      ; W=3 in 2-bit encoding. Push 16 W's → all bits set → 0xFFFFFFFF
+      (push-path! path 4) (push-path! path 4) (push-path! path 4) (push-path! path 4)
+      (push-path! path 4) (push-path! path 4) (push-path! path 4) (push-path! path 4)
+      (push-path! path 4) (push-path! path 4) (push-path! path 4) (push-path! path 4)
+      (push-path! path 4) (push-path! path 4) (push-path! path 4) (push-path! path 4)
+      ; Pop all 16
+      (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)
+      (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)
+      (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)
+      (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)))
+  ; Last popped should be W
+  (assert-reg-name dir 4)
+  ; Path should be 0 after all pops
+  (assert-reg-name path 0))
+
+(test "alternating N/W: high bit stress with correct pop order"
+  :run-once
+  (begin
+    (let ((path 0) (dir 0) (ok 1))
+      ; N=0 in 2-bit, W=3. Push N,W,N,W... 8 pairs = 16 dirs
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      (push-path! path 1) (push-path! path 4)
+      ; Pop: expect W,N,W,N... 8 pairs
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
+      (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))))
+  (assert-reg-name ok 1)
+  (assert-reg-name path 0))
