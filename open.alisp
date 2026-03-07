@@ -1,0 +1,150 @@
+; ── OPEN FORAGER — optimised for prairie/open maps ────────────────
+;
+; Two-state machine (no LOST / FOLLOWING states — open maps have no
+; walls to get lost behind, so the overhead isn't worth it).
+;
+; States:
+;   EXPLORING  — random-walk with smart heading:
+;                  1. if SNIFF HERE DELIVERING → head opposite SMELL DELIVERING, 1-4 ticks
+;                  2. elif SENSE DELIVERING ant → move that direction, 1 tick
+;                  3. else → random direction, 1-4 ticks
+;                food → grab + RETURNING
+;                always MARK EXPLORING 20
+;
+;   RETURNING  — carry food home, MARK DELIVERING 100
+;                nest → drop + EXPLORING
+
+; ── Registers ──
+(define dx 0 :reg r1)           ; x displacement from nest
+(define dy 0 :reg r2)           ; y displacement from nest
+(define dir 0 :reg r0)          ; current movement direction
+(define state 0 :reg r3)        ; current state (0=exploring, 1=returning)
+(define steps 0 :reg r4)        ; steps remaining on current heading
+
+; ── Constants ──
+(const EXPLORING_PH ch_red)
+(const DELIVERING_PH ch_blue)
+
+(const S_EXPLORING 0)
+(const S_RETURNING 1)
+
+; ── Tags ──
+(define-role exploring 0)
+(define-role returning 1)
+
+; ══════════════════════════════════════════════
+; MACROS
+; ══════════════════════════════════════════════
+
+; Opposite cardinal direction: N↔S, E↔W
+(defmacro invert-dir (d)
+  (+ (mod (+ d 1) 4) 1))
+
+; Move in 'dir' with wall check and displacement tracking
+(defmacro move-with-tracking ()
+  (unless (= (probe dir) 1)
+    (move dir)
+    (cond ((= dir 1) (set! dy (- dy 1)))
+          ((= dir 2) (set! dx (+ dx 1)))
+          ((= dir 3) (set! dy (+ dy 1)))
+          ((= dir 4) (set! dx (- dx 1))))))
+
+; Set dir toward nest based on accumulated dx/dy
+(defmacro home-dir ()
+  (let ((abs-dx (if (< dx 0) (- dx) dx)))
+    (if (> (if (< dy 0) (- dy) dy) abs-dx)
+      (if (> dy 0)
+        (set! dir 1)      ; went south → return north
+        (set! dir 3))     ; went north → return south
+      (if (> dx 0)
+        (set! dir 4)      ; went east → return west
+        (set! dir 2)))))  ; went west → return east
+
+; Pick a random direction, rotating past walls
+(defmacro pick-random-nonwall ()
+  (set! dir (+ (random 4) 1))
+  (when (= (probe dir) 1)
+    (set! dir (+ (mod dir 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod dir 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod dir 4) 1))))))
+
+; ══════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════
+
+(loop
+  (cond
+    ; ────────────────────────────────────────
+    ; EXPLORING
+    ; ────────────────────────────────────────
+    ((= state S_EXPLORING)
+     (begin
+       (tag exploring)
+
+       ; Food check — grab and switch to returning
+       (let ((food-dir (sense food)))
+         (if (!= food-dir 0)
+           (begin
+             (set! dir food-dir)
+             (move-with-tracking)
+             (pickup)
+             (set! state S_RETURNING)
+             (set! steps 0))
+
+           ; No food — choose heading
+           (begin
+             (when (<= steps 0)
+               ; 1. DELIVERING pheromone here → head opposite the gradient
+               ;    (toward nest, so we can intercept the trail source)
+               (let ((del-dir (smell DELIVERING_PH)))
+                 (if (!= del-dir 0)
+                   (begin
+                     (set! dir (invert-dir del-dir))
+                     (set! steps (+ (random 4) 1)))
+                   ; 2. No trail — random direction, 1-4 ticks
+                   (begin
+                     (pick-random-nonwall)
+                     (set! steps (+ (random 4) 1))))))
+
+             ; Wall check: re-pick if blocked
+             (when (= (probe dir) 1)
+               (pick-random-nonwall)
+               (set! steps (+ (random 4) 1)))
+
+             (mark EXPLORING_PH 20)
+             (move-with-tracking)
+             (set! steps (- steps 1)))))))
+
+    ; ────────────────────────────────────────
+    ; RETURNING
+    ; ────────────────────────────────────────
+    ((= state S_RETURNING)
+     (begin
+       (tag returning)
+
+       (let ((nest-dir (sense nest)))
+         (if (!= nest-dir 0)
+           ; At nest — drop and explore
+           (begin
+             (set! dir nest-dir)
+             (move-with-tracking)
+             (drop)
+             (set! dx 0)
+             (set! dy 0)
+             (set! state S_EXPLORING)
+             (set! steps 0))
+
+           ; Navigate home
+           (begin
+             (mark DELIVERING_PH 100)
+
+             ; Dead-reckon straight home using displacement
+             (home-dir)
+
+             ; Wall check — try a perpendicular nudge rather than going lost
+             (when (= (probe dir) 1)
+               (pick-random-nonwall))
+
+             (move-with-tracking))))))))
