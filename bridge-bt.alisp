@@ -1,0 +1,394 @@
+; ── BRIDGE-BT FORAGER — backtracking + trail + wall-scanning ──────
+;
+; Extends bridge.alisp with packed-path backtracking:
+;
+; 1. During EXPLORING and SCANNING, every successful move is recorded
+;    in a packed path register (16 directions, 2 bits each).
+;
+; 2. On entering RETURNING, the ant first backtracks by popping and
+;    reversing directions from the path. This retraces the last 16
+;    steps exactly, navigating back through corridors and around walls.
+;
+; 3. Once the path is exhausted (or the ant reaches the nest), it
+;    falls through to normal dead-reckoning + trail-following behavior.
+
+; ── Constants ──
+(const TRAIL_PH ch_red)
+(const DELIVERING_PH ch_blue)
+
+(const EXPLORE_TIMEOUT 600)
+(const TRAIL_STRENGTH 100)
+(const SCAN_STEPS 40)
+
+; ── Tags ──
+(define-role exploring 0)
+(define-role lost 1)
+(define-role returning 2)
+(define-role scanning 3)
+(define-role backtracking 4)
+
+; ══════════════════════════════════════════════
+; MACROS (from packed-dr-bt.unit.alisp)
+; ══════════════════════════════════════════════
+
+; ─── dx/dy packing ───────────────────────────────────────────
+
+(defmacro pack-dx! (packed dx)
+  (set! packed (and packed 0xFFFFFF00))
+  (set! packed (or  packed (and dx 0xFF))))
+
+(defmacro pack-dy! (packed dy)
+  (set! packed (and packed 0xFFFF00FF))
+  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+
+(defmacro unpack-dx! (out packed)
+  (set! out (and packed 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+(defmacro unpack-dy! (out packed)
+  (set! out (and (rshift packed 8) 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+(defmacro inc-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro inc-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; ─── Path packing primitives ────────────────────────────────
+
+(defmacro push-path! (path dir)
+  (set! path (lshift path 2))
+  (set! path (or path (- dir 1))))
+
+(defmacro pop-path-dir! (dir path)
+  (set! dir (+ (and path 3) 1))
+  (set! path (rshift path 2))
+  (set! path (and path 0x3FFFFFFF)))
+
+(defmacro reverse-dir! (dir)
+  (set! dir (+ (mod (+ dir 1) 4) 1)))
+
+; ─── High-level movement macros ──────────────────────────────
+
+; Move in `dir` with wall check; update packed dx/dy AND path on success.
+(defmacro move-with-tracking-bt (dir packed path)
+  (unless (= (probe dir) 1)
+    (push-path! path dir)
+    (move dir)
+    (cond ((= dir 1) (dec-dy! packed))
+          ((= dir 2) (inc-dx! packed))
+          ((= dir 3) (inc-dy! packed))
+          ((= dir 4) (dec-dx! packed)))))
+
+; Set dir toward nest based on homepos dx/dy.
+(defmacro home-dir (dir homepos)
+  (let ((dx 0)
+        (dy 0)
+        (abs-dx 0))
+    (unpack-dx! dx homepos)
+    (unpack-dy! dy homepos)
+    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
+    (if (< dy 0)
+      (begin
+        (set! dy (- dy))
+        (if (> dy abs-dx)
+          (set! dir 3)
+          (if (> dx 0)
+            (set! dir 4)
+            (set! dir 2))))
+      (if (> dy abs-dx)
+        (set! dir 1)
+        (if (> dx 0)
+          (set! dir 4)
+          (set! dir 2))))))
+
+; ── Local macros ──────────────────────────────────────────────
+
+; Opposite cardinal direction: N↔S, E↔W
+(defmacro invert-dir (d)
+  (+ (mod (+ d 1) 4) 1))
+
+; Turn right: N→E, E→S, S→W, W→N
+(defmacro turn-right (d)
+  (+ (mod d 4) 1))
+
+; Pick a random direction, rotating past walls
+(defmacro pick-random-nonwall (dir)
+  (set! dir (+ (random 4) 1))
+  (when (= (probe dir) 1)
+    (set! dir (+ (mod dir 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod dir 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod dir 4) 1))))))
+
+; Navigate home: dead-reckon first, trail fallback when blocked.
+(defmacro navigate-home (dir homepos)
+  (home-dir dir homepos)
+  (when (= (probe dir) 1)
+    (let ((scratch (smell TRAIL_PH)))
+      (if (!= scratch 0)
+        (set! dir scratch)
+        (pick-random-nonwall dir)))
+    (when (= (probe dir) 1)
+      (pick-random-nonwall dir))))
+
+; ══════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════
+
+; Register budget (8 total):
+;   dir, homepos, path = 3 persistent
+;   counter = 1 dual-purpose per state
+;   explore-age = 1 timer
+;   ── 3 remaining for macro temps ──
+
+(let ((dir         0)  ; current movement direction
+      (homepos     0)  ; packed dx/dy displacement from nest
+      (path        0)  ; packed path: last 16 directions (2 bits each)
+      (counter     0)  ; EXPLORING: heading steps remaining
+                       ; SCANNING: the blocked direction to probe for gaps
+                       ; BACKTRACKING: steps remaining to pop
+      (explore-age 0)) ; EXPLORING: ticks spent this run
+                       ; SCANNING: steps remaining in wall-follow
+  (tagbody
+    ; ────────────────────────────────────────
+    ; EXPLORING
+    ; ────────────────────────────────────────
+    exploring
+    (tag exploring)
+
+    ; Timeout — too long without food, go home
+    (when (>= explore-age EXPLORE_TIMEOUT)
+      (go lost))
+
+    ; Food check — grab and switch to returning
+    (let ((food-dir (sense food)))
+      (when (!= food-dir 0)
+        (set! dir food-dir)
+        (move-with-tracking-bt dir homepos path)
+        (pickup)
+        ; Start backtracking: pop up to 16 steps
+        (set! counter 16)
+        (go backtracking)))
+
+    ; Mark trail breadcrumb
+    (mark TRAIL_PH TRAIL_STRENGTH)
+
+    ; Pick new heading when counter (heading steps) runs out
+    (when (<= counter 0)
+      ; DELIVERING pheromone → head opposite (toward food sources)
+      (let ((delivery-signal (sniff DELIVERING_PH here)))
+        (if (!= delivery-signal 0)
+          (begin
+            (set! dir (invert-dir (smell DELIVERING_PH)))
+            (set! counter (+ (random 4) 1)))
+          ; No delivering — random
+          (begin
+            (pick-random-nonwall dir)
+            (set! counter (+ (random 4) 1))))))
+
+    ; Wall check — if blocked, enter SCANNING state
+    (when (= (probe dir) 1)
+      ; Save the direction we want to go (through the wall)
+      (let ((wall-dir dir))
+        ; Pick perpendicular direction (random left or right turn)
+        (if (< (random 2) 1)
+          (set! dir (turn-right wall-dir))
+          (set! dir (invert-dir (turn-right wall-dir))))
+        ; If perpendicular is also blocked, try the other one
+        (when (= (probe dir) 1)
+          (set! dir (invert-dir dir))
+          (when (= (probe dir) 1)
+            (set! dir (invert-dir wall-dir))))
+        ; Repurpose counter as blocked-dir for scanning
+        (set! counter wall-dir))
+      ; Repurpose explore-age as scan countdown
+      (set! explore-age SCAN_STEPS)
+      (go scanning))
+
+    (move-with-tracking-bt dir homepos path)
+    (set! counter (- counter 1))
+    (set! explore-age (+ explore-age 1))
+    (go exploring)
+
+    ; ────────────────────────────────────────
+    ; SCANNING — walk along wall, probing for gap
+    ; counter = the blocked direction we want to go through
+    ; explore-age = steps remaining in wall-follow
+    ; ────────────────────────────────────────
+    scanning
+    (tag scanning)
+
+    ; Food check — grab even while scanning
+    (let ((food-dir (sense food)))
+      (when (!= food-dir 0)
+        (set! dir food-dir)
+        (move-with-tracking-bt dir homepos path)
+        (pickup)
+        ; Start backtracking
+        (set! counter 16)
+        (go backtracking)))
+
+    ; Mark trail
+    (mark TRAIL_PH TRAIL_STRENGTH)
+
+    ; Check if the blocked direction is now open (gap!)
+    (when (!= (probe counter) 1)
+      ; Gap found — go through!
+      (set! dir counter)
+      (set! counter 0)
+      (set! explore-age (+ (random 4) 1))
+      (move-with-tracking-bt dir homepos path)
+      (go exploring))
+
+    ; Scan limit reached — go back to exploring
+    (when (<= explore-age 0)
+      (set! counter 0)
+      (set! explore-age 0)
+      (go exploring))
+
+    ; Keep walking along wall
+    (when (= (probe dir) 1)
+      ; Hit end of wall or corner — turn
+      (set! dir (invert-dir dir))
+      (when (= (probe dir) 1)
+        (pick-random-nonwall dir)))
+
+    (move-with-tracking-bt dir homepos path)
+    (set! explore-age (- explore-age 1))
+    (go scanning)
+
+    ; ────────────────────────────────────────
+    ; BACKTRACKING — retrace last 16 steps
+    ; counter = steps remaining to pop
+    ; path = packed directions to pop
+    ; ────────────────────────────────────────
+    backtracking
+    (tag backtracking)
+
+    ; At nest — drop and explore
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! dir nest-dir)
+        (move-with-tracking-bt dir homepos path)
+        (drop)
+        (set! homepos 0)
+        (set! path 0)
+        (set! explore-age 0)
+        (set! counter 0)
+        (go exploring)))
+
+    ; Counter done — switch to normal returning
+    (when (<= counter 0)
+      (go returning))
+
+    ; Mark delivering trail
+    (mark DELIVERING_PH 100)
+
+    ; Pop direction, reverse it, and try to move
+    (pop-path-dir! dir path)
+    (reverse-dir! dir)
+    (if (!= (probe dir) 1)
+      (begin
+        (move dir)
+        (cond ((= dir 1) (dec-dy! homepos))
+              ((= dir 2) (inc-dx! homepos))
+              ((= dir 3) (inc-dy! homepos))
+              ((= dir 4) (dec-dx! homepos))))
+      ; Blocked — backtrack path is broken, fall through to dead-reckoning
+      (begin
+        (set! path 0)
+        (go returning)))
+
+    (set! counter (- counter 1))
+    (go backtracking)
+
+    ; ────────────────────────────────────────
+    ; LOST
+    ; ────────────────────────────────────────
+    lost
+    (tag lost)
+
+    ; Nest adjacent → back to exploring
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! explore-age 0)
+        (set! counter 0)
+        (set! path 0)
+        (go exploring)))
+
+    ; Delivering trail found → back to exploring
+    (let ((delivery-signal (sniff DELIVERING_PH here)))
+      (when (!= delivery-signal 0)
+        (set! explore-age 0)
+        (set! counter 0)
+        (set! path 0)
+        (go exploring)))
+
+    ; Navigate home
+    (navigate-home dir homepos)
+    (move-with-tracking-bt dir homepos path)
+    (go lost)
+
+    ; ────────────────────────────────────────
+    ; RETURNING — dead-reckoning + trail following
+    ; (entered after backtracking is exhausted)
+    ; ────────────────────────────────────────
+    returning
+    (tag returning)
+
+    ; At nest — drop and explore
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! dir nest-dir)
+        (move-with-tracking-bt dir homepos path)
+        (drop)
+        (set! homepos 0)
+        (set! path 0)
+        (set! explore-age 0)
+        (set! counter 0)
+        (go exploring)))
+
+    ; Mark delivering trail
+    (mark DELIVERING_PH 100)
+
+    ; Dead-reckon home; follow trail when blocked
+    (navigate-home dir homepos)
+    (move-with-tracking-bt dir homepos path)
+    (go returning)))
+
+; vim:ft=lisp:sw=2
