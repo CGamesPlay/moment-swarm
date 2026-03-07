@@ -1,0 +1,113 @@
+; ── SWARM FORAGER (AntLisp) ──────────────────
+; Clean implementation: random walk to find food, dead reckoning home
+; No register clobbering bugs
+
+; ── Registers (pinned to match original) ──
+(define dx 0 :reg r1)           ; x displacement from nest
+(define dy 0 :reg r2)           ; y displacement from nest
+(define timer 0 :reg r4)        ; countdown for marking trail home
+(define dir 0 :reg r0)          ; current direction (for move-with-tracking)
+
+; ── Constants ──
+(const TRAIL ch_red)
+
+; ── Roles ──
+(define-role foraging 0)
+(define-role homing 1)
+
+; ══════════════════════════════════════════════
+; MACROS — inline at each call site
+; ══════════════════════════════════════════════
+
+; invert-dir: returns the opposite cardinal direction
+; N=1↔S=3, E=2↔W=4  via (mod (+ d 1) 4) + 1
+(defmacro invert-dir (d)
+  (+ (mod (+ d 1) 4) 1))
+
+; move-with-tracking: move in 'dir', update dx/dy
+; Tracks displacement from nest: positive means we moved away in that axis
+(defmacro move-with-tracking ()
+  (move dir)
+  (cond ((= dir 1) (set! dy (- dy 1)))   ; N: dy becomes more negative (went north)
+        ((= dir 2) (set! dx (+ dx 1)))   ; E: dx becomes positive (went east)
+        ((= dir 3) (set! dy (+ dy 1)))   ; S: dy becomes positive (went south)
+        ((= dir 4) (set! dx (- dx 1))))) ; W: dx becomes negative (went west)
+
+; home-dir: set 'dir' = direction toward nest based on dx/dy
+; Displacement convention (from move-with-tracking):
+;   N (dir 1) → dy -= 1   so dy > 0 means net southward travel → go N to return
+;   S (dir 3) → dy += 1   so dy < 0 means net northward travel → go S to return
+;   E (dir 2) → dx += 1   so dx > 0 means net eastward travel  → go W to return
+;   W (dir 4) → dx -= 1   so dx < 0 means net westward travel  → go E to return
+(defmacro home-dir ()
+  (let ((abs-dx (if (< dx 0) (- dx) dx))
+        (abs-dy (if (< dy 0) (- dy) dy)))
+    ; pick axis with larger displacement
+    (if (> abs-dy abs-dx)
+      ; Y-axis dominant
+      (if (> dy 0)
+        (set! dir 1)    ; N: went south, return north
+        (set! dir 3))   ; S: went north, return south
+      ; X-axis dominant
+      (if (> dx 0)
+        (set! dir 4)    ; W: went east, return west
+        (set! dir 2))))) ; E: went west, return east
+
+; ══════════════════════════════════════════════
+; MAIN PROGRAM
+; ══════════════════════════════════════════════
+
+(loop
+  ; Check if carrying food
+  (if (carrying?)
+    ; ── GO HOME ──
+    (begin
+      (tag homing)
+      (let ((nest-dir (sense nest)))
+        (if (!= nest-dir 0)
+          ; At nest — deliver
+          (begin
+            (set! dir nest-dir)
+            (move-with-tracking)
+            (drop)
+            (set! dx 0)
+            (set! dy 0)
+            (set! timer 0))
+          ; Navigate home
+          (begin
+            (let ((rnd (random 4)))
+              (if (= rnd 0)
+                ; 25% random to unstick from walls
+                (begin
+                  (set! dir (+ (random 4) 1))
+                  (move-with-tracking))
+                ; 75% dead reckon toward nest
+                (begin
+                  (home-dir)
+                  (move-with-tracking))))
+            ; Mark trail at full strength
+            (mark TRAIL 255)
+            (set! timer (- timer 1))))))
+    
+    ; ── SEARCH FOR FOOD ──
+    (begin
+      (tag foraging)
+      (let ((food-dir (sense food)))
+        (if (!= food-dir 0)
+          ; Found food — grab it
+          (begin
+            (set! dir food-dir)
+            (move-with-tracking)
+            (pickup)
+            (set! timer 127))
+          ; No food — follow trail if detected, else random
+          (begin
+            (let ((trail-dir (smell TRAIL)))
+              (if (!= trail-dir 0)
+                ; On trail: invert to follow away from nest toward food
+                ; Off trail: move toward the gradient to get on it
+                (if (!= (sniff TRAIL here) 0)
+                  (set! dir (invert-dir trail-dir))
+                  (set! dir trail-dir))
+                (set! dir (+ (random 4) 1))))
+            (move-with-tracking)))))))
