@@ -27,7 +27,7 @@
 ; ── High-level macros ───────────────────────────────────────
 ;   (move-with-tracking-packed) wall-checked move; updates packed in-place
 ;                               requires globals: dir, packed
-;                               54 instructions, 2 scratch regs (r2, r3)
+;                               42 instructions, 1 scratch reg (r2)
 ;
 ;   (home-dir-packed)           sets dir toward nest from packed dx/dy
 ;                               requires globals: dir, packed
@@ -37,11 +37,11 @@
 ;   r0  dir         (caller-assigned)
 ;   r1  packed      (caller-assigned)
 ;   r2  scratch     (tmp byte / unpacked dx)
-;   r3  scratch     (tmp packed word / unpacked dy)
+;   r3  scratch     (unpacked dy; home-dir-packed only)
 ;   r4  scratch     (abs-dx; home-dir-packed only)
 ;   ──  ──────────────────────────────────────────────────
 ;   5 registers consumed, 3 free (r5, r6, r7) for caller use
-;   89 instructions for one expansion of each macro
+;   73 instructions for one expansion of each macro
 ;
 ; ── Testing note ────────────────────────────────────────────
 ; MOVE is an action opcode that ends the tick, so displacement
@@ -83,32 +83,49 @@
     (set! out (- out 256))))
 
 ; Add 1 to the dx field of `packed` (stays in signed 8-bit range).
+; Operates directly on the unsigned byte — no sign-extension needed.
+; 6 instructions, 1 scratch register.
 (defmacro inc-dx! (packed)
   (let ((tmp 0))
-    (unpack-dx! tmp packed)
+    (set! tmp (and packed 0xFF))
     (set! tmp (+ tmp 1))
-    (pack-dx! packed tmp)))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
 
 ; Subtract 1 from the dx field of `packed`.
+; 6 instructions, 1 scratch register.
 (defmacro dec-dx! (packed)
   (let ((tmp 0))
-    (unpack-dx! tmp packed)
+    (set! tmp (and packed 0xFF))
     (set! tmp (- tmp 1))
-    (pack-dx! packed tmp)))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
 
 ; Add 1 to the dy field of `packed`.
+; 8 instructions, 1 scratch register.
 (defmacro inc-dy! (packed)
   (let ((tmp 0))
-    (unpack-dy! tmp packed)
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
     (set! tmp (+ tmp 1))
-    (pack-dy! packed tmp)))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
 
 ; Subtract 1 from the dy field of `packed`.
+; 8 instructions, 1 scratch register.
 (defmacro dec-dy! (packed)
   (let ((tmp 0))
-    (unpack-dy! tmp packed)
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
     (set! tmp (- tmp 1))
-    (pack-dy! packed tmp)))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
 
 ; ─── High-level macros ───────────────────────────────────────
 
