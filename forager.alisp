@@ -1,114 +1,249 @@
-; ── SWARM FORAGER (AntLisp) ──────────────────
-; Clean implementation: random walk to find food, dead reckoning home
-; No register clobbering bugs
+; ── SWARM FORAGER v2 — State Machine ─────────
+;
+; States:
+;   EXPLORING  — random walk (3 steps per heading), mark EXPLORING 20
+;                food → grab + RETURNING, DELIVERING detected → FOLLOWING
+;   FOLLOWING  — move opposite SMELL DELIVERING for 3 steps
+;                wall or 3 steps → EXPLORING
+;   RETURNING  — carrying food home; follow EXPLORING trail or dead reckon
+;                wall blocks dead reckon → LOST
+;   LOST       — random non-wall walk for 3 steps
+;                EXPLORING detected → RETURNING; wall or 3 steps → RETURNING
 
-; ── Registers (pinned to match original) ──
+; ── Registers ──
 (define dx 0 :reg r1)           ; x displacement from nest
 (define dy 0 :reg r2)           ; y displacement from nest
-(define timer 0 :reg r4)        ; countdown for marking trail home
-(define dir 0 :reg r0)          ; current direction (for move-with-tracking)
+(define dir 0 :reg r0)          ; current movement direction
+(define state 0 :reg r3)        ; current state
+(define steps 0 :reg r4)        ; steps remaining on current heading
 
 ; ── Constants ──
-(const TRAIL ch_red)
+(const EXPLORING_PH ch_red)
+(const DELIVERING_PH ch_blue)
 
-; ── Roles ──
-(define-role foraging 0)
-(define-role homing 1)
+; State IDs
+(const S_EXPLORING 0)
+(const S_FOLLOWING 1)
+(const S_RETURNING 2)
+(const S_LOST 3)
+
+; ── Tags ──
+(define-role exploring 0)
+(define-role following 1)
+(define-role returning 2)
+(define-role lost 3)
 
 ; ══════════════════════════════════════════════
-; MACROS — inline at each call site
+; MACROS
 ; ══════════════════════════════════════════════
 
-; invert-dir: returns the opposite cardinal direction
-; N=1↔S=3, E=2↔W=4  via (mod (+ d 1) 4) + 1
+; Opposite cardinal direction: N↔S, E↔W
 (defmacro invert-dir (d)
   (+ (mod (+ d 1) 4) 1))
 
-; move-with-tracking: move in 'dir', update dx/dy
-; Checks for wall first — if blocked, skips both move and tracking update
+; Move in 'dir' with wall check and displacement tracking
 (defmacro move-with-tracking ()
   (unless (= (probe dir) 1)
     (move dir)
-    (cond ((= dir 1) (set! dy (- dy 1)))   ; N
-          ((= dir 2) (set! dx (+ dx 1)))   ; E
-          ((= dir 3) (set! dy (+ dy 1)))   ; S
+    (cond ((= dir 1) (set! dy (- dy 1)))
+          ((= dir 2) (set! dx (+ dx 1)))
+          ((= dir 3) (set! dy (+ dy 1)))
           ((= dir 4) (set! dx (- dx 1))))))
 
-; home-dir: set 'dir' = direction toward nest based on dx/dy
-; Displacement convention (from move-with-tracking):
-;   N (dir 1) → dy -= 1   so dy > 0 means net southward travel → go N to return
-;   S (dir 3) → dy += 1   so dy < 0 means net northward travel → go S to return
-;   E (dir 2) → dx += 1   so dx > 0 means net eastward travel  → go W to return
-;   W (dir 4) → dx -= 1   so dx < 0 means net westward travel  → go E to return
+; Set dir toward nest based on accumulated dx/dy
+; Uses only 1 local (abs-dx); computes abs-dy inline to save a register
 (defmacro home-dir ()
-  (let ((abs-dx (if (< dx 0) (- dx) dx))
-        (abs-dy (if (< dy 0) (- dy) dy)))
-    ; pick axis with larger displacement
-    (if (> abs-dy abs-dx)
-      ; Y-axis dominant
+  (let ((abs-dx (if (< dx 0) (- dx) dx)))
+    (if (> (if (< dy 0) (- dy) dy) abs-dx)
       (if (> dy 0)
-        (set! dir 1)    ; N: went south, return north
-        (set! dir 3))   ; S: went north, return south
-      ; X-axis dominant
+        (set! dir 1)      ; went south, return north
+        (set! dir 3))     ; went north, return south
       (if (> dx 0)
-        (set! dir 4)    ; W: went east, return west
-        (set! dir 2))))) ; E: went west, return east
+        (set! dir 4)      ; went east, return west
+        (set! dir 2)))))  ; went west, return east
+
+; Pick a random direction, then rotate until not a wall (max 4 checks)
+(defmacro pick-random-nonwall ()
+  (set! dir (+ (random 4) 1))
+  (when (= (probe dir) 1)
+    (set! dir (+ (mod dir 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod dir 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod dir 4) 1))))))
 
 ; ══════════════════════════════════════════════
-; MAIN PROGRAM
+; MAIN LOOP
 ; ══════════════════════════════════════════════
 
 (loop
-  ; Check if carrying food
-  (if (carrying?)
-    ; ── GO HOME ──
-    (begin
-      (tag homing)
-      (let ((nest-dir (sense nest)))
-        (if (!= nest-dir 0)
-          ; At nest — deliver
-          (begin
-            (set! dir nest-dir)
-            (move-with-tracking)
-            (drop)
-            (set! dx 0)
-            (set! dy 0)
-            (set! timer 0))
-          ; Navigate home
-          (begin
-            (let ((rnd (random 4)))
-              (if (= rnd 0)
-                ; 25% random to unstick from walls
-                (begin
-                  (set! dir (+ (random 4) 1))
-                  (move-with-tracking))
-                ; 75% dead reckon toward nest
-                (begin
-                  (home-dir)
-                  (move-with-tracking))))
-            ; Mark trail at full strength
-            (mark TRAIL 100)
-            (set! timer (- timer 1))))))
-    
-    ; ── SEARCH FOR FOOD ──
-    (begin
-      (tag foraging)
-      (let ((food-dir (sense food)))
-        (if (!= food-dir 0)
-          ; Found food — grab it
-          (begin
-            (set! dir food-dir)
-            (move-with-tracking)
-            (pickup)
-            (set! timer 127))
-          ; No food — follow trail if detected, else random
-          (begin
-            (let ((trail-dir (smell TRAIL)))
-              (if (!= trail-dir 0)
-                ; On trail: invert to follow away from nest toward food
-                ; Off trail: move toward the gradient to get on it
-                (if (!= (sniff TRAIL here) 0)
-                  (set! dir (invert-dir trail-dir))
-                  (set! dir trail-dir))
-                (set! dir (+ (random 4) 1))))
-            (move-with-tracking)))))))
+  (cond
+    ; ────────────────────────────────────────
+    ; EXPLORING: wander, mark trail, look for food/delivering
+    ; ────────────────────────────────────────
+    ((= state S_EXPLORING)
+     (begin
+       (tag exploring)
+
+       ; Check for food first
+       (let ((food-dir (sense food)))
+         (if (!= food-dir 0)
+           ; Found food — grab it, switch to returning
+           (begin
+             (set! dir food-dir)
+             (move-with-tracking)
+             (pickup)
+             (set! state S_RETURNING)
+             (set! steps 0))
+
+           ; No food — check for DELIVERING trail
+           (begin
+             (let ((del-dir (smell DELIVERING_PH)))
+               (if (!= del-dir 0)
+                 ; DELIVERING trail found — move onto it, switch to following
+                 (begin
+                   (set! dir del-dir)
+                   (move-with-tracking)
+                   (mark EXPLORING_PH 20)
+                   (set! state S_FOLLOWING)
+                   (set! steps 3))
+
+                 ; Nothing interesting — random walk
+                 (begin
+                   ; Pick new heading every 3 steps or on wall
+                   (when (<= steps 0)
+                     (pick-random-nonwall)
+                     (set! steps 3))
+                   ; Check for wall, pick new dir if blocked
+                   (when (= (probe dir) 1)
+                     (pick-random-nonwall)
+                     (set! steps 3))
+                   (mark EXPLORING_PH 20)
+                   (move-with-tracking)
+                   (set! steps (- steps 1))))))))))
+
+    ; ────────────────────────────────────────
+    ; FOLLOWING: move opposite SMELL DELIVERING for 3 steps
+    ; ────────────────────────────────────────
+    ((= state S_FOLLOWING)
+     (begin
+       (tag following)
+
+       ; Check for food first
+       (let ((food-dir (sense food)))
+         (if (!= food-dir 0)
+           ; Found food — grab it, switch to returning
+           (begin
+             (set! dir food-dir)
+             (move-with-tracking)
+             (pickup)
+             (set! state S_RETURNING)
+             (set! steps 0))
+
+           ; Follow opposite of delivering gradient
+           (begin
+             (let ((del-dir (smell DELIVERING_PH)))
+               (if (!= del-dir 0)
+                 (set! dir (invert-dir del-dir))
+                 (pick-random-nonwall)))
+             ; Wall or out of steps → back to exploring
+             (if (= (probe dir) 1)
+               (begin
+                 (set! state S_EXPLORING)
+                 (set! steps 0))
+               (begin
+                 (mark EXPLORING_PH 20)
+                 (move-with-tracking)
+                 (set! steps (- steps 1))
+                 (when (<= steps 0)
+                   (set! state S_EXPLORING)
+                   (set! steps 0)))))))))
+
+    ; ────────────────────────────────────────
+    ; RETURNING: carry food home
+    ; ────────────────────────────────────────
+    ((= state S_RETURNING)
+     (begin
+       (tag returning)
+
+       ; Check if at nest
+       (let ((nest-dir (sense nest)))
+         (if (!= nest-dir 0)
+           ; At nest — deliver and go back to exploring
+           (begin
+             (set! dir nest-dir)
+             (move-with-tracking)
+             (drop)
+             (set! dx 0)
+             (set! dy 0)
+             (set! state S_EXPLORING)
+             (set! steps 0))
+
+           ; Not at nest — navigate home
+           (begin
+             ; Mark delivering trail
+             (mark DELIVERING_PH 100)
+
+             ; Try to follow EXPLORING trail back toward nest
+             ; Set dir from smell first, then fall through to home-dir if 0
+             (set! dir (smell EXPLORING_PH))
+             (when (= dir 0)
+               ; No exploring trail — dead reckon
+               (home-dir))
+
+             ; Check for wall
+             (if (= (probe dir) 1)
+               ; Blocked — go to LOST
+               (begin
+                 (set! state S_LOST)
+                 (set! steps 0))
+               ; Move home
+               (move-with-tracking)))))))
+
+    ; ────────────────────────────────────────
+    ; LOST: random non-wall walk, look for EXPLORING trail
+    ; ────────────────────────────────────────
+    ((= state S_LOST)
+     (begin
+       (tag lost)
+
+       ; Check if at nest (lucky)
+       (let ((nest-dir (sense nest)))
+         (if (!= nest-dir 0)
+           ; At nest — deliver
+           (begin
+             (set! dir nest-dir)
+             (move-with-tracking)
+             (drop)
+             (set! dx 0)
+             (set! dy 0)
+             (set! state S_EXPLORING)
+             (set! steps 0))
+
+           ; Wander looking for EXPLORING trail
+           (begin
+             (mark DELIVERING_PH 100)
+
+             ; Check for EXPLORING trail
+             (let ((exp-dir (smell EXPLORING_PH)))
+               (if (!= exp-dir 0)
+                 ; Found trail — back to returning
+                 (begin
+                   (set! state S_RETURNING)
+                   (set! steps 0)
+                   (set! dir exp-dir)
+                   (move-with-tracking))
+
+                 ; No trail — random walk
+                 (begin
+                   (when (<= steps 0)
+                     (pick-random-nonwall)
+                     (set! steps 3))
+                   (when (= (probe dir) 1)
+                     (pick-random-nonwall)
+                     (set! steps 3))
+                   (move-with-tracking)
+                   (set! steps (- steps 1))
+                   ; After 3 steps, try returning again
+                   (when (<= steps 0)
+                     (set! state S_RETURNING))))))))))))
