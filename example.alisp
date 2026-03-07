@@ -20,7 +20,7 @@
 ; ══════════════════════════════════════════════
 
 ; move-with-tracking: move in 'dir', update dx/dy
-(defmacro move-with-tracking ()
+(defmacro move-with-tracking (dir dx dy)
   (move dir)
   (cond ((= dir 1) (set! dy (- dy 1)))   ; N
         ((= dir 2) (set! dx (+ dx 1)))   ; E
@@ -29,7 +29,7 @@
 
 ; home-dir: set 'dir' = direction toward nest based on dx/dy
 ; NOTE: matches brain.ant which uses r4 (timer) as abs_dx, clobbering timer
-(defmacro home-dir ()
+(defmacro home-dir (dir dx dy timer)
   ; Use timer as abs_dx (matches brain.ant clobbering r4)
   (set! timer dx)
   (let ((abs-dy dy))
@@ -65,7 +65,7 @@
           ; At nest — deliver
           (begin
             (set! dir nest-dir)
-            (move-with-tracking)
+            (move-with-tracking dir dx dy)
             (drop)
             (set! timer 0))
           ; Navigate home
@@ -75,11 +75,11 @@
                 ; 25% random to unstick from walls
                 (begin
                   (set! dir (+ (random 4) 1))
-                  (move-with-tracking))
+                  (move-with-tracking dir dx dy))
                 ; 75% dead reckon toward nest
                 (begin
-                  (home-dir)
-                  (move-with-tracking))))
+                  (home-dir dir dx dy timer)
+                  (move-with-tracking dir dx dy))))
             ; Mark trail
             (let ((amt (* timer 2)))
               (mark TRAIL amt))
@@ -93,7 +93,7 @@
           ; Found food — grab it
           (begin
             (set! dir food-dir)
-            (move-with-tracking)
+            (move-with-tracking dir dx dy)
             (pickup)
             (set! timer 127))
           ; No food — follow trail if detected, else random
@@ -103,4 +103,4 @@
                 (set! dir trail-dir)
                 (begin
                   (set! dir (+ (random 4) 1)))))
-            (move-with-tracking)))))))
+            (move-with-tracking dir dx dy)))))))

@@ -147,7 +147,10 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 (defmacro wander ()
   (move (+ (random 4) 1)))
 
-(defmacro move-track (dir)
+(define dx 0)
+(define dy 0)
+
+(defmacro move-track (dir dx dy)
   (move dir)
   (cond ((= dir 1) (set! dy (- dy 1)))
         ((= dir 2) (set! dx (+ dx 1)))
@@ -156,13 +159,13 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 
 ;; Usage — expands inline
 (wander)                        ; random direction
-(move-track (sense food))       ; compound expr as param
+(move-track (sense food) dx dy) ; compound expr as param
 ```
 
 **Key properties:**
-- **Parameters**: AST-level substitution (like Lisp macros, not C text macros)
+- **Hygienic**: Free variables in the macro body resolve at the **definition site**, not the call site. A caller's local variable with the same name as a global won't accidentally capture the macro's reference.
+- **Parameters**: Evaluated at the call site, then bound by name inside the macro. Variable args alias the caller's register (allowing `set!`); literal/constant args are inlined.
 - **Hygienic labels**: `(label foo)` and `(goto foo)` inside macros get freshened at each expansion site to avoid collisions
-- **Caller's scope**: Macros see globals and let-bindings from the call site
 - **Multi-statement bodies**: All forms in the body are emitted inline
 
 ```lisp
@@ -183,6 +186,14 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 ;; Safe: two calls get distinct labels
 (skip-if-carrying)
 (skip-if-carrying)
+
+;; Hygiene example: macro references global, not caller's local
+(define counter 0)
+(defmacro bump ()
+  (set! counter (+ counter 1)))  ; always refers to the global 'counter'
+
+(let ((counter 99))
+  (bump))   ; increments the global counter (r0), not the local (r1)
 ```
 
 ### Low-Level Escape Hatches

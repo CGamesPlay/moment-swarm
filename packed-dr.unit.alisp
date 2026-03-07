@@ -25,12 +25,10 @@
 ;   (dec-dy! packed)            subtract 1 from dy byte in-place
 ;
 ; ── High-level macros ───────────────────────────────────────
-;   (move-with-tracking-packed) wall-checked move; updates packed in-place
-;                               requires globals: dir, packed
+;   (move-with-tracking-packed dir packed)  wall-checked move; updates packed in-place
 ;                               38 instructions, 1 scratch reg (r2)
 ;
-;   (home-dir-packed)           sets dir toward nest from packed dx/dy
-;                               requires globals: dir, packed
+;   (home-dir-packed dir packed)  sets dir toward nest from packed dx/dy
 ;                               34 instructions, 3 scratch regs (r2–r4)
 ;
 ; ── Register budget (when both macros are used together) ────
@@ -131,8 +129,7 @@
 
 ; Move in `dir` with wall check; update packed dx/dy on success.
 ; Drop-in replacement for forager.alisp move-with-tracking.
-; Requires globals: dir, packed.
-(defmacro move-with-tracking-packed ()
+(defmacro move-with-tracking-packed (dir packed)
   (unless (= (probe dir) 1)
     (move dir)
     (cond ((= dir 1) (dec-dy! packed))
@@ -142,8 +139,7 @@
 
 ; Set dir toward nest based on packed dx/dy.
 ; Drop-in replacement for forager.alisp home-dir.
-; Requires globals: dir, packed.
-(defmacro home-dir-packed ()
+(defmacro home-dir-packed (dir packed)
   (let ((dx 0)
         (dy 0)
         (abs-dx 0))
@@ -722,7 +718,7 @@
     (loop
       (when (= done 0)
         (set! done 1)
-        (move-with-tracking-packed))
+        (move-with-tracking-packed dir packed))
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
       (break))
@@ -741,7 +737,7 @@
     (loop
       (when (= done 0)
         (set! done 1)
-        (move-with-tracking-packed))
+        (move-with-tracking-packed dir packed))
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
       (break))
@@ -760,7 +756,7 @@
     (loop
       (when (= done 0)
         (set! done 1)
-        (move-with-tracking-packed))
+        (move-with-tracking-packed dir packed))
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
       (break))
@@ -779,7 +775,7 @@
     (loop
       (when (= done 0)
         (set! done 1)
-        (move-with-tracking-packed))
+        (move-with-tracking-packed dir packed))
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
       (break))
@@ -797,7 +793,7 @@
     (define packed 0 :reg r1)
     (define xout   0 :reg r2)
     (define yout   0 :reg r3)
-    (move-with-tracking-packed)
+    (move-with-tracking-packed dir packed)
     (unpack-dx! xout packed)
     (unpack-dy! yout packed))
   (assert-reg-name xout 0)
@@ -814,7 +810,7 @@
     (define packed 0 :reg r1)
     (define xout   0 :reg r2)
     (define yout   0 :reg r3)
-    (move-with-tracking-packed)
+    (move-with-tracking-packed dir packed)
     (unpack-dx! xout packed)
     (unpack-dy! yout packed))
   (assert-reg-name xout 0)
@@ -830,11 +826,11 @@
     (define packed 0 :reg r1)
     (define xout   0 :reg r2)
     (define yout   0 :reg r3)
-    (move-with-tracking-packed) ; tick 1: moves east x=1→2
+    (move-with-tracking-packed dir packed) ; tick 1: moves east x=1→2
     (set! dir 4)
-    (move-with-tracking-packed) ; tick 2: moves west x=2→1
+    (move-with-tracking-packed dir packed) ; tick 2: moves west x=2→1
     (set! dir 4)
-    (move-with-tracking-packed) ; tick 2: blocked at x=0 border
+    (move-with-tracking-packed dir packed) ; tick 2: blocked at x=0 border
     (unpack-dx! xout packed)
     (unpack-dy! yout packed))
   (assert-reg-name xout 0)
@@ -856,7 +852,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 3)
     (pack-dy! packed 0)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 4))
 
 (test "home-dir: pure west (dx=-3) → E"
@@ -867,7 +863,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed -3)
     (pack-dy! packed 0)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 2))
 
 (test "home-dir: pure south (dy=3) → N"
@@ -878,7 +874,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 0)
     (pack-dy! packed 3)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 1))
 
 (test "home-dir: pure north (dy=-3) → S"
@@ -889,7 +885,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 0)
     (pack-dy! packed -3)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 3))
 
 (test "home-dir: |dx| dominates (dx=5 dy=3) → W"
@@ -900,7 +896,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 5)
     (pack-dy! packed 3)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 4))
 
 (test "home-dir: |dy| dominates (dx=3 dy=5) → N"
@@ -911,7 +907,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 3)
     (pack-dy! packed 5)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 1))
 
 (test "home-dir: |dx| dominates, dx negative (dx=-5 dy=3) → E"
@@ -922,7 +918,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed -5)
     (pack-dy! packed 3)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 2))
 
 (test "home-dir: |dy| dominates, dy negative (dx=3 dy=-5) → S"
@@ -933,7 +929,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 3)
     (pack-dy! packed -5)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 3))
 
 (test "home-dir: large magnitudes (dx=100 dy=20) → W"
@@ -944,7 +940,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed 100)
     (pack-dy! packed 20)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 4))
 
 (test "home-dir: large negative (dx=-100 dy=-20) → E"
@@ -955,7 +951,7 @@
     (define packed 0 :reg r1)
     (pack-dx! packed -100)
     (pack-dy! packed -20)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 2))
 
 (test "walk east 4, home-dir → W"
@@ -968,7 +964,7 @@
     (inc-dx! packed)
     (inc-dx! packed)
     (inc-dx! packed)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 4))
 
 (test "walk north 4, home-dir → S"
@@ -981,7 +977,7 @@
     (dec-dy! packed)
     (dec-dy! packed)
     (dec-dy! packed)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 3))
 
 (test "walk S×3 then E×5: |dx| dominates, home-dir → W"
@@ -998,7 +994,7 @@
     (inc-dx! packed)
     (inc-dx! packed)
     (inc-dx! packed)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 4))
 
 (test "walk N×5 then E×3: |dy| dominates, home-dir → S"
@@ -1015,5 +1011,5 @@
     (inc-dx! packed)
     (inc-dx! packed)
     (inc-dx! packed)
-    (home-dir-packed))
+    (home-dir-packed dir packed))
   (assert-reg-name dir 3))

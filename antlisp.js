@@ -259,13 +259,13 @@ class Compiler {
   // ── Compilation entry ──
 
   compile(ast) {
-    // Pass 1: collect metadata (roles and macros)
+    // Pass 1: collect metadata (roles only; macros collected in Pass 2
+    // so their definition-site bindings capture preceding globals)
     for (const node of ast.body) {
       if (node.type === 'list' && node.value.length > 0) {
         const head = node.value[0];
         if (head.type === 'symbol') {
           if (head.value === 'define-role') this.collectRole(node.value);
-          if (head.value === 'defmacro') this.collectMacro(node.value);
         }
       }
     }
@@ -356,96 +356,141 @@ class Compiler {
     const name = list[1].value;
     const params = list[2].value.map(p => p.value);  // list of param names
     const body = list.slice(3);  // remaining forms are the body
-    this.macros.set(name, { params, body });
+    // Capture definition-site bindings for hygienic expansion.
+    // When the macro body is compiled, free variables resolve against
+    // these bindings rather than the call-site bindings.
+    const closedBindings = new Map(this.bindings);
+    const closedGlobals = new Map(this.globals);
+    const closedConsts = new Map(this.constValues);
+    this.macros.set(name, { params, body, closedBindings, closedGlobals, closedConsts });
   }
 
-  // Expand a macro call: substitute params with args, freshen labels
-  expandMacro(name, args, callNode) {
+  // Compile a hygienic macro call.
+  // 1. Evaluate arguments in the call-site scope
+  // 2. Switch to definition-site bindings + param→register overlays
+  // 3. Compile the body (with freshened labels)
+  // 4. Restore call-site bindings and free param registers
+  compileMacroCall(name, args, callNode, destReg) {
     const macro = this.macros.get(name);
     if (macro.params.length !== args.length) {
       throw this.errorAt(`Macro ${name} expects ${macro.params.length} args, got ${args.length}`, callNode);
     }
 
-    // Build substitution map: param name -> arg AST node
-    const subst = new Map();
+    // Step 1: Evaluate each argument in the CALL-SITE scope.
+    // For register args: alias the param to the same register (allows set!)
+    // For literal args: store as a const (no register needed, but not mutable)
+    // For compound expressions: compile into a temp register
+    const paramBindings = [];  // { paramName, reg?, constVal?, allocated }
     for (let i = 0; i < macro.params.length; i++) {
-      subst.set(macro.params[i], args[i]);
+      const arg = args[i];
+      const paramName = macro.params[i];
+
+      if (arg.type === 'number') {
+        // Literal number — store as const for zero-cost inlining
+        paramBindings.push({ paramName, constVal: String(arg.value), allocated: false });
+      } else if (arg.type === 'symbol') {
+        const resolved = this.resolveAtom(arg);
+        if (resolved.startsWith('r')) {
+          // Variable — bind param directly to the same register (alias).
+          // This allows (set! param ...) to mutate the caller's variable.
+          paramBindings.push({ paramName, reg: resolved, allocated: false });
+        } else {
+          // Literal/constant/direction/channel — store as const
+          paramBindings.push({ paramName, constVal: resolved, allocated: false });
+        }
+      } else {
+        // Compound expression — compile into a temp register
+        const reg = this.allocReg();
+        this.compileExpr(arg, reg);
+        paramBindings.push({ paramName, reg, allocated: true });
+      }
     }
 
-    // Generate a unique prefix for this expansion (for hygienic labels)
+    // Step 2: Switch to definition-site bindings, overlay params
+    const savedBindings = this.bindings;
+    const savedGlobals = this.globals;
+    const savedConsts = this.constValues;
+
+    this.bindings = new Map(macro.closedBindings);
+    this.globals = new Map(macro.closedGlobals);
+    this.constValues = new Map(macro.closedConsts);
+
+    // Overlay parameter bindings (these take priority over closed-over names).
+    // Remove the param name from all maps first to avoid stale shadowing,
+    // then add it to the correct map.
+    for (const pb of paramBindings) {
+      this.bindings.delete(pb.paramName);
+      this.globals.delete(pb.paramName);
+      this.constValues.delete(pb.paramName);
+      if (pb.reg) {
+        this.bindings.set(pb.paramName, pb.reg);
+      } else if (pb.constVal !== undefined) {
+        this.constValues.set(pb.paramName, pb.constVal);
+      }
+    }
+
+    // Step 3: Freshen labels in the body and compile
     const prefix = `__${name}_${this.labelCounter++}`;
+    const expandedBody = macro.body.map(node => this.freshenLabels(node, prefix));
 
-    // Deep-clone and substitute the body
-    const expandedBody = macro.body.map(node => this.substNode(node, subst, prefix));
-    return expandedBody;
+    let result = null;
+    for (let i = 0; i < expandedBody.length; i++) {
+      result = this.compileExpr(expandedBody[i], i === expandedBody.length - 1 ? destReg : null);
+    }
+
+    // Step 4: Restore call-site bindings, free allocated param registers
+    this.bindings = savedBindings;
+    this.globals = savedGlobals;
+    this.constValues = savedConsts;
+
+    for (const pb of paramBindings) {
+      if (pb.allocated) this.freeReg(pb.reg);
+    }
+
+    return result;
   }
 
-  // Recursively substitute parameters and freshen labels in an AST node
-  substNode(node, subst, labelPrefix) {
-    if (node.type === 'symbol') {
-      // Check if it's a parameter to substitute
-      if (subst.has(node.value)) {
-        return this.cloneNode(subst.get(node.value));
-      }
-      return node;
-    }
-    if (node.type === 'number' || node.type === 'string') {
-      return node;
-    }
-    if (node.type === 'list') {
-      const list = node.value;
-      if (list.length === 0) return node;
+  // Recursively freshen (label ...) and (goto ...) names in an AST node
+  freshenLabels(node, labelPrefix) {
+    if (node.type !== 'list') return node;
+    const list = node.value;
+    if (list.length === 0) return node;
 
-      const head = list[0];
-      
-      // Handle (label foo) — freshen the label name
-      if (head.type === 'symbol' && head.value === 'label' && list.length >= 2) {
-        const labelName = list[1].value;
-        const freshLabel = `${labelPrefix}_${labelName}`;
-        return {
-          type: 'list',
-          value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
-          line: node.line,
-          col: node.col
-        };
-      }
+    const head = list[0];
 
-      // Handle (goto foo) — freshen the label name
-      if (head.type === 'symbol' && head.value === 'goto' && list.length >= 2) {
-        const labelName = list[1].value;
-        const freshLabel = `${labelPrefix}_${labelName}`;
-        return {
-          type: 'list',
-          value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
-          line: node.line,
-          col: node.col
-        };
-      }
-
-      // Recurse into list elements
+    // Handle (label foo) — freshen the label name
+    if (head.type === 'symbol' && head.value === 'label' && list.length >= 2) {
+      const labelName = list[1].value;
+      const freshLabel = `${labelPrefix}_${labelName}`;
       return {
         type: 'list',
-        value: list.map(child => this.substNode(child, subst, labelPrefix)),
+        value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
         line: node.line,
         col: node.col
       };
     }
-    return node;
-  }
 
-  // Deep clone an AST node
-  cloneNode(node) {
-    if (node.type === 'list') {
+    // Handle (goto foo) — freshen the label name
+    if (head.type === 'symbol' && head.value === 'goto' && list.length >= 2) {
+      const labelName = list[1].value;
+      const freshLabel = `${labelPrefix}_${labelName}`;
       return {
         type: 'list',
-        value: node.value.map(child => this.cloneNode(child)),
+        value: [head, { type: 'symbol', value: freshLabel, line: list[1].line, col: list[1].col }],
         line: node.line,
         col: node.col
       };
     }
-    // Primitives can be shared (they're immutable)
-    return node;
+
+    // Recurse into list elements
+    return {
+      type: 'list',
+      value: list.map(child => this.freshenLabels(child, labelPrefix)),
+      line: node.line,
+      col: node.col
+    };
   }
+
 
   collectRole(list) {
     this.roles.push({ name: list[1].value, id: list[2].value });
@@ -462,7 +507,7 @@ class Compiler {
 
     switch (head.value) {
       case 'define-role': return; // already collected
-      case 'defmacro':    return; // already collected
+      case 'defmacro':    return this.collectMacro(node.value); // collected in pass 2 for hygienic bindings
       case 'define':      return this.compileGlobalDefine(node.value, node);
       case 'alias':       return this.compileAlias(node.value);
       case 'const':       return this.compileConst(node.value);
@@ -615,14 +660,7 @@ class Compiler {
       default:
         // Check if it's a macro call
         if (this.macros.has(op)) {
-          const args = list.slice(1);
-          const expandedBody = this.expandMacro(op, args, node);
-          // Compile each expanded form; return result of last
-          let result = null;
-          for (let i = 0; i < expandedBody.length; i++) {
-            result = this.compileExpr(expandedBody[i], i === expandedBody.length - 1 ? destReg : null);
-          }
-          return result;
+          return this.compileMacroCall(op, list.slice(1), node, destReg);
         }
         throw this.errorAt(`Unknown form: ${op}`);
     }

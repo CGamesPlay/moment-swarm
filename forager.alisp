@@ -42,7 +42,7 @@
   (+ (mod (+ d 1) 4) 1))
 
 ; Move in 'dir' with wall check and displacement tracking
-(defmacro move-with-tracking ()
+(defmacro move-with-tracking (dir dx dy)
   (unless (= (probe dir) 1)
     (move dir)
     (cond ((= dir 1) (set! dy (- dy 1)))
@@ -52,7 +52,7 @@
 
 ; Set dir toward nest based on accumulated dx/dy
 ; Uses only 1 local (abs-dx); computes abs-dy inline to save a register
-(defmacro home-dir ()
+(defmacro home-dir (dir dx dy)
   (let ((abs-dx (if (< dx 0) (- dx) dx)))
     (if (> (if (< dy 0) (- dy) dy) abs-dx)
       (if (> dy 0)
@@ -63,7 +63,7 @@
         (set! dir 2)))))  ; went west, return east
 
 ; Pick a random direction, then rotate until not a wall (max 4 checks)
-(defmacro pick-random-nonwall ()
+(defmacro pick-random-nonwall (dir)
   (set! dir (+ (random 4) 1))
   (when (= (probe dir) 1)
     (set! dir (+ (mod dir 4) 1))
@@ -91,7 +91,7 @@
            ; Found food — grab it, switch to returning
            (begin
              (set! dir food-dir)
-             (move-with-tracking)
+             (move-with-tracking dir dx dy)
              (pickup)
              (set! state S_RETURNING)
              (set! steps 0))
@@ -103,7 +103,7 @@
                  ; DELIVERING trail found — move onto it, switch to following
                  (begin
                    (set! dir del-dir)
-                   (move-with-tracking)
+                   (move-with-tracking dir dx dy)
                    (mark EXPLORING_PH 20)
                    (set! state S_FOLLOWING)
                    (set! steps 3))
@@ -112,14 +112,14 @@
                  (begin
                    ; Pick new heading every 3 steps or on wall
                    (when (<= steps 0)
-                     (pick-random-nonwall)
+                     (pick-random-nonwall dir)
                      (set! steps 3))
                    ; Check for wall, pick new dir if blocked
                    (when (= (probe dir) 1)
-                     (pick-random-nonwall)
+                     (pick-random-nonwall dir)
                      (set! steps 3))
                    (mark EXPLORING_PH 20)
-                   (move-with-tracking)
+                   (move-with-tracking dir dx dy)
                    (set! steps (- steps 1))))))))))
 
     ; ────────────────────────────────────────
@@ -135,7 +135,7 @@
            ; Found food — grab it, switch to returning
            (begin
              (set! dir food-dir)
-             (move-with-tracking)
+             (move-with-tracking dir dx dy)
              (pickup)
              (set! state S_RETURNING)
              (set! steps 0))
@@ -145,7 +145,7 @@
              (let ((del-dir (smell DELIVERING_PH)))
                (if (!= del-dir 0)
                  (set! dir (invert-dir del-dir))
-                 (pick-random-nonwall)))
+                 (pick-random-nonwall dir)))
              ; Wall or out of steps → back to exploring
              (if (= (probe dir) 1)
                (begin
@@ -153,7 +153,7 @@
                  (set! steps 0))
                (begin
                  (mark EXPLORING_PH 20)
-                 (move-with-tracking)
+                 (move-with-tracking dir dx dy)
                  (set! steps (- steps 1))
                  (when (<= steps 0)
                    (set! state S_EXPLORING)
@@ -172,7 +172,7 @@
            ; At nest — deliver and go back to exploring
            (begin
              (set! dir nest-dir)
-             (move-with-tracking)
+             (move-with-tracking dir dx dy)
              (drop)
              (set! dx 0)
              (set! dy 0)
@@ -189,7 +189,7 @@
              (set! dir (smell EXPLORING_PH))
              (when (= dir 0)
                ; No exploring trail — dead reckon
-               (home-dir))
+               (home-dir dir dx dy))
 
              ; Check for wall
              (if (= (probe dir) 1)
@@ -198,7 +198,7 @@
                  (set! state S_LOST)
                  (set! steps 0))
                ; Move home
-               (move-with-tracking)))))))
+               (move-with-tracking dir dx dy)))))))
 
     ; ────────────────────────────────────────
     ; LOST: random non-wall walk, look for EXPLORING trail
@@ -213,7 +213,7 @@
            ; At nest — deliver
            (begin
              (set! dir nest-dir)
-             (move-with-tracking)
+             (move-with-tracking dir dx dy)
              (drop)
              (set! dx 0)
              (set! dy 0)
@@ -232,17 +232,17 @@
                    (set! state S_RETURNING)
                    (set! steps 0)
                    (set! dir exp-dir)
-                   (move-with-tracking))
+                   (move-with-tracking dir dx dy))
 
                  ; No trail — random walk
                  (begin
                    (when (<= steps 0)
-                     (pick-random-nonwall)
+                     (pick-random-nonwall dir)
                      (set! steps 3))
                    (when (= (probe dir) 1)
-                     (pick-random-nonwall)
+                     (pick-random-nonwall dir)
                      (set! steps 3))
-                   (move-with-tracking)
+                   (move-with-tracking dir dx dy)
                    (set! steps (- steps 1))
                    ; After 3 steps, try returning again
                    (when (<= steps 0)

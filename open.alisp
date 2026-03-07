@@ -43,7 +43,7 @@
   (+ (mod (+ d 1) 4) 1))
 
 ; Move in 'dir' with wall check and displacement tracking
-(defmacro move-with-tracking ()
+(defmacro move-with-tracking (dir dx dy)
   (unless (= (probe dir) 1)
     (move dir)
     (cond ((= dir 1) (set! dy (- dy 1)))
@@ -52,7 +52,7 @@
           ((= dir 4) (set! dx (- dx 1))))))
 
 ; Set dir toward nest based on accumulated dx/dy
-(defmacro home-dir ()
+(defmacro home-dir (dir dx dy)
   (let ((abs-dx (if (< dx 0) (- dx) dx)))
     (if (> (if (< dy 0) (- dy) dy) abs-dx)
       (if (> dy 0)
@@ -63,7 +63,7 @@
         (set! dir 2)))))  ; went west → return east
 
 ; Pick a random direction, rotating past walls
-(defmacro pick-random-nonwall ()
+(defmacro pick-random-nonwall (dir)
   (set! dir (+ (random 4) 1))
   (when (= (probe dir) 1)
     (set! dir (+ (mod dir 4) 1))
@@ -95,7 +95,7 @@
          (let ((food-dir (sense food)))
            (when (!= food-dir 0)
              (set! dir food-dir)
-             (move-with-tracking)
+             (move-with-tracking dir dx dy)
              (pickup)
              (set! state S_RETURNING)
              (set! steps 0)
@@ -112,15 +112,15 @@
                  (set! steps (+ (random 4) 1)))
                ; No pheromone — random direction, 1-4 ticks
                (begin
-                 (pick-random-nonwall)
+                 (pick-random-nonwall dir)
                  (set! steps (+ (random 4) 1))))))
 
          ; Wall check: re-pick if blocked
          (when (= (probe dir) 1)
-           (pick-random-nonwall)
+           (pick-random-nonwall dir)
            (set! steps (+ (random 4) 1)))
 
-         (move-with-tracking)
+         (move-with-tracking dir dx dy)
          (set! steps (- steps 1))
          (set! ticks (+ ticks 1)))))
 
@@ -144,8 +144,8 @@
          (break))
 
        ; Walk straight home
-       (home-dir)
-       (move-with-tracking)))
+       (home-dir dir dx dy)
+       (move-with-tracking dir dx dy)))
 
     ; ────────────────────────────────────────
     ; RETURNING
@@ -158,7 +158,7 @@
        (let ((nest-dir (sense nest)))
          (when (!= nest-dir 0)
            (set! dir nest-dir)
-           (move-with-tracking)
+           (move-with-tracking dir dx dy)
            (drop)
            (set! dx 0)
            (set! dy 0)
@@ -170,10 +170,10 @@
        (mark DELIVERING_PH 100)
 
        ; Dead-reckon straight home using displacement
-       (home-dir)
+       (home-dir dir dx dy)
 
        ; Wall check — nudge past it
        (when (= (probe dir) 1)
-         (pick-random-nonwall))
+         (pick-random-nonwall dir))
 
-       (move-with-tracking)))))
+       (move-with-tracking dir dx dy)))))

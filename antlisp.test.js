@@ -861,6 +861,36 @@ function runTests() {
      (set-x n)`,
     r => r.includes('MOVE N'));  // x param is N, not r1
 
+  test('hygienic: macro free var resolves to definition-site global',
+    `(define x 10 :reg r0)
+     (defmacro use-x ()
+       (move x))
+     (let ((x 99))
+       (use-x))`,
+    r => r.includes('MOVE r0'));  // uses global x (r0), not local x
+
+  test('hygienic: macro set! targets definition-site global',
+    `(define counter 0 :reg r0)
+     (defmacro bump ()
+       (set! counter (+ counter 1)))
+     (let ((counter 99))
+       (bump))`,
+    r => r.includes('ADD r0 1'));  // increments global r0, not local
+
+  test('hygienic: macro sees consts from definition site',
+    `(const MY_VAL 42)
+     (defmacro use-val ()
+       (move MY_VAL))
+     (use-val)`,
+    r => r.includes('MOVE 42'));
+
+  test('hygienic: nested macro calls use correct scopes',
+    `(define dir 0 :reg r0)
+     (defmacro inner (dir) (move dir))
+     (defmacro outer (dir) (inner dir))
+     (outer dir)`,
+    r => r.includes('MOVE r0'));
+
   // ═══════════════════════════════════════════════════════════════
   // IF-BODY SWAPPING — avoid trampolines for > and < with else
   // ═══════════════════════════════════════════════════════════════
