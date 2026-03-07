@@ -289,7 +289,43 @@ class Compiler {
   // Runs on the flat output array after compilation.
 
   peephole() {
-    // Remove redundant JMP instructions that jump to a label which
+    // Pass 1: Dead store elimination.
+    // Remove SET rX <val> when the very next non-blank, non-comment line
+    // is also SET rX <val2> (same register) with no label in between.
+    // A label between them means the first SET might be a jump target.
+    // Run in a loop until no more eliminations are found (handles chains
+    // like SET r0 0; SET r0 1; SET r0 2; SET r0 3 → SET r0 3).
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < this.output.length - 1; i++) {
+        const line = this.output[i].trim();
+        // Match: SET rN <anything>
+        const m1 = line.match(/^SET (r\d) .+/);
+        if (!m1) continue;
+        const reg = m1[1];
+        // Look ahead for the next non-blank, non-comment line
+        let found = false;
+        for (let j = i + 1; j < this.output.length; j++) {
+          const next = this.output[j].trim();
+          if (next === '') continue;                    // skip blank
+          if (next.startsWith(';')) continue;            // skip comment
+          if (next.endsWith(':')) break;                 // label — stop, not safe
+          // Is it a SET to the same register?
+          const m2 = next.match(/^SET (r\d) .+/);
+          if (m2 && m2[1] === reg) {
+            // Dead store — remove the first SET
+            this.output.splice(i, 1);
+            i--;
+            changed = true;
+            found = true;
+          }
+          break;  // whether matched or not, stop looking
+        }
+      }
+    }
+
+    // Pass 2: Remove redundant JMP instructions that jump to a label which
     // would be reached by fall-through (only labels/blanks between).
     for (let i = 0; i < this.output.length; i++) {
       const line = this.output[i].trim();

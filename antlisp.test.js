@@ -548,7 +548,10 @@ function runTests() {
      (set! x 1)
      (set! x 2)
      (set! x 3)`,
-    r => r.includes('SET r1 1') && r.includes('SET r1 2') && r.includes('SET r1 3'));
+    r => {
+      // Dead store elimination removes all but the last SET r1
+      return r.includes('SET r1 3') && !r.includes('SET r1 1') && !r.includes('SET r1 2');
+    });
 
   // --- Deeply nested conditionals ---
   test('deeply nested if',
@@ -1009,6 +1012,110 @@ function runTests() {
       const jmps = r.split('\n').filter(l => l.trim().startsWith('JMP __endcond'));
       // 4 branches, last one should have no JMP __endcond → 3 JMPs
       return jmps.length === 3;
+    });
+
+  // ═══════════════════════════════════════════════════════════════
+  // PEEPHOLE: dead store elimination (SET rX ...; SET rX ...)
+  // ═══════════════════════════════════════════════════════════════
+
+  test('dead-store: SET rX 0 then SET rX rY eliminates first SET',
+    `(define x 0 :reg r1)
+     (let ((tmp 0))
+       (set! tmp (and x 255))
+       (move random))`,
+    r => {
+      // (let ((tmp 0))) emits SET r0 0, then (set! tmp (and x 255))
+      // emits SET r0 r1 + AND r0 255.  The SET r0 0 is dead.
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      // Find consecutive SET r0 instructions
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 r1') {
+          return false;  // dead store NOT eliminated
+        }
+      }
+      return true;
+    });
+
+  test('dead-store: consecutive SET same reg, both literals',
+    `(define x 0 :reg r1)
+     (let ((tmp 0))
+       (set! tmp 42)
+       (move random))`,
+    r => {
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 42') {
+          return false;  // dead store NOT eliminated
+        }
+      }
+      return true;
+    });
+
+  test('dead-store: does NOT eliminate when label intervenes',
+    `(define x 0 :reg r1)
+     (let ((tmp 0))
+       (label target)
+       (set! tmp 42)
+       (move random))`,
+    r => {
+      // A label between the two SETs means the first might be a jump
+      // target — it must NOT be eliminated.
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      let foundInit = false;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === 'SET r0 0') foundInit = true;
+        if (lines[i] === 'SET r0 42' && foundInit) return true;
+      }
+      return false;  // init was eliminated — bad!
+    });
+
+  test('dead-store: does NOT eliminate when different registers',
+    `(define x 0 :reg r1)
+     (define y 0 :reg r2)
+     (let ((a 0) (b 0))
+       (set! a x)
+       (set! b y)
+       (move random))`,
+    r => {
+      // SET r0 0; SET r3 0; SET r0 r1; SET r3 r2
+      // Only r0's and r3's own dead stores should be removed, not
+      // across registers.  Just verify it compiles and both SET rN rM
+      // instructions exist.
+      return r.includes('SET r0 r1') && r.includes('SET r3 r2');
+    });
+
+  test('dead-store: multiple consecutive dead stores, last wins',
+    `(let ((tmp 0))
+       (set! tmp 1)
+       (set! tmp 2)
+       (set! tmp 3)
+       (move random))`,
+    r => {
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      // Should only have SET r0 3, not the preceding dead SETs
+      const setR0s = lines.filter(l => /^SET r0 \d+$/.test(l));
+      return setR0s.length === 1 && setR0s[0] === 'SET r0 3';
+    });
+
+  test('dead-store: real macro pattern — inc-dx! has no dead SET',
+    `(defmacro inc-dx! (packed)
+       (let ((tmp 0))
+         (set! tmp (and packed 0xFF))
+         (set! tmp (+ tmp 1))
+         (set! tmp (and tmp 0xFF))
+         (set! packed (and packed 0xFFFFFF00))
+         (set! packed (or packed tmp))))
+     (define packed 0 :reg r1)
+     (inc-dx! packed)`,
+    r => {
+      const lines = r.split('\n').map(l => l.trim()).filter(l => l);
+      // Should NOT have SET r0 0 followed by SET r0 r1
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (lines[i] === 'SET r0 0' && lines[i+1] === 'SET r0 r1') {
+          return false;
+        }
+      }
+      return true;
     });
 
   // Test macro error case separately

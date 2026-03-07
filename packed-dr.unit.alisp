@@ -27,11 +27,11 @@
 ; ── High-level macros ───────────────────────────────────────
 ;   (move-with-tracking-packed) wall-checked move; updates packed in-place
 ;                               requires globals: dir, packed
-;                               42 instructions, 1 scratch reg (r2)
+;                               38 instructions, 1 scratch reg (r2)
 ;
 ;   (home-dir-packed)           sets dir toward nest from packed dx/dy
 ;                               requires globals: dir, packed
-;                               31 instructions, 3 scratch regs (r2–r4)
+;                               34 instructions, 3 scratch regs (r2–r4)
 ;
 ; ── Register budget (when both macros are used together) ────
 ;   r0  dir         (caller-assigned)
@@ -41,7 +41,7 @@
 ;   r4  scratch     (abs-dx; home-dir-packed only)
 ;   ──  ──────────────────────────────────────────────────
 ;   5 registers consumed, 3 free (r5, r6, r7) for caller use
-;   73 instructions for one expansion of each macro
+;   72 instructions for one expansion of each macro
 ;
 ; ── Testing note ────────────────────────────────────────────
 ; MOVE is an action opcode that ends the tick, so displacement
