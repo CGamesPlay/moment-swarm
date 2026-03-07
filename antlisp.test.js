@@ -858,6 +858,98 @@ function runTests() {
      (set-x n)`,
     r => r.includes('MOVE N'));  // x param is N, not r1
 
+  // ═══════════════════════════════════════════════════════════════
+  // IF-BODY SWAPPING — avoid trampolines for > and < with else
+  // ═══════════════════════════════════════════════════════════════
+
+  test('if-swap: (< x 0) with else avoids trampoline',
+    `(let ((x 5))
+       (if (< x 0)
+         (move n)
+         (move s)))`,
+    r => {
+      // Should NOT contain a __skip label — that's the trampoline pattern.
+      // Instead should use a direct JLT to jump to the then-body,
+      // with else-body emitted first (swapped layout).
+      const hasSkip = /__skip_\d+/.test(r);
+      const hasJLT = r.includes('JLT');
+      return !hasSkip && hasJLT;
+    });
+
+  test('if-swap: (> x 0) with else avoids trampoline',
+    `(let ((x 5))
+       (if (> x 0)
+         (move n)
+         (move s)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      const hasJGT = r.includes('JGT');
+      return !hasSkip && hasJGT;
+    });
+
+  test('if-swap: (>= x 0) with else still works (no trampoline needed)',
+    `(let ((x 5))
+       (if (>= x 0)
+         (move n)
+         (move s)))`,
+    r => {
+      // >= jump-on-false uses JLT directly — no trampoline already.
+      // Just make sure it still works correctly.
+      const hasJLT = r.includes('JLT');
+      return hasJLT;
+    });
+
+  test('if-swap: (<= x 0) with else still works (no trampoline needed)',
+    `(let ((x 5))
+       (if (<= x 0)
+         (move n)
+         (move s)))`,
+    r => {
+      const hasJGT = r.includes('JGT');
+      return hasJGT;
+    });
+
+  test('if-swap: (< x 0) without else is unchanged (no swap possible)',
+    `(let ((x 5))
+       (if (< x 0)
+         (move n)))`,
+    r => {
+      // Without else, we can't swap. Trampoline may still appear.
+      // Just verify it compiles and includes JLT.
+      return r.includes('JLT');
+    });
+
+  test('if-swap: nested < and > both avoid trampolines',
+    `(let ((x 5) (y 10))
+       (if (> x 0)
+         (if (< y 0)
+           (move n)
+           (move s))
+         (move w)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JGT') && r.includes('JLT');
+    });
+
+  test('if-swap: semantic correctness preserved for (< a b)',
+    `(let ((a 3))
+       (if (< a 5)
+         (mark ch_red 10)
+         (mark ch_blue 20)))`,
+    r => {
+      // Both branches should still be present with correct actions
+      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JLT');
+    });
+
+  test('if-swap: semantic correctness preserved for (> a b)',
+    `(let ((a 10))
+       (if (> a 5)
+         (mark ch_red 10)
+         (mark ch_blue 20)))`,
+    r => {
+      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JGT');
+    });
+
   // Test macro error case separately
   (function() {
     let caught = false;

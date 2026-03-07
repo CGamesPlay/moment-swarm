@@ -631,10 +631,57 @@ class Compiler {
 
   // ── if / when / unless / cond / begin ──
 
+  // Check if a condition node would require a trampoline (2-instruction
+  // jump sequence) when compiled with the given jumpOnFalse polarity.
+  needsTrampoline(node, jumpOnFalse) {
+    if (node.type !== 'list') return false;
+    const list = node.value;
+    if (!list.length) return false;
+    const op = list[0].value;
+
+    const jmpOps = {
+      '=':  { t: 'JEQ', f: 'JNE' },
+      '!=': { t: 'JNE', f: 'JEQ' },
+      '>':  { t: 'JGT', f: null },
+      '<':  { t: 'JLT', f: null },
+      '>=': { t: null,  f: 'JLT' },
+      '<=': { t: null,  f: 'JGT' },
+    };
+
+    const info = jmpOps[op];
+    if (!info) {
+      // (not cond) flips polarity
+      if (op === 'not') return this.needsTrampoline(list[1], !jumpOnFalse);
+      return false;
+    }
+    return jumpOnFalse ? !info.f : !info.t;
+  }
+
   compileIf(list, destReg) {
+    const hasElse = list.length > 3;
+
+    // Optimization: if jumping-on-false would need a trampoline but
+    // jumping-on-true would not, swap then/else bodies and use the
+    // direct single-instruction jump instead.
+    if (hasElse &&
+        this.needsTrampoline(list[1], true) &&
+        !this.needsTrampoline(list[1], false)) {
+      const thenLabel = this.freshLabel('then');
+      const endLabel = this.freshLabel('endif');
+      // Jump directly to then-body when condition is true
+      this.compileCondJump(list[1], thenLabel, false);
+      // Else-body first (fall-through when condition is false)
+      this.compileExpr(list[3], destReg);
+      this.emit(`  JMP ${endLabel}`);
+      this.emitLabel(thenLabel);
+      // Then-body
+      this.compileExpr(list[2], destReg);
+      this.emitLabel(endLabel);
+      return destReg;
+    }
+
     const elseLabel = this.freshLabel('else');
     const endLabel = this.freshLabel('endif');
-    const hasElse = list.length > 3;
     this.compileCondJump(list[1], elseLabel, true);
     this.compileExpr(list[2], destReg);
     if (hasElse) this.emit(`  JMP ${endLabel}`);
