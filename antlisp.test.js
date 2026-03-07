@@ -950,6 +950,67 @@ function runTests() {
       return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JGT');
     });
 
+  // ═══════════════════════════════════════════════════════════════
+  // PEEPHOLE: redundant JMP elimination
+  // ═══════════════════════════════════════════════════════════════
+
+  test('peephole: last cond branch does not emit redundant JMP',
+    `(let ((x (sense food)))
+       (cond ((= x 1) (move n))
+             ((= x 2) (move e))
+             ((= x 3) (move s))
+             ((= x 4) (move w))))`,
+    r => {
+      // The last branch (= x 4) should NOT have a JMP to __endcond
+      // because __endcond is the very next thing after it.
+      const lines = r.split('\n');
+      // Find JMP __endcond lines
+      const jmps = lines.filter(l => l.trim().startsWith('JMP __endcond'));
+      // There are 4 branches. The first 3 need JMP __endcond, but the
+      // 4th should be optimized away. So we expect exactly 3.
+      return jmps.length === 3;
+    });
+
+  test('peephole: JMP removed when target is next label after intervening labels',
+    `(let ((d 1))
+       (cond ((= d 1) (move n))
+             ((= d 2) (move e))))`,
+    r => {
+      // Last cond branch JMP should be removed — target label follows
+      // immediately (possibly after other labels).
+      const lines = r.split('\n');
+      const jmps = lines.filter(l => l.trim().startsWith('JMP __endcond'));
+      return jmps.length === 1;  // only 1st branch needs it, 2nd is last
+    });
+
+  test('peephole: JMP preserved when there is code between JMP and target',
+    `(let ((d 1))
+       (if (= d 1)
+         (move n)
+         (move s)))`,
+    r => {
+      // if/else: JMP __endif after then-body must stay (else-body between)
+      const lines = r.split('\n');
+      const jmps = lines.filter(l => l.trim().startsWith('JMP __endif'));
+      return jmps.length === 1;
+    });
+
+  test('peephole: instruction count reduced for open.alisp cond patterns',
+    // Mirrors the move-with-tracking cond pattern from open.alisp
+    `(define dir 0 :reg r0)
+     (define dx 0 :reg r1)
+     (define dy 0 :reg r2)
+     (cond ((= dir 1) (set! dy (- dy 1)))
+           ((= dir 2) (set! dx (+ dx 1)))
+           ((= dir 3) (set! dy (+ dy 1)))
+           ((= dir 4) (set! dx (- dx 1))))`,
+    r => {
+      const instrs = r.split('\n').filter(l => /^\s+[A-Z]/.test(l));
+      const jmps = r.split('\n').filter(l => l.trim().startsWith('JMP __endcond'));
+      // 4 branches, last one should have no JMP __endcond → 3 JMPs
+      return jmps.length === 3;
+    });
+
   // Test macro error case separately
   (function() {
     let caught = false;

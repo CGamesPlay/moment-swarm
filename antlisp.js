@@ -280,7 +280,39 @@ class Compiler {
       this.compileTopLevel(node);
     }
 
+    this.peephole();
+
     return this.output.join('\n');
+  }
+
+  // ── Peephole optimizer ──
+  // Runs on the flat output array after compilation.
+
+  peephole() {
+    // Remove redundant JMP instructions that jump to a label which
+    // would be reached by fall-through (only labels/blanks between).
+    for (let i = 0; i < this.output.length; i++) {
+      const line = this.output[i].trim();
+      if (!line.startsWith('JMP ')) continue;
+      const target = line.split(/\s+/)[1];
+      // Look ahead: skip labels and blank lines
+      let redundant = false;
+      for (let j = i + 1; j < this.output.length; j++) {
+        const next = this.output[j].trim();
+        if (next === '') continue;                    // blank line
+        if (next.endsWith(':')) {
+          // It's a label — check if it's our target
+          const label = next.slice(0, -1);
+          if (label === target) { redundant = true; break; }
+          continue;                                   // some other label, keep scanning
+        }
+        break;                                        // hit a real instruction, stop
+      }
+      if (redundant) {
+        this.output.splice(i, 1);
+        i--;  // re-check this index since we removed an element
+      }
+    }
   }
 
   // ── (defmacro name (params...) body...) ──
