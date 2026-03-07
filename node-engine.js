@@ -486,7 +486,7 @@ const _tickRng = new RNG(1);
  * Execute one ant's turn (up to maxOps instructions or one action).
  * Returns true if the ant successfully dropped food at the nest.
  */
-function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps, antGrid, senseRange = 1) {
+function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps, antGrid, senseRange = 1, stopAtPc = -1) {
   if (instrCount === 0) return false;
 
   const mapW = map.width;
@@ -500,6 +500,7 @@ function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps,
 
   while (opsUsed < maxOps) {
     if (pc >= instrCount) pc = 0;
+    if (stopAtPc >= 0 && pc === stopAtPc && opsUsed > 0) { ant.pc = pc; return false; }
 
     const base = pc * BC_STRIDE;
     const op = bytecode[base];
@@ -1910,10 +1911,15 @@ module.exports = {
   // VM
   createWorld,
   runTick,
+  stepAnt,
 
   // Map utilities
   cloneMap,
   createEmptyMap,
+  setCell,
+  placeFood,
+  addBorderWalls,
+  placeNest,
   MAP_GENERATORS,
   generateEvalMaps,
   generateSingleMap,

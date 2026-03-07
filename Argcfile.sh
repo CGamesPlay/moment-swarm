@@ -32,6 +32,13 @@ selftest() {
 	node antlisp.test.js
 }
 
+# @cmd Run alisp unit tests
+# @arg  file!           .unit.alisp test file
+# @flag -v --verbose    Show compiled assembly and register state for each test
+unit() {
+	node antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
+}
+
 if ! command -v argc >/dev/null; then
 	echo "This command requires argc. Install from https://github.com/sigoden/argc" >&2
 	exit 100

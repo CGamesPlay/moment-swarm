@@ -1008,6 +1008,18 @@ function compileAntLisp(source) {
   return compiler.compile(ast);
 }
 
+// Like compileAntLisp but returns { asm, varMap } where varMap is a
+// Map<varName, regString> of all globals defined in the program.
+// Used by the unit test harness for assert-reg-name lookups.
+function compileAntLispDebug(source) {
+  const tokens = tokenize(source);
+  const ast = parse(tokens);
+  const compiler = new Compiler();
+  const asm = compiler.compile(ast);
+  // compiler.globals is Map<name, regString> built during compileGlobalDefine
+  return { asm, varMap: new Map(compiler.globals) };
+}
+
 // ─── CLI ─────────────────────────────────────────────────────
 
 if (require.main === module) {
@@ -1029,4 +1041,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { compileAntLisp, tokenize, parse, Compiler, CompileError };
+module.exports = { compileAntLisp, compileAntLispDebug, tokenize, parse, Compiler, CompileError };
