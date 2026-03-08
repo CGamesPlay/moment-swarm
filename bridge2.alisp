@@ -1,0 +1,375 @@
+; ── MAZE2 FORAGER — gradient trail homing ────────────────────────
+;
+; Uses nest-seeded gradient propagation instead of wall-following
+; for return navigation. Each ant reads the strongest TRAIL neighbor
+; and marks its own cell one less, creating a gradient that always
+; points toward the nest. SMELL TRAIL then gives the home direction.
+;
+; States: EXPLORING → SCANNING → RETURNING (no backtracking/lost)
+
+; ── Constants ──
+(const TRAIL_PH ch_red)           ; gradient trail channel
+(const DELIVERING_PH ch_blue)    ; food-delivery breadcrumb channel
+
+(const MAX_TRAIL 255)            ; gradient seed intensity at points of interest
+(const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
+(const HEADING_STEPS 32)         ; max steps before picking a new direction
+(const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
+(const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
+(const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
+
+
+; ══════════════════════════════════════════════
+; MACROS
+; ══════════════════════════════════════════════
+
+; ─── dx/dy packing (from packed-dr.unit.alisp) ───────────────
+
+(defmacro pack-dx! (packed dx)
+  (set! packed (and packed 0xFFFFFF00))
+  (set! packed (or  packed (and dx 0xFF))))
+
+(defmacro pack-dy! (packed dy)
+  (set! packed (and packed 0xFFFF00FF))
+  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+
+(defmacro unpack-dx! (out packed)
+  (set! out (and packed 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+(defmacro unpack-dy! (out packed)
+  (set! out (and (rshift packed 8) 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+(defmacro inc-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+(defmacro inc-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+(defmacro dec-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; ─── High-level movement macros ──────────────────────────────
+
+; Move in `dir` with wall check; update packed dx/dy on success.
+; dx/dy update runs BEFORE move so it doesn't eat into the next tick's budget.
+(defmacro move-with-tracking (dir packed)
+  (unless (= (probe dir) 1)
+    (cond ((= dir 1) (dec-dy! packed))
+          ((= dir 2) (inc-dx! packed))
+          ((= dir 3) (inc-dy! packed))
+          ((= dir 4) (dec-dx! packed)))
+    (move dir)))
+
+; Set dir toward nest based on homepos dx/dy.
+(defmacro home-dir-packed (dir packed)
+  (let ((dx 0)
+        (dy 0)
+        (abs-dx 0))
+    (unpack-dx! dx packed)
+    (unpack-dy! dy packed)
+    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
+    (if (< dy 0)
+      (begin
+        (set! dy (- dy))
+        (if (> dy abs-dx)
+          (set! dir 3)
+          (if (> dx 0)
+            (set! dir 4)
+            (set! dir 2))))
+      (if (> dy abs-dx)
+        (set! dir 1)
+        (if (> dx 0)
+          (set! dir 4)
+          (set! dir 2))))))
+
+; ── Utility macros ────────────────────────────────────────────
+
+; Opposite cardinal direction: N↔S, E↔W
+(defmacro invert-dir (d)
+  (+ (mod (+ d 1) 4) 1))
+
+; Turn right: N→E, E→S, S→W, W→N
+(defmacro turn-right (d)
+  (+ (mod d 4) 1))
+
+; Pick a random direction, rotating past walls
+(defmacro pick-random-nonwall (dir)
+  (set! dir (+ (random 4) 1))
+  (when (= (probe dir) 1)
+    (set! dir (+ (mod dir 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod dir 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod dir 4) 1))))))
+
+; Pick a random non-wall direction, but avoid reversing `avoid-dir`.
+(defmacro pick-nonwall-no-reverse (dir avoid-dir)
+  (let ((start (+ (random 3) 1)))
+    (set! dir (+ (mod (+ avoid-dir start -1) 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod (+ avoid-dir (mod start 3)) 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod (+ avoid-dir (mod (+ start 1) 3)) 4) 1))
+        (when (= (probe dir) 1)
+          (set! dir avoid-dir))))))
+
+; ─── Gradient trail marking ──────────────────────────────────
+;
+; Seeds MAX_TRAIL at nest, propagates strongest_neighbor - 1 elsewhere.
+; Only marks if deficit > 0 (never reduces the gradient).
+;
+; Uses 3 scratch registers (via let): current, strongest, tmp
+; ~20 instructions in worst case
+(defmacro mark-gradient ()
+  (let ((current (sniff TRAIL_PH here)))
+    (if (!= (sense nest) 0)
+      ; Adjacent to nest — seed the gradient
+      (when (< current MAX_TRAIL)
+        (mark TRAIL_PH (- MAX_TRAIL current)))
+      ; Not at nest — propagate from strongest neighbor
+      (let ((strongest (sniff TRAIL_PH n)))
+        (let ((tmp (sniff TRAIL_PH e)))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff TRAIL_PH s))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff TRAIL_PH w))
+          (when (> tmp strongest) (set! strongest tmp)))
+        ; target = strongest - 1; deficit = target - current
+        (when (> strongest 0)
+          (set! strongest (- strongest 1))
+          (when (> strongest current)
+            (mark TRAIL_PH (- strongest current))))))))
+
+
+; ─── Delivering gradient trail marking ────────────────────────
+;
+; Same approach as mark-gradient but for DELIVERING_PH.
+; Seeds MAX_TRAIL at food cells, propagates strongest_neighbor - 1.
+; Only marks if deficit > 0 (never reduces the gradient).
+(defmacro mark-delivering-gradient ()
+  (let ((current (sniff DELIVERING_PH here)))
+    (if (!= (sense food) 0)
+      ; Adjacent to food — seed the delivering gradient
+      (when (< current MAX_TRAIL)
+        (mark DELIVERING_PH (- MAX_TRAIL current)))
+      ; Not at food — propagate from strongest neighbor
+      (let ((strongest (sniff DELIVERING_PH n)))
+        (let ((tmp (sniff DELIVERING_PH e)))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff DELIVERING_PH s))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff DELIVERING_PH w))
+          (when (> tmp strongest) (set! strongest tmp)))
+        ; target = strongest - 1; deficit = target - current
+        (when (> strongest 0)
+          (set! strongest (- strongest 1))
+          (when (> strongest current)
+            (mark DELIVERING_PH (- strongest current))))))))
+
+
+; ══════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════
+
+; Register budget (8 total):
+;   dir, homepos = 2 persistent
+;   counter = 1 dual-purpose per state
+;   explore-age = 1 dual-purpose per state
+;   ── 4 remaining for macro temps ──
+
+(let ((dir         0)  ; current movement direction
+      (homepos     0)  ; packed dx/dy displacement from nest
+      (counter     0)  ; EXPLORING: heading steps remaining
+                       ; SCANNING: the blocked direction to probe for gaps
+      (explore-age 0)) ; EXPLORING: ticks spent this run
+                       ; SCANNING: steps remaining in wall-follow
+  (tagbody
+    ; ────────────────────────────────────────
+    ; EXPLORING
+    ; ────────────────────────────────────────
+    exploring
+    (set-tag exploring)
+
+    ; Food check — grab and switch to returning
+    (let ((food-dir (sense food)))
+      (when (!= food-dir 0)
+        (mark-gradient)
+        (set! dir food-dir)
+        (move-with-tracking dir homepos)
+        ; tick ends here; resumes next tick on the food cell
+        (pickup)
+        (go returning)))
+
+    ; Gradient trail marking
+    (mark-gradient)
+
+    ; Gradient too weak — beyond the frontier, turn back
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (go returning))
+
+    ; DELIVERING gradient — follow toward food if signal is strong enough
+    (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
+      (let ((del-dir (smell DELIVERING_PH)))
+        (when (!= del-dir 0)
+          (set! dir del-dir)
+          (set! counter HEADING_STEPS))))
+
+    ; Pick new heading when counter (heading steps) runs out
+    (when (<= counter 0)
+      (pick-nonwall-no-reverse dir (invert-dir dir))
+      (set! counter (+ (random HEADING_STEPS) 1)))
+
+    ; Wall check — if blocked, enter SCANNING state
+    (when (= (probe dir) 1)
+      ; Save the direction we want to go (through the wall)
+      (let ((wall-dir dir))
+        ; Pick perpendicular direction (random left or right turn)
+        (if (< (random 2) 1)
+          (set! dir (turn-right wall-dir))
+          (set! dir (invert-dir (turn-right wall-dir))))
+        ; If perpendicular is also blocked, try the other one
+        (when (= (probe dir) 1)
+          (set! dir (invert-dir dir))
+          (when (= (probe dir) 1)
+            (set! dir (invert-dir wall-dir))))
+        ; Repurpose counter as blocked-dir for scanning
+        (set! counter wall-dir))
+      ; Repurpose explore-age as scan countdown
+      (set! explore-age SCAN_STEPS)
+      (go scanning-marked))  ; skip mark-gradient — already called this tick
+
+    (move-with-tracking dir homepos)
+    (set! counter (- counter 1))
+    (set! explore-age (+ explore-age 1))
+    (go exploring)
+
+    ; ────────────────────────────────────────
+    ; SCANNING — walk along wall, probing for gap
+    ; counter = the blocked direction we want to go through
+    ; explore-age = steps remaining in wall-follow
+    ; ────────────────────────────────────────
+    scanning
+    (set-tag scanning)
+
+    ; Food check — grab even while scanning
+    (let ((food-dir (sense food)))
+      (when (!= food-dir 0)
+        (mark-gradient)
+        (set! dir food-dir)
+        (move-with-tracking dir homepos)
+        ; tick ends here; resumes next tick on the food cell
+        (pickup)
+        (go returning)))
+
+    ; Gradient trail marking
+    (mark-gradient)
+
+    ; Gradient too weak — beyond the frontier, turn back
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (go returning))
+
+    scanning-marked  ; entry point when mark-gradient already done (from exploring)
+
+    ; Check if the blocked direction is now open (gap!)
+    (when (!= (probe counter) 1)
+      ; Gap found — go through!
+      (set! dir counter)
+      (set! counter 0)
+      (set! explore-age (+ (random HEADING_STEPS) 1))
+      (move-with-tracking dir homepos)
+      (go exploring))
+
+    ; Scan limit reached — go back to exploring
+    (when (<= explore-age 0)
+      (set! counter 0)
+      (set! explore-age 0)
+      (go exploring))
+
+    ; Keep walking along wall
+    (when (= (probe dir) 1)
+      ; Hit end of wall or corner — turn
+      (set! dir (invert-dir dir))
+      (when (= (probe dir) 1)
+        (pick-random-nonwall dir)))
+
+    (move-with-tracking dir homepos)
+    (set! explore-age (- explore-age 1))
+    (go scanning)
+
+    ; ────────────────────────────────────────
+    ; RETURNING — follow gradient trail home
+    ; ────────────────────────────────────────
+    returning
+    (set-tag returning)
+
+    ; At nest — drop and explore
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! dir nest-dir)
+        (move-with-tracking dir homepos)
+        (drop)
+        (set! homepos 0)
+        (set! explore-age 0)
+        (set! counter 0)
+        (go exploring)))
+
+    ; Carrying: mark delivering gradient; Not carrying: resume exploring if near home
+    (if (= (carrying?) 1)
+      (mark-delivering-gradient)
+      (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
+        (set! explore-age 0)
+        (set! counter 0)
+        (go exploring)))
+
+    ; Gradient trail marking (reinforce on the way home)
+    (mark-gradient)
+
+    ; Follow gradient: SMELL TRAIL gives direction toward nest
+    (let ((trail-dir (smell TRAIL_PH)))
+      (when (!= trail-dir 0)
+        (when (!= (probe trail-dir) 1)
+          (set! dir trail-dir)
+          (move-with-tracking dir homepos)
+          (go returning))))
+
+    ; Fallback: dead-reckon toward nest
+    (home-dir-packed dir homepos)
+    (when (= (probe dir) 1)
+      ; Dead-reckon blocked too — pick random non-wall
+      (pick-random-nonwall dir))
+
+    (move-with-tracking dir homepos)
+    (go returning)))
+
+; vim:ft=lisp:sw=2
