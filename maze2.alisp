@@ -14,8 +14,8 @@
 (const MAX_TRAIL 255)            ; gradient seed intensity at nest
 (const DELIVERING_STRENGTH 100)  ; DELIVERING mark per tick while returning
 (const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
-(const HEADING_STEPS 26)         ; max steps before picking a new direction
-(const DELIVERY_THRESHOLD 125)   ; explore-age before responding to delivery trails
+(const HEADING_STEPS 24)         ; max steps before picking a new direction
+(const DELIVERY_THRESHOLD 150)   ; explore-age before responding to delivery trails
 (const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
 (const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 
@@ -83,13 +83,14 @@
 ; ─── High-level movement macros ──────────────────────────────
 
 ; Move in `dir` with wall check; update packed dx/dy on success.
+; dx/dy update runs BEFORE move so it doesn't eat into the next tick's budget.
 (defmacro move-with-tracking (dir packed)
   (unless (= (probe dir) 1)
-    (move dir)
     (cond ((= dir 1) (dec-dy! packed))
           ((= dir 2) (inc-dx! packed))
           ((= dir 3) (inc-dy! packed))
-          ((= dir 4) (dec-dx! packed)))))
+          ((= dir 4) (dec-dx! packed)))
+    (move dir)))
 
 ; Set dir toward nest based on homepos dx/dy.
 (defmacro home-dir-packed (dir packed)
@@ -333,16 +334,13 @@
         (set! counter 0)
         (go exploring)))
 
-    ; If not carrying food and gradient is strong, resume exploring
-    (unless (= (carrying?) 1)
+    ; Carrying: mark delivering trail; Not carrying: resume exploring if near home
+    (if (= (carrying?) 1)
+      (mark DELIVERING_PH DELIVERING_STRENGTH)
       (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
         (set! explore-age 0)
         (set! counter 0)
         (go exploring)))
-
-    ; Mark delivering trail (only when carrying)
-    (when (= (carrying?) 1)
-      (mark DELIVERING_PH DELIVERING_STRENGTH))
 
     ; Gradient trail marking (reinforce on the way home)
     (mark-gradient)

@@ -62,11 +62,12 @@ Fan out from nest, find food, propagate gradient trail.
 
 **Every step:**
 1. Gradient marking (see marking rule above)
-2. Delivery trail crossing (from maze-spec, unchanged)
-3. Heading selection: follow DELIVERING toward food, or random non-wall with anti-reversal
-4. Wall → SCANNING
-5. Food → pickup, transition to RETURNING
-6. Timeout → transition to RETURNING (go home empty-handed, following the gradient)
+2. Gradient check: if `SNIFF TRAIL HERE < GRADIENT_GO_HOME` → transition to RETURNING
+3. Delivery trail crossing (from maze-spec, unchanged)
+4. Heading selection: follow DELIVERING toward food, or random non-wall with anti-reversal
+5. Wall → SCANNING
+6. Food → pickup, transition to RETURNING
+7. Move forward, increment explore-age
 
 ### SCANNING
 
@@ -77,11 +78,11 @@ Same as maze-spec. Walk along wall probing for gap. Also does gradient marking e
 Navigate home by following the gradient trail.
 
 **Every step:**
-1. Mark `DELIVERING 100`.
-2. Gradient marking (reinforce trail on the way home).
-3. **Nest adjacent** → move, drop, reset, EXPLORING.
+1. **Nest adjacent** → move, drop, reset `homepos = 0`, reset other counters, transition to EXPLORING.
+2. If carrying food: mark `DELIVERING DELIVERING_STRENGTH`. If not carrying: check if `SNIFF TRAIL HERE >= GRADIENT_NEAR_HOME` → resume EXPLORING.
+3. Gradient marking (reinforce trail on the way home).
 4. **Follow gradient:** `dir = SMELL TRAIL`. If `dir != 0` and not blocked → move, continue RETURNING.
-5. **Fallback** (no trail or blocked): dead-reckon toward nest (home-dir from homepos). If also blocked, pick random non-wall direction.
+5. **Fallback** (no trail or blocked): dead-reckon toward nest (home-dir from homepos). If also blocked, pick random non-wall direction, then move.
 
 ## Pheromones
 
@@ -95,11 +96,12 @@ Navigate home by following the gradient trail.
 | Constant | Default | Notes |
 |----------|---------|-------|
 | `MAX_TRAIL` | 255 | Seed intensity at the nest cell. |
-| `EXPLORE_TIMEOUT` | 300 | Ticks before explorer gives up |
 | `SCAN_STEPS` | 30 | Wall-follow budget in SCANNING |
 | `HEADING_STEPS` | 26 | Max steps per heading |
-| `DELIVERY_THRESHOLD` | 175 | Min explore-age before responding to delivery trails |
+| `DELIVERY_THRESHOLD` | 150 | Min explore-age before responding to delivery trails |
 | `DELIVERING_STRENGTH` | 100 | DELIVERING mark intensity |
+| `GRADIENT_GO_HOME` | 2 | Explorer turns back if gradient here < this |
+| `GRADIENT_NEAR_HOME` | 32 | Returner resumes exploring once gradient >= this |
 
 ## Design Rationale
 
