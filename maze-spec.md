@@ -27,9 +27,14 @@ When RETURNING's dead-reckoning is blocked, instead of immediately falling throu
 
 This is the key difference: **explorers scan walls to find gaps to pass through; returning ants scan walls to find corridors that lead toward the nest.**
 
-### 2. Anti-reversal bias in random fallback
+### 2. Anti-reversal bias everywhere
 
-When all else fails and the ant must pick a random direction, it avoids reversing its last direction. In a 2-wide corridor this guarantees forward progress instead of oscillation.
+When picking a random direction, the ant avoids reversing its last movement direction. This applies in two places:
+
+- **EXPLORING heading selection**: when no DELIVERING scent is present and the ant picks a new random heading, it avoids reversing. This prevents explorers from oscillating in corridors and wasting ticks retracing ground they just covered.
+- **RETURN-SCANNING fallback**: when wall-following hits a dead end and must pick a new direction, it avoids reversing.
+
+The `pick-nonwall-no-reverse` macro tries 3 non-reverse directions in random order before falling back to reversal as a last resort (when the other 3 are all walls).
 
 ## Pheromones
 
@@ -56,9 +61,14 @@ Same 5 persistent registers as bridge-bt:
 
 ### EXPLORING (start state)
 
-Identical to bridge-bt. Fan out from nest, find food, mark TRAIL.
+**Modified from bridge-bt.** Fan out from nest, find food, mark TRAIL.
 
-- Pick headings influenced by DELIVERING scent (head toward food sources)
+**Choosing a heading** (when `counter` runs out):
+
+1. **DELIVERING scent here** → head opposite `SMELL DELIVERING` (away from nest, toward food sources), 1–4 steps.
+2. **No pheromone** → random non-wall direction **with anti-reversal** (avoids reversing the current `dir`), 1–4 steps.
+
+Otherwise identical to bridge-bt:
 - On wall → transition to SCANNING
 - On food → pickup, transition to BACKTRACKING
 - Timeout → LOST
@@ -116,38 +126,8 @@ Identical to bridge-bt, but with the same enhanced navigation:
 2. DELIVERING trail → EXPLORING  
 3. Dead-reckon + wall-follow fallback
 
-## State Transitions
+## Design Rationale
 
-```
-EXPLORING ──food──→ BACKTRACKING ──path done──→ RETURNING ──nest──→ EXPLORING
-    │                    │                          │
-    │                    └──────nest─────────────────┘
-    │                    │
-    │                    └──blocked──→ RETURNING
-    │
-    ├──wall──→ SCANNING ──gap──→ EXPLORING
-    │              │
-    │              └──food──→ BACKTRACKING
-    │
-    └──timeout──→ LOST ──nest/trail──→ EXPLORING
-                            │
-                            └──wall──→ (wall-follow within LOST)
+**Wall-following in RETURNING:** Maze corridors run in cardinal directions with right-angle turns. Dead-reckoning says "go north" but the corridor runs east-west. Without wall-following, the ant bounces off the north wall. With wall-following, it walks along the corridor probing north each step, and goes through when the corridor turns. The budget-limited recomputation prevents fixating on a stale direction — after moving laterally, the nest may be in a different direction.
 
-RETURNING ──blocked──→ RETURN-SCANNING ──gap──→ RETURNING
-                            │
-                            └──budget──→ RETURNING (recompute dir)
-```
-
-## Key Design Rationale
-
-### Why wall-following in RETURNING matters for mazes
-
-Maze corridors run in cardinal directions with right-angle turns. Dead-reckoning says "go north" but the corridor runs east-west. Without wall-following, the ant just bounces off the north wall. With wall-following, it walks east (or west) along the corridor, probing north each step. When the corridor turns north, it goes through. This is exactly what SCANNING does for explorers — now returning ants get the same ability.
-
-### Why budget-limited wall-following with recomputation
-
-A fixed target direction becomes stale as the ant moves laterally. If the ant wants to go north but walks 20 steps east along a wall, the nest may now be northwest or even west. The 15-step budget forces a direction recompute, keeping the wall-following oriented toward the actual nest position rather than a stale heading.
-
-### Why anti-reversal helps in corridors
-
-In a 2-wide maze corridor, a random walk that can reverse has a 25% chance of going backward each step — effective speed drops to near zero. Excluding the reverse direction means the ant always makes progress along the corridor, even when it can't determine which end leads home.
+**Anti-reversal:** A random walk that can reverse has a 25% chance of undoing its last step. Excluding the reverse direction guarantees forward progress in corridors. This helps both returning ants (the original motivation) and explorers (covers new ground faster, broad improvement across all map types).

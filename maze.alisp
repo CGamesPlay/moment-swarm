@@ -16,7 +16,8 @@
 (const EXPLORE_TIMEOUT 300)
 (const TRAIL_STRENGTH 125)
 (const SCAN_STEPS 30)
-(const RETURN_SCAN_STEPS 15)
+(const RETURN_SCAN_STEPS 30)
+(const HEADING_STEPS 26)
 
 
 ; ══════════════════════════════════════════════
@@ -224,11 +225,11 @@
       (let ((delivery-signal (sniff DELIVERING_PH here)))
         (when (!= delivery-signal 0)
           (set! dir (invert-dir (smell DELIVERING_PH)))
-          (set! counter (+ (random 4) 1))))
+          (set! counter (+ (random HEADING_STEPS) 1))))
       ; No delivering — random, but avoid reversing
       (when (<= counter 0)
         (pick-nonwall-no-reverse dir (invert-dir dir))
-        (set! counter (+ (random 4) 1))))
+        (set! counter (+ (random HEADING_STEPS) 1))))
 
     ; Wall check — if blocked, enter SCANNING state
     (when (= (probe dir) 1)
@@ -280,7 +281,7 @@
       ; Gap found — go through!
       (set! dir counter)
       (set! counter 0)
-      (set! explore-age (+ (random 4) 1))
+      (set! explore-age (+ (random HEADING_STEPS) 1))
       (move-with-tracking-bt dir homepos path)
       (go exploring))
 
