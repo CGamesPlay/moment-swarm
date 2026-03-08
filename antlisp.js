@@ -232,6 +232,51 @@ class Compiler {
     throw this.errorAt(`Cannot resolve: ${JSON.stringify(node)}`, node);
   }
 
+  // tryEvalConst: recursively evaluate an expression to an integer if all
+  // operands are compile-time constants. Returns null if any operand cannot
+  // be resolved (opportunistic mode for constant folding).
+  tryEvalConst(node) {
+    if (node.type === 'number') return node.value;
+    if (node.type === 'symbol') {
+      try {
+        const val = this.resolveAtom(node);
+        const n = parseInt(val, 10);
+        return isNaN(n) ? null : n;
+      } catch {
+        return null;
+      }
+    }
+    if (node.type !== 'list') return null;
+    const list = node.value;
+    if (!list.length) return null;
+    const op = list[0].value;
+    const ops = {
+      '+': (a, b) => a + b,
+      '-': (a, b) => a - b,
+      '*': (a, b) => a * b,
+      '/': (a, b) => Math.trunc(a / b),
+      'mod': (a, b) => a % b,
+      'and': (a, b) => a & b,
+      'or': (a, b) => a | b,
+      'xor': (a, b) => a ^ b,
+      'lshift': (a, b) => a << b,
+      'rshift': (a, b) => a >> b,
+    };
+    if (!ops[op]) return null;
+    const args = [];
+    for (let i = 1; i < list.length; i++) {
+      const v = this.tryEvalConst(list[i]);
+      if (v === null) return null;
+      args.push(v);
+    }
+    if (args.length === 0) return null;
+    // Unary negation
+    if (args.length === 1 && op === '-') return -args[0];
+    if (args.length === 1) return args[0];
+    // Fold left for variadic
+    return args.reduce(ops[op]);
+  }
+
   // resolveArg: like resolveAtom but handles compound expressions
   // by compiling them into a temp register. Returns { val, tempReg }
   // where tempReg is set if a register was allocated (caller must free).
@@ -239,6 +284,9 @@ class Compiler {
     if (node.type === 'number' || node.type === 'symbol') {
       return { val: this.resolveAtom(node), tempReg: null };
     }
+    // Try constant folding before allocating a register
+    const folded = this.tryEvalConst(node);
+    if (folded !== null) return { val: String(folded), tempReg: null };
     // Compound expression — compile into a temp register
     const reg = this.allocReg();
     this.compileExpr(node, reg);
@@ -533,7 +581,13 @@ class Compiler {
       this.constValues.set(name, this.resolveAtom(node));
       this.constOverrides.delete(name);  // mark as consumed
     } else {
-      const value = this.resolveAtom(list[2]);
+      const value = (list[2].type === 'list')
+        ? (() => {
+            const n = this.tryEvalConst(list[2]);
+            if (n === null) throw this.errorAt(`const value is not a compile-time constant`, list[2]);
+            return String(n);
+          })()
+        : this.resolveAtom(list[2]);
       this.constValues.set(name, value);  // store for inline substitution
     }
   }
@@ -945,6 +999,14 @@ class Compiler {
   // ── Arithmetic ──
 
   compileArith(list, destReg) {
+    // Opportunistic constant folding
+    const folded = this.tryEvalConst({ type: 'list', value: list });
+    if (folded !== null) {
+      const reg = destReg || this.allocReg();
+      this.emit(`  SET ${reg} ${folded}`);
+      return reg;
+    }
+
     const opMap = {
       '+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV',
       'mod': 'MOD', 'and': 'AND', 'or': 'OR', 'xor': 'XOR',
@@ -1016,7 +1078,8 @@ class Compiler {
       const { reg: a, allocated } = this.ensureInReg(list[1]);
       const rewrite = this.tryRewriteComparison(node);
       const effectiveOp = rewrite ? rewrite.op : op;
-      const b = rewrite ? rewrite.b : this.resolveAtom(list[2]);
+      const bArg = rewrite ? { val: rewrite.b, tempReg: null } : this.resolveArg(list[2]);
+      const b = bArg.val;
       const info = jmpOps[effectiveOp];
 
       if (jumpOnFalse) {
@@ -1038,6 +1101,7 @@ class Compiler {
           this.emitLabel(skip);
         }
       }
+      if (bArg.tempReg) this.freeReg(bArg.tempReg);
       if (allocated) this.freeReg(a);
       return;
     }

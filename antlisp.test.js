@@ -38,7 +38,7 @@ function runTests() {
 
   test('arithmetic chained',
     '(let ((x (+ 3 4 5))) (move random))',
-    r => r.includes('SET r0 3') && r.includes('ADD r0 4') && r.includes('ADD r0 5'));
+    r => r.includes('SET r0 12'));  // constant-folded
 
   test('let binding as global-style var',
     '(let ((dx 0) (dy 0)) (set! dx (+ dx 1)))',
@@ -76,7 +76,7 @@ function runTests() {
 
   test('nested compound exprs',
     '(let ((x (+ (* 2 3) (- 10 5)))) (move random))',
-    r => r.includes('MUL') && r.includes('SUB') && r.includes('ADD'));
+    r => r.includes('SET r0 11'));  // constant-folded
 
   // --- Unary negation edge cases ---
   test('unary negation simple',
@@ -225,15 +225,15 @@ function runTests() {
   // --- Arithmetic edge cases ---
   test('chained subtraction',
     '(let ((x (- 10 3 2 1))) (move random))',
-    r => r.includes('SET') && r.includes('SUB'));
+    r => r.includes('SET r0 4'));  // constant-folded
 
   test('chained multiplication',
     '(let ((x (* 2 3 4))) (move random))',
-    r => r.includes('MUL'));
+    r => r.includes('SET r0 24'));  // constant-folded
 
   test('division',
     '(let ((x (/ 10 2))) (move random))',
-    r => r.includes('DIV'));
+    r => r.includes('SET r0 5'));  // constant-folded
 
   test('modulo',
     '(let ((x (mod (id) 4))) (move random))',
@@ -245,23 +245,23 @@ function runTests() {
 
   test('bitwise or',
     '(let ((x (or 8 4))) (move random))',
-    r => r.includes('OR'));
+    r => r.includes('SET r0 12'));  // constant-folded
 
   test('bitwise xor',
     '(let ((x (xor 15 8))) (move random))',
-    r => r.includes('XOR'));
+    r => r.includes('SET r0 7'));  // constant-folded
 
   test('left shift',
     '(let ((x (lshift 1 3))) (move random))',
-    r => r.includes('LSHIFT'));
+    r => r.includes('SET r0 8'));  // constant-folded
 
   test('right shift',
     '(let ((x (rshift 8 2))) (move random))',
-    r => r.includes('RSHIFT'));
+    r => r.includes('SET r0 2'));  // constant-folded
 
   test('complex arithmetic expression',
     '(let ((x (+ (* 2 3) (/ 10 2) (mod 7 3)))) (move random))',
-    r => r.includes('MUL') && r.includes('DIV') && r.includes('MOD') && r.includes('ADD'));
+    r => r.includes('SET r0 12'));  // constant-folded: 6 + 5 + 1
 
   // --- Sensing edge cases ---
   test('all sense directions',
@@ -510,7 +510,7 @@ function runTests() {
   // --- Order of operations ---
   test('left-to-right evaluation',
     '(let ((x (+ 1 2 3 4 5))) (move random))',
-    r => r.includes('SET') && r.includes('ADD'));
+    r => r.includes('SET r0 15'));  // constant-folded
 
   // --- Empty let bindings (edge case) ---
   test('let with expression body',
@@ -614,7 +614,7 @@ function runTests() {
   test('set! with compound expression',
     `(let ((x 0))
        (set! x (+ (* 2 3) 4)))`,
-    r => r.includes('MUL') && r.includes('ADD'));
+    r => r.includes('SET r0 10'));  // constant-folded: 6 + 4
 
   // --- Probe all directions ---
   test('probe in different directions',
@@ -641,7 +641,7 @@ function runTests() {
   // --- Mark with computed value ---
   test('mark with arithmetic result',
     '(let ((val (+ 50 50))) (mark ch_red val))',
-    r => r.includes('ADD') && r.includes('MARK CH_RED'));
+    r => r.includes('SET r0 100') && r.includes('MARK CH_RED'));  // constant-folded
 
   // --- tagbody / go ---
   test('tagbody with underscore tag',
@@ -1317,6 +1317,73 @@ function runTests() {
     console.log(`${caught ? '✓' : '✗'} macro wrong arg count error`);
     if (caught) passed++; else failed++;
   })();
+
+  // --- Compile-time constant expression evaluation ---
+
+  test('const expr: (+ 3 4) evaluates to 7',
+    '(const X (+ 3 4)) (let ((a X)) (move a))',
+    r => r.includes('SET r0 7'));
+
+  test('const expr: const referencing earlier const',
+    '(const A 5) (const B (* A 2)) (let ((x B)) (move x))',
+    r => r.includes('SET r0 10'));
+
+  test('const expr: subtraction',
+    '(const C (- 10 3)) (let ((x C)) (move x))',
+    r => r.includes('SET r0 7'));
+
+  test('const expr: integer division truncates',
+    '(const D (/ 10 3)) (let ((x D)) (move x))',
+    r => r.includes('SET r0 3'));
+
+  test('const expr: bitwise lshift',
+    '(const E (lshift 1 8)) (let ((x E)) (move x))',
+    r => r.includes('SET r0 256'));
+
+  test('const expr: variadic addition',
+    '(const F (+ 1 2 3)) (let ((x F)) (move x))',
+    r => r.includes('SET r0 6'));
+
+  test('const expr: unary negation',
+    '(const G (- 5)) (let ((x G)) (move x))',
+    r => r.includes('SET r0 -5'));
+
+  test('const expr: nested expressions',
+    '(const H (+ (* 2 3) 1)) (let ((x H)) (move x))',
+    r => r.includes('SET r0 7'));
+
+  (function() {
+    let caught = false;
+    try {
+      compileAntLisp('(const X (+ 1 y))');
+    } catch (e) {
+      caught = e.message.includes('not a compile-time constant');
+    }
+    console.log(`${caught ? '✓' : '✗'} const expr: error on non-const operand`);
+    if (caught) passed++; else failed++;
+  })();
+
+  // --- Opportunistic constant folding in expressions ---
+
+  test('const fold: (+ 1 1) folds to SET 2',
+    '(let ((x (+ 1 1))) (move x))',
+    r => r.includes('SET r0 2') && !r.includes('ADD'));
+
+  test('const fold: (+ x 1) does NOT fold (variable operand)',
+    '(let ((x 3)) (move (+ x 1)))',
+    r => r.includes('ADD'));
+
+  test('const fold: (* CONST 2) folds through const resolution',
+    '(const N 5) (let ((x (* N 2))) (move x))',
+    r => r.includes('SET r0 10') && !r.includes('MUL'));
+
+  test('const fold: unary (- 5) folds to SET -5',
+    '(let ((x (- 5))) (move x))',
+    r => r.includes('SET r0 -5') && !r.includes('SUB'));
+
+  test('const fold: compound expr in comparison operand',
+    '(const R 7) (let ((age 14)) (when (>= age (* 2 R)) (move 1)))',
+    r => !r.includes('Cannot resolve'));
 
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }
