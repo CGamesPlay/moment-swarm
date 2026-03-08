@@ -92,6 +92,8 @@ if (listMaps) {
 
 // ─── Read source ─────────────────────────────────────────────────────────────
 
+(async () => {
+
 let source;
 if (file) {
   if (!fs.existsSync(file)) {
@@ -100,7 +102,13 @@ if (file) {
   }
   source = fs.readFileSync(file, "utf8");
 } else if (!process.stdin.isTTY) {
-  source = fs.readFileSync(0, "utf8");
+  source = await new Promise((resolve, reject) => {
+    const chunks = [];
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => chunks.push(chunk));
+    process.stdin.on("end", () => resolve(chunks.join("")));
+    process.stdin.on("error", reject);
+  });
 } else {
   console.error("No input file. Pass a .ant file or pipe to stdin.");
   console.error('Try --help for usage.');
@@ -181,3 +189,5 @@ if (quiet) {
   console.error("");
   console.log(`Score: ${score}/1000  (${(avgRatio * 100).toFixed(1)}% avg collection, ${results.length} map${results.length > 1 ? "s" : ""}, ${totalElapsed}ms)`);
 }
+
+})();
