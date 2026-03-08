@@ -685,6 +685,25 @@ class Compiler {
 
   // ── if / when / unless / cond / begin ──
 
+  // Constant-folding for > and <: rewrite (> a N) to (>= a N+1) and
+  // (< a N) to (<= a N-1) when N is a compile-time integer literal.
+  // This eliminates the trampoline since >= and <= have direct false-jumps.
+  tryRewriteComparison(node) {
+    if (node.type !== 'list') return null;
+    const list = node.value;
+    if (!list.length) return null;
+    const op = list[0].value;
+    if (op !== '>' && op !== '<') return null;
+
+    const b = this.resolveAtom(list[2]);
+    const n = parseInt(b, 10);
+    if (isNaN(n) || String(n) !== b) return null;  // not a pure integer literal
+
+    if (op === '>' && n < 2147483647) return { op: '>=', b: String(n + 1) };
+    if (op === '<' && n > -2147483648) return { op: '<=', b: String(n - 1) };
+    return null;
+  }
+
   // Check if a condition node would require a trampoline (2-instruction
   // jump sequence) when compiled with the given jumpOnFalse polarity.
   needsTrampoline(node, jumpOnFalse) {
@@ -702,7 +721,9 @@ class Compiler {
       '<=': { t: null, f: 'JGT' },
     };
 
-    const info = jmpOps[op];
+    const rewrite = this.tryRewriteComparison(node);
+    const effectiveOp = rewrite ? rewrite.op : op;
+    const info = jmpOps[effectiveOp];
     if (!info) {
       // (not cond) flips polarity
       if (op === 'not') return this.needsTrampoline(list[1], !jumpOnFalse);
@@ -970,8 +991,10 @@ class Compiler {
 
     if (jmpOps[op]) {
       const { reg: a, allocated } = this.ensureInReg(list[1]);
-      const b = this.resolveAtom(list[2]);
-      const info = jmpOps[op];
+      const rewrite = this.tryRewriteComparison(node);
+      const effectiveOp = rewrite ? rewrite.op : op;
+      const b = rewrite ? rewrite.b : this.resolveAtom(list[2]);
+      const info = jmpOps[effectiveOp];
 
       if (jumpOnFalse) {
         if (info.f) {

@@ -965,12 +965,11 @@ function runTests() {
          (move n)
          (move s)))`,
     r => {
-      // Should NOT contain a __skip label — that's the trampoline pattern.
-      // Instead should use a direct JLT to jump to the then-body,
-      // with else-body emitted first (swapped layout).
+      // Constant-folding rewrites (< x 0) to (<= x -1), which has a
+      // direct false-jump JGT — no trampoline or if-swap needed.
       const hasSkip = /__skip_\d+/.test(r);
-      const hasJLT = r.includes('JLT');
-      return !hasSkip && hasJLT;
+      const hasJGT = r.includes('JGT') && r.includes('-1');
+      return !hasSkip && hasJGT;
     });
 
   test('if-swap: (> x 0) with else avoids trampoline',
@@ -979,9 +978,11 @@ function runTests() {
          (move n)
          (move s)))`,
     r => {
+      // Constant-folding rewrites (> x 0) to (>= x 1), which has a
+      // direct false-jump JLT — no trampoline or if-swap needed.
       const hasSkip = /__skip_\d+/.test(r);
-      const hasJGT = r.includes('JGT');
-      return !hasSkip && hasJGT;
+      const hasJLT = r.includes('JLT') && r.includes(' 1 ');
+      return !hasSkip && hasJLT;
     });
 
   test('if-swap: (>= x 0) with else still works (no trampoline needed)',
@@ -1006,14 +1007,15 @@ function runTests() {
       return hasJGT;
     });
 
-  test('if-swap: (< x 0) without else is unchanged (no swap possible)',
+  test('if-swap: (< x 0) without else benefits from constant-folding',
     `(let ((x 5))
        (if (< x 0)
          (move n)))`,
     r => {
-      // Without else, we can't swap. Trampoline may still appear.
-      // Just verify it compiles and includes JLT.
-      return r.includes('JLT');
+      // Constant-folding rewrites (< x 0) to (<= x -1), which has a
+      // direct false-jump JGT — no trampoline needed even without else.
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JGT') && r.includes('-1');
     });
 
   test('if-swap: nested < and > both avoid trampolines',
@@ -1034,8 +1036,8 @@ function runTests() {
          (mark ch_red 10)
          (mark ch_blue 20)))`,
     r => {
-      // Both branches should still be present with correct actions
-      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JLT');
+      // Constant-folding rewrites (< a 5) to (<= a 4), false-jump is JGT with 4
+      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JGT') && r.includes(' 4 ');
     });
 
   test('if-swap: semantic correctness preserved for (> a b)',
@@ -1044,7 +1046,76 @@ function runTests() {
          (mark ch_red 10)
          (mark ch_blue 20)))`,
     r => {
-      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JGT');
+      // Constant-folding rewrites (> a 5) to (>= a 6), false-jump is JLT with 6
+      return r.includes('MARK CH_RED 10') && r.includes('MARK CH_BLUE 20') && r.includes('JLT') && r.includes(' 6 ');
+    });
+
+  // ═══════════════════════════════════════════════════════════════
+  // CONSTANT-FOLDING: (> a N) → (>= a N+1), (< a N) → (<= a N-1)
+  // ═══════════════════════════════════════════════════════════════
+
+  test('const-fold: (when (> x 3) ...) emits JLT with 4, no trampoline',
+    `(let ((x 5))
+       (when (> x 3) (move n)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JLT') && r.includes(' 4 ');
+    });
+
+  test('const-fold: (when (< x 3) ...) emits JGT with 2, no trampoline',
+    `(let ((x 5))
+       (when (< x 3) (move n)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JGT') && r.includes(' 2 ');
+    });
+
+  test('const-fold: (> x CONST) works through const resolution',
+    `(const THRESHOLD 3)
+     (let ((x 5))
+       (when (> x THRESHOLD) (move n)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JLT') && r.includes(' 4 ');
+    });
+
+  test('const-fold: (> x 2147483647) overflows — trampoline preserved',
+    `(let ((x 5))
+       (when (> x 2147483647) (move n)))`,
+    r => {
+      return /__skip_\d+/.test(r);
+    });
+
+  test('const-fold: (< x -2147483648) overflows — trampoline preserved',
+    `(let ((x 5))
+       (when (< x -2147483648) (move n)))`,
+    r => {
+      return /__skip_\d+/.test(r);
+    });
+
+  test('const-fold: (> x -1) rewrites to (>= x 0), emits JLT with 0',
+    `(let ((x 5))
+       (when (> x -1) (move n)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JLT') && r.includes(' 0 ');
+    });
+
+  test('const-fold: (> x y) with register operand — no rewrite, trampoline preserved',
+    `(let ((x 5) (y 3))
+       (when (> x y) (move n)))`,
+    r => {
+      return /__skip_\d+/.test(r);
+    });
+
+  test('const-fold: (if (> x 3) then else) — no trampoline, emits JLT with 4',
+    `(let ((x 5))
+       (if (> x 3)
+         (move n)
+         (move s)))`,
+    r => {
+      const hasSkip = /__skip_\d+/.test(r);
+      return !hasSkip && r.includes('JLT') && r.includes(' 4 ');
     });
 
   // ═══════════════════════════════════════════════════════════════
