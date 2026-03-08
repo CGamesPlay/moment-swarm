@@ -14,12 +14,11 @@
 
 (const MAX_TRAIL 255)            ; gradient seed intensity at points of interest
 (const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
-(const HEADING_STEPS 32)         ; max steps before picking a new direction
+(const HEADING_STEPS 28)         ; max steps before picking a new direction
 (const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
 (const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 (const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
-(const SPIRAL_RADIUS 7)          ; outward spiral radius after losing delivery trail
-(const SPIRAL_LEGS 14)           ; 2 * SPIRAL_RADIUS — total legs in spiral
+(const SPIRAL_RADIUS 2)          ; outward spiral radius after losing delivery trail
 (const PICKUP_SIGNAL 10)         ; pickup signal threshold to trigger spiraling
 
 
@@ -356,7 +355,7 @@
       (go returning))
 
     ; Spiral complete — resume exploring
-    (when (>= explore-age SPIRAL_LEGS)
+    (when (>= explore-age (* 2 SPIRAL_RADIUS))
       (set! counter 0)
       (set! explore-age 0)
       (go exploring))

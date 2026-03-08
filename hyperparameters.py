@@ -64,13 +64,14 @@ def _(mo, os):
         full_width=True,
     )
     sweep_parallel = mo.ui.slider(1, 16, value=8, label="Parallel jobs", step=1)
+    sweep_op_limit = mo.ui.checkbox(value=False, label="No op limit")
     mo.hstack(
         [
-            mo.vstack([sweep_file, sweep_map, sweep_parallel]),
-            sweep_params,
+            mo.vstack([sweep_file, sweep_params]),
+            mo.vstack([sweep_map, sweep_parallel, sweep_op_limit]),
         ]
     )
-    return sweep_file, sweep_map, sweep_parallel, sweep_params
+    return sweep_file, sweep_map, sweep_op_limit, sweep_parallel, sweep_params
 
 
 @app.cell
@@ -125,6 +126,7 @@ def _(
     sweep_file,
     sweep_map,
     sweep_names,
+    sweep_op_limit,
     sweep_parallel,
     sweep_run_button,
 ):
@@ -133,6 +135,7 @@ def _(
     if sweep_run_button.value and len(sweep_combos) > 0:
         _project_dir = os.path.dirname(os.path.abspath(__file__))
         _map_flag = ["-m", sweep_map.value] if sweep_map.value.strip() else []
+        _op_flag = ["-o", "1000"] if sweep_op_limit.value else []
 
         def _run_one(_combo):
             _dflags = []
@@ -149,7 +152,7 @@ def _(
                 return _combo, None, _compile_result.stderr.strip()
 
             _run_result = subprocess.run(
-                ["node", "run.js"] + _map_flag,
+                ["node", "run.js"] + _map_flag + _op_flag,
                 input=_compile_result.stdout,
                 capture_output=True,
                 text=True,
