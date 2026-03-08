@@ -1,6 +1,6 @@
 # Maze Forager Spec
 
-Extends bridge-bt with **wall-following during RETURNING** and **anti-reversal movement**. The core insight: on maze maps, dead-reckoning almost always hits a wall, trail pheromones are unreliable (laid by outbound explorers, not pointing home), and pure random movement traps ants in corners. The fix is to give returning ants the same wall-following ability that explorers have — when blocked, walk the corridor probing for a turn toward home.
+Extends bridge-bt with **wall-following during RETURNING**, **anti-reversal movement**, and **responsive delivery trail crossing**. The core insight: on maze maps, dead-reckoning almost always hits a wall, trail pheromones are unreliable (laid by outbound explorers, not pointing home), and pure random movement traps ants in corners. The fix is to give returning ants the same wall-following ability that explorers have — when blocked, walk the corridor probing for a turn toward home. Additionally, exploring ants now detect and follow delivery trails mid-heading instead of walking right past them.
 
 ## Problem
 
@@ -16,7 +16,17 @@ On maze maps this breaks down because:
 
 ## Changes from bridge-bt
 
-### 1. RETURNING gains wall-following (RETURN-SCANNING sub-state)
+### 1. Responsive delivery trail crossing in EXPLORING
+
+Exploring ants check for DELIVERING pheromone **every tick**, catching trails they cross mid-heading. Three guards prevent over-reaction:
+
+- **Explore-age gate (`explore-age >= DELIVERY_THRESHOLD`)**: Only respond after exploring for at least 175 ticks. Near the nest, delivery trails are everywhere (many ants converge); reacting to them would prevent ants from spreading out.
+- **Crossing check**: Only redirect if the ant is crossing the trail perpendicularly — i.e., its current heading is neither toward food nor toward nest along the trail. Ants already aligned with a trail are not disrupted.
+- **Soft redirect (`counter = 1`)**: Sets counter to 1 so it expires next tick. The normal heading-selection logic (which also checks DELIVERING) then takes over cleanly.
+
+This supplements the existing heading-expiry DELIVERING check — an additional early-detection layer.
+
+### 2. RETURNING gains wall-following (RETURN-SCANNING sub-state)
 
 When RETURNING's dead-reckoning is blocked, instead of immediately falling through to trail/random, the ant enters a wall-following mode directly within RETURNING. This reuses the SCANNING concept but oriented toward getting home:
 
@@ -27,7 +37,7 @@ When RETURNING's dead-reckoning is blocked, instead of immediately falling throu
 
 This is the key difference: **explorers scan walls to find gaps to pass through; returning ants scan walls to find corridors that lead toward the nest.**
 
-### 2. Anti-reversal bias everywhere
+### 3. Anti-reversal bias everywhere
 
 When picking a random direction, the ant avoids reversing its last movement direction. This applies in two places:
 
@@ -63,10 +73,14 @@ Same 5 persistent registers as bridge-bt:
 
 **Modified from bridge-bt.** Fan out from nest, find food, mark TRAIL.
 
+**Every step** (after marking TRAIL):
+
+1. **Delivery trail crossing** (if `explore-age >= DELIVERY_THRESHOLD`): sniff DELIVERING on current cell; if present, smell for the strongest adjacent direction. If the ant is crossing the trail perpendicularly (heading is neither toward-food nor toward-nest along the trail), redirect toward food and set `counter = 1` for a soft handoff to the heading logic next tick.
+
 **Choosing a heading** (when `counter` runs out):
 
-1. **DELIVERING scent here** → head opposite `SMELL DELIVERING` (away from nest, toward food sources), 1–4 steps.
-2. **No pheromone** → random non-wall direction **with anti-reversal** (avoids reversing the current `dir`), 1–4 steps.
+1. **DELIVERING scent here** → head opposite `SMELL DELIVERING` (away from nest, toward food sources), 1–HEADING_STEPS steps.
+2. **No pheromone** → random non-wall direction **with anti-reversal** (avoids reversing the current `dir`), 1–HEADING_STEPS steps.
 
 Otherwise identical to bridge-bt:
 - On wall → transition to SCANNING
@@ -126,8 +140,21 @@ Identical to bridge-bt, but with the same enhanced navigation:
 2. DELIVERING trail → EXPLORING  
 3. Dead-reckon + wall-follow fallback
 
+## Constants
+
+| Constant | Default | Purpose |
+|----------|---------|---------|
+| `EXPLORE_TIMEOUT` | 300 | Ticks before an explorer gives up and goes home |
+| `TRAIL_STRENGTH` | 125 | TRAIL pheromone mark intensity |
+| `SCAN_STEPS` | 30 | Wall-follow budget in SCANNING |
+| `RETURN_SCAN_STEPS` | 30 | Wall-follow budget in RETURN-SCANNING |
+| `HEADING_STEPS` | 26 | Max steps before picking a new heading |
+| `DELIVERY_THRESHOLD` | 175 | Min `explore-age` before responding to delivery trails mid-heading |
+
 ## Design Rationale
 
 **Wall-following in RETURNING:** Maze corridors run in cardinal directions with right-angle turns. Dead-reckoning says "go north" but the corridor runs east-west. Without wall-following, the ant bounces off the north wall. With wall-following, it walks along the corridor probing north each step, and goes through when the corridor turns. The budget-limited recomputation prevents fixating on a stale direction — after moving laterally, the nest may be in a different direction.
 
 **Anti-reversal:** A random walk that can reverse has a 25% chance of undoing its last step. Excluding the reverse direction guarantees forward progress in corridors. This helps both returning ants (the original motivation) and explorers (covers new ground faster, broad improvement across all map types).
+
+**Responsive delivery trail crossing:** Explorers check for DELIVERING pheromone every tick so they can react to trails mid-heading rather than only at heading expiry. The three guards (explore-age gate, crossing-only filter, soft redirect) are essential: without them, ants near the nest constantly re-orient toward stale trails instead of spreading out, and ants walking along trails get disrupted. The `DELIVERY_THRESHOLD=175` explore-age gate is the most important — it ensures only ants far from the nest respond, where a delivery trail is a meaningful signal of nearby food rather than nest-area noise.

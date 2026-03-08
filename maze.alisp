@@ -15,9 +15,11 @@
 
 (const EXPLORE_TIMEOUT 300)
 (const TRAIL_STRENGTH 125)
+(const DELIVERING_STRENGTH 100)
 (const SCAN_STEPS 30)
 (const RETURN_SCAN_STEPS 30)
 (const HEADING_STEPS 26)
+(const DELIVERY_THRESHOLD 175)
 
 
 ; ══════════════════════════════════════════════
@@ -219,6 +221,21 @@
     ; Mark trail breadcrumb
     (mark TRAIL_PH TRAIL_STRENGTH)
 
+    ; DELIVERING pheromone — responsive check every tick
+    ; Follow trail toward food if we're crossing it (not already aligned)
+    ; Only after exploring for a while (avoid nest-area distraction)
+    (when (>= explore-age DELIVERY_THRESHOLD)
+      (let ((delivery-signal (sniff DELIVERING_PH here)))
+        (when (!= delivery-signal 0)
+          (let ((trail-dir (smell DELIVERING_PH)))
+            (when (!= trail-dir 0)
+              (let ((toward-food (invert-dir trail-dir)))
+                ; Only redirect if crossing the trail, not aligned with it
+                (when (!= dir toward-food)
+                  (when (!= dir trail-dir)
+                    (set! dir toward-food)
+                    (set! counter 1)))))))))
+
     ; Pick new heading when counter (heading steps) runs out
     (when (<= counter 0)
       ; DELIVERING pheromone → head opposite (toward food sources)
@@ -327,7 +344,7 @@
       (go returning))
 
     ; Mark delivering trail
-    (mark DELIVERING_PH 100)
+    (mark DELIVERING_PH DELIVERING_STRENGTH)
 
     ; Pop direction, reverse it, and try to move
     (pop-path-dir! dir path)
