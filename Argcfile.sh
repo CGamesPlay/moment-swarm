@@ -26,6 +26,7 @@ compile() {
 # @cmd Run an alisp file through the simulator
 # @arg  file!           alisp file
 # @option -m --map      Run only a specific map (e.g. "open-38bs6g")
+# @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 test() {
 	local -a dflags=()
@@ -34,7 +35,7 @@ test() {
 	done
 	local asm
 	asm="$(node antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
-	echo "$asm" | node run.js ${argc_map+-m "$argc_map"}
+	echo "$asm" | node run.js ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
 }
 
 # @cmd Run compiler tests

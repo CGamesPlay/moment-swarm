@@ -13,22 +13,21 @@ Runs the training dataset using the given antssembly file. Prints a per-map scor
 Example baseline using the example brain.ant file:
 
 ```
-$ node run.js brain.ant
 Assembled 70 instructions
-  chambers-3lc8x4             21/ 1044  (  2.0%)  87ms
-  bridge-1u7xlw                0/  673  (  0.0%)  59ms
-  gauntlet-41jczs              0/ 1315  (  0.0%)  59ms
-  islands-3ekzho               0/  852  (  0.0%)  61ms
-  open-38bs6g                152/ 1140  ( 13.3%)  59ms
-  brush-3c3sbo                 0/  676  (  0.0%)  61ms
-  prairie-pgwqb              224/  724  ( 30.9%)  59ms
-  field-hjbev                 71/  955  (  7.4%)  59ms
-  pockets-1545v7               0/ 1001  (  0.0%)  61ms
-  fortress-2wwxqn              0/ 1256  (  0.0%)  57ms
-  maze-r4177                   0/ 1189  (  0.0%)  60ms
-  spiral-zu9av                39/  964  (  4.0%)  60ms
+  chambers-3lc8x4             21/ 1044  (  2.0%)        0 stalls  88ms
+  bridge-1u7xlw                0/  673  (  0.0%)        0 stalls  61ms
+  gauntlet-41jczs              0/ 1315  (  0.0%)        0 stalls  61ms
+  islands-3ekzho               0/  852  (  0.0%)        0 stalls  64ms
+  open-38bs6g                152/ 1140  ( 13.3%)        0 stalls  62ms
+  brush-3c3sbo                 0/  676  (  0.0%)        0 stalls  64ms
+  prairie-pgwqb              224/  724  ( 30.9%)        0 stalls  63ms
+  field-hjbev                 71/  955  (  7.4%)        0 stalls  63ms
+  pockets-1545v7               0/ 1001  (  0.0%)        0 stalls  66ms
+  fortress-2wwxqn              0/ 1256  (  0.0%)        0 stalls  61ms
+  maze-r4177                   0/ 1189  (  0.0%)        0 stalls  62ms
+  spiral-zu9av                39/  964  (  4.0%)        0 stalls  63ms
 
-Score: 48/1000  (4.8% avg collection, 12 maps, 742ms)
+Score: 48/1000  (4.8% avg collection, 12 maps, 0 stalls, 778ms)
 ```
 
 ## Custom language
@@ -43,7 +42,7 @@ To compile an alisp file to antssembly, use `argc compile file.alisp`. To compil
 
 The language is very limited, due to only having 8 registers and no stack. We may wish to improve compiler optimizations if it becomes difficult to create the kinds of programs we want to.
 
-Avoid using pinned registers, instead prefer to use a let binding, which is mutable and more narrowly scoped.
+The 64-op limit is particularly concerning for our compiled language. The "stalls" display indicates the number of times the op limit was hit during the run, and the tag of each ant when the stall happened. Before optimizing for stalls, verify that stalls are actually causing problems by `argc test file.alisp -o 1000`.
 
 ## ISA notes
 

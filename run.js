@@ -20,6 +20,7 @@ Options:
   -n, --maps <n>        Number of eval maps to generate (default: 12)
   -t, --ticks <n>       Max ticks per map (default: 2000)
   -a, --ants <n>        Number of ants (default: 200)
+  -o, --max-ops <n>     Max ops per ant per tick (default: 64)
   -l, --list            List generated map names and exit
   -v, --verbose         Print per-tick progress every 100 ticks
   -q, --quiet           Only print the final score number
@@ -35,6 +36,7 @@ let seed = 42;
 let numMaps = 12;
 let maxTicks = 2000;
 let antCount = 200;
+let maxOpsPerTick = 64;
 let listMaps = false;
 let verbose = false;
 let quiet = false;
@@ -59,6 +61,9 @@ for (let i = 0; i < args.length; i++) {
       break;
     case "-a": case "--ants":
       antCount = parseInt(args[++i], 10);
+      break;
+    case "-o": case "--max-ops":
+      maxOpsPerTick = parseInt(args[++i], 10);
       break;
     case "-l": case "--list":
       listMaps = true;
@@ -134,7 +139,7 @@ if (!quiet) {
 
 // ─── Generate maps ───────────────────────────────────────────────────────────
 
-const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount };
+const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick };
 const allMaps = engine.generateEvalMaps(config.mapWidth, config.mapHeight, seed, numMaps);
 
 let maps;
@@ -170,10 +175,23 @@ for (let i = 0; i < maps.length; i++) {
   const collected = world.foodCollected;
   const total = map.totalFood;
   const ratio = total > 0 ? collected / total : 0;
-  results.push({ name: map.name, collected, total, ratio, elapsed });
+  const stalls = world.stallCounts || 0;
+  const stallsByTag = world.stallsByTag || {};
+  results.push({ name: map.name, collected, total, ratio, elapsed, stalls, stallsByTag });
 
   if (!quiet) {
-    console.error(`  ${map.name.padEnd(24)} ${String(collected).padStart(5)}/${String(total).padStart(5)}  (${(ratio * 100).toFixed(1).padStart(5)}%)  ${elapsed}ms`);
+    // Format stalls-by-tag using .tag names from assembly
+    let tagDetail = '';
+    if (stalls > 0) {
+      const tagNames = program.tagNames || new Map();
+      const parts = [];
+      for (const [tag, count] of Object.entries(stallsByTag).sort((a, b) => b[1] - a[1])) {
+        const name = tagNames.get(Number(tag)) || `tag${tag}`;
+        parts.push(`${name}:${count}`);
+      }
+      if (parts.length) tagDetail = `  [${parts.join(' ')}]`;
+    }
+    console.error(`  ${map.name.padEnd(24)} ${String(collected).padStart(5)}/${String(total).padStart(5)}  (${(ratio * 100).toFixed(1).padStart(5)}%)  ${String(stalls).padStart(7)} stalls${tagDetail}  ${elapsed}ms`);
   }
 }
 
@@ -182,12 +200,14 @@ for (let i = 0; i < maps.length; i++) {
 const avgRatio = results.reduce((s, r) => s + r.ratio, 0) / results.length;
 const score = Math.round(avgRatio * 1000);
 const totalElapsed = results.reduce((s, r) => s + r.elapsed, 0);
+const totalStalls = results.reduce((s, r) => s + r.stalls, 0);
 
 if (quiet) {
   console.log(score);
 } else {
+  const opsNote = maxOpsPerTick !== 64 ? `, max-ops=${maxOpsPerTick}` : '';
   console.error("");
-  console.log(`Score: ${score}/1000  (${(avgRatio * 100).toFixed(1)}% avg collection, ${results.length} map${results.length > 1 ? "s" : ""}, ${totalElapsed}ms)`);
+  console.log(`Score: ${score}/1000  (${(avgRatio * 100).toFixed(1)}% avg collection, ${results.length} map${results.length > 1 ? "s" : ""}, ${totalStalls} stalls, ${totalElapsed}ms${opsNote})`);
 }
 
 })();

@@ -487,6 +487,7 @@ const _tickRng = new RNG(1);
  * Returns true if the ant successfully dropped food at the nest.
  */
 function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps, antGrid, senseRange = 1, stopAtPc = -1) {
+  ant._stalled = false;
   if (instrCount === 0) return false;
 
   const mapW = map.width;
@@ -737,6 +738,9 @@ function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps,
     }
   }
 
+  // Op-limit stall: exhausted maxOps without executing an action (MOVE/PICKUP/DROP)
+  ant._stalled = true;
+  ant._stalledOps = opsUsed;
   ant.pc = pc;
   return false;
 }
@@ -819,12 +823,26 @@ function runTick(world, config = DEFAULT_CONFIG) {
   _pheroList = world.pheroList;
   _pheroListLen = world.pheroListLen;
 
+  let stallCount = 0;
   for (let i = 0; i < ants.length; i++) {
     const ant = ants[i];
+    const pcBefore = ant.pc;
     const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange);
     if (delivered) world.foodCollected++;
     map.visitCounts[ant.y * map.width + ant.x]++;
+
+    // Detect op-limit stall: stepAnt exhausted maxOps without executing an action
+    if (ant._stalled) {
+      stallCount++;
+      // Track stalls by tag
+      if (!world.stallsByTag) world.stallsByTag = {};
+      const tag = ant.tag;
+      world.stallsByTag[tag] = (world.stallsByTag[tag] || 0) + 1;
+    }
   }
+
+  if (!world.stallCounts) world.stallCounts = 0;
+  world.stallCounts += stallCount;
 
   world.pheroListLen = decayPheromones(map, world.pheroList, world.pheroActive, _pheroListLen);
   world.rngState = _tickRng.state;
