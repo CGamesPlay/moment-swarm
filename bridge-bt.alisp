@@ -16,9 +16,9 @@
 (const TRAIL_PH ch_red)
 (const DELIVERING_PH ch_blue)
 
-(const EXPLORE_TIMEOUT 600)
-(const TRAIL_STRENGTH 100)
-(const SCAN_STEPS 40)
+(const EXPLORE_TIMEOUT 300)
+(const TRAIL_STRENGTH 125)
+(const SCAN_STEPS 30)
 
 
 ; ══════════════════════════════════════════════
