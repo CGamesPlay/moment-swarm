@@ -18,9 +18,9 @@
 (const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
 (const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 (const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
-(const SPIRAL_RADIUS 3)          ; outward spiral radius after losing delivery trail
-(const SPIRAL_LEGS 6)            ; 2 * SPIRAL_RADIUS — total legs in spiral
-(const PICKUP_SIGNAL 10)         ; green signal threshold to trigger spiraling
+(const SPIRAL_RADIUS 6)          ; outward spiral radius after losing delivery trail
+(const SPIRAL_LEGS 12)           ; 2 * SPIRAL_RADIUS — total legs in spiral
+(const PICKUP_SIGNAL 10)         ; pickup signal threshold to trigger spiraling
 
 
 ; ══════════════════════════════════════════════
@@ -116,6 +116,19 @@
         (if (> dx 0)
           (set! dir 4)
           (set! dir 2))))))
+
+; ─── Food grab macro ─────────────────────────────────────────
+; Sense food, grab it, mark green beacon, go to returning.
+; Must be called inside tagbody with a `returning` label.
+(defmacro grab-food-if-adjacent (dir homepos)
+  (let ((food-dir (sense food)))
+    (when (!= food-dir 0)
+      (mark-gradient)
+      (set! dir food-dir)
+      (move-with-tracking dir homepos)
+      (pickup)
+      (mark PICKUP_PH 255)
+      (go returning))))
 
 ; ── Utility macros ────────────────────────────────────────────
 
@@ -225,16 +238,7 @@
     exploring
     (set-tag exploring)
 
-    ; Food check — grab, mark green beacon, switch to returning
-    (let ((food-dir (sense food)))
-      (when (!= food-dir 0)
-        (mark-gradient)
-        (set! dir food-dir)
-        (move-with-tracking dir homepos)
-        ; tick ends here; resumes next tick on the food cell
-        (pickup)
-        (mark PICKUP_PH 255)
-        (go returning)))
+    (grab-food-if-adjacent dir homepos)
 
     ; Gradient trail marking
     (mark-gradient)
@@ -248,7 +252,7 @@
               (= (sense food) 0))
       (set! counter 1)
       (set! explore-age 0)
-      (set! dir (turn-right dir))
+      (pick-random-nonwall dir)
       (go spiraling))
 
     ; DELIVERING gradient — follow toward food if signal is strong enough
@@ -295,16 +299,7 @@
     scanning
     (set-tag scanning)
 
-    ; Food check — grab, mark green beacon, switch to returning
-    (let ((food-dir (sense food)))
-      (when (!= food-dir 0)
-        (mark-gradient)
-        (set! dir food-dir)
-        (move-with-tracking dir homepos)
-        ; tick ends here; resumes next tick on the food cell
-        (pickup)
-        (mark PICKUP_PH 255)
-        (go returning)))
+    (grab-food-if-adjacent dir homepos)
 
     ; Gradient trail marking
     (mark-gradient)
@@ -350,15 +345,7 @@
     spiraling
     (set-tag spiraling)
 
-    ; Food check — grab, mark green beacon, switch to returning
-    (let ((food-dir (sense food)))
-      (when (!= food-dir 0)
-        (mark-gradient)
-        (set! dir food-dir)
-        (move-with-tracking dir homepos)
-        (pickup)
-        (mark PICKUP_PH 255)
-        (go returning)))
+    (grab-food-if-adjacent dir homepos)
 
     ; Gradient trail marking
     (mark-gradient)
@@ -394,8 +381,8 @@
     ; If leg finished, turn right and start next leg
     (when (<= counter 0)
       (set! explore-age (+ explore-age 1))
-      ; New leg length = (explore-age / 2) + 1
-      (set! counter (+ (/ explore-age 2) 1))
+      ; New leg length = (explore-age / 2) + 1, randomly +1 extra step
+      (set! counter (+ (/ explore-age 2) 1 (random 2)))
       (set! dir (turn-right dir)))
 
     (go spiraling)
