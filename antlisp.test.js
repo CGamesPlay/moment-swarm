@@ -1274,6 +1274,35 @@ function runTests() {
       return true;
     });
 
+  test('macro with code fragment param',
+    `(defmacro do-then (action after)
+       (action)
+       after)
+     (tagbody
+       top
+       (do-then (move n) (go top)))`,
+    r => r.includes('MOVE N') && r.includes('JMP'));
+
+  test('macro: compound arg substituted multiple times',
+    `(defmacro twice (expr)
+       (let ((a expr) (b expr))
+         (+ a b)))
+     (let ((x 0))
+       (twice (+ x 1)))`,
+    r => {
+      // Should have two ADD x 1 sequences (not one cached in a temp)
+      const adds = (r.match(/ADD/g) || []).length;
+      return adds >= 3;  // two (+ x 1) expansions + one (+ a b)
+    });
+
+  test('macro: set! on substituted variable',
+    `(defmacro zero-out (v)
+       (set! v 0))
+     (let ((x 5))
+       (zero-out x)
+       (move x))`,
+    r => r.includes('SET r0 0') && r.includes('MOVE r0'));
+
   // Test macro error case separately
   (function() {
     let caught = false;

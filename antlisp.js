@@ -371,85 +371,108 @@ class Compiler {
     this.macros.set(name, { params, body, closedBindings, closedConsts });
   }
 
-  // Compile a hygienic macro call.
-  // 1. Evaluate arguments in the call-site scope
-  // 2. Switch to definition-site bindings + param→register overlays
-  // 3. Compile the body (with freshened labels)
-  // 4. Restore call-site bindings and free param registers
+  // Compile a hygienic macro call via pure AST substitution.
+  // 1. Build substitution map (param name → caller's AST node)
+  // 2. Switch to definition-site scope
+  // 3. Substitute params → freshen labels → compile
+  // 4. Restore call-site scope
   compileMacroCall(name, args, callNode, destReg) {
     const macro = this.macros.get(name);
     if (macro.params.length !== args.length) {
       throw this.errorAt(`Macro ${name} expects ${macro.params.length} args, got ${args.length}`, callNode);
     }
 
-    // Step 1: Evaluate each argument in the CALL-SITE scope.
-    // For register args: alias the param to the same register (allows set!)
-    // For literal args: store as a const (no register needed, but not mutable)
-    // For compound expressions: compile into a temp register
-    const paramBindings = [];  // { paramName, reg?, constVal?, allocated }
+    // Step 1: Build substitution map (param name → caller's AST node)
+    const substitutions = new Map();
     for (let i = 0; i < macro.params.length; i++) {
-      const arg = args[i];
-      const paramName = macro.params[i];
-
-      if (arg.type === 'number') {
-        // Literal number — store as const for zero-cost inlining
-        paramBindings.push({ paramName, constVal: String(arg.value), allocated: false });
-      } else if (arg.type === 'symbol') {
-        const resolved = this.resolveAtom(arg);
-        if (resolved.startsWith('r')) {
-          // Variable — bind param directly to the same register (alias).
-          // This allows (set! param ...) to mutate the caller's variable.
-          paramBindings.push({ paramName, reg: resolved, allocated: false });
-        } else {
-          // Literal/constant/direction/channel — store as const
-          paramBindings.push({ paramName, constVal: resolved, allocated: false });
-        }
-      } else {
-        // Compound expression — compile into a temp register
-        const reg = this.allocReg();
-        this.compileExpr(arg, reg);
-        paramBindings.push({ paramName, reg, allocated: true });
-      }
+      substitutions.set(macro.params[i], args[i]);
     }
 
-    // Step 2: Switch to definition-site bindings, overlay params
+    // Step 2: Switch to definition-site scope, then overlay call-site
+    // bindings for symbols referenced in substituted arg AST nodes.
+    // This ensures that e.g. (set! param ...) where param substitutes to
+    // a call-site variable resolves correctly.
     const savedBindings = this.bindings;
     const savedConsts = this.constValues;
-
     this.bindings = new Map(macro.closedBindings);
     this.constValues = new Map(macro.closedConsts);
 
-    // Overlay parameter bindings (these take priority over closed-over names).
-    // Remove the param name from all maps first to avoid stale shadowing,
-    // then add it to the correct map.
-    for (const pb of paramBindings) {
-      this.bindings.delete(pb.paramName);
-      this.constValues.delete(pb.paramName);
-      if (pb.reg) {
-        this.bindings.set(pb.paramName, pb.reg);
-      } else if (pb.constVal !== undefined) {
-        this.constValues.set(pb.paramName, pb.constVal);
+    const argSymbols = new Set();
+    for (const arg of args) this.collectSymbols(arg, argSymbols);
+    for (const sym of argSymbols) {
+      if (savedBindings.has(sym)) {
+        this.bindings.set(sym, savedBindings.get(sym));
+      }
+      if (savedConsts.has(sym)) {
+        this.constValues.set(sym, savedConsts.get(sym));
       }
     }
 
-    // Step 3: Freshen labels in the body and compile
+    // Step 3: Substitute params → freshen labels → compile
     const prefix = `__${name}_${this.labelCounter++}`;
-    const expandedBody = macro.body.map(node => this.freshenLabels(node, prefix));
+    const expandedBody = macro.body.map(node => {
+      const substituted = this.substituteParams(node, substitutions);
+      return this.freshenLabels(substituted, prefix);
+    });
 
     let result = null;
     for (let i = 0; i < expandedBody.length; i++) {
       result = this.compileExpr(expandedBody[i], i === expandedBody.length - 1 ? destReg : null);
     }
 
-    // Step 4: Restore call-site bindings, free allocated param registers
+    // Step 4: Restore call-site scope
     this.bindings = savedBindings;
     this.constValues = savedConsts;
-
-    for (const pb of paramBindings) {
-      if (pb.allocated) this.freeReg(pb.reg);
-    }
-
     return result;
+  }
+
+  // Replace parameter symbols with the caller's AST nodes.
+  // Handles the splicing case: (param) where param substitutes to a list
+  // becomes just the substituted list (not ((list...))).
+  substituteParams(node, substitutions) {
+    if (node.type === 'symbol' && substitutions.has(node.value)) {
+      return this.cloneAST(substitutions.get(node.value));
+    }
+    if (node.type === 'list') {
+      const children = node.value;
+      // Splice case: (param) where param → list becomes just the list
+      if (children.length === 1
+          && children[0].type === 'symbol'
+          && substitutions.has(children[0].value)) {
+        const sub = substitutions.get(children[0].value);
+        return this.cloneAST(sub);
+      }
+      return {
+        type: 'list',
+        value: children.map(child =>
+          this.substituteParams(child, substitutions)),
+        line: node.line, col: node.col
+      };
+    }
+    return node;
+  }
+
+  // Collect all symbol names referenced in an AST node.
+  collectSymbols(node, symbols) {
+    if (node.type === 'symbol') {
+      symbols.add(node.value);
+    } else if (node.type === 'list') {
+      for (const child of node.value) {
+        this.collectSymbols(child, symbols);
+      }
+    }
+  }
+
+  // Deep-clone an AST node to avoid shared mutation across substitutions.
+  cloneAST(node) {
+    if (node.type === 'list') {
+      return {
+        type: 'list',
+        value: node.value.map(c => this.cloneAST(c)),
+        line: node.line, col: node.col
+      };
+    }
+    return { ...node };
   }
 
   // Recursively freshen AST nodes for macro expansion.

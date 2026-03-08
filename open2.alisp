@@ -18,8 +18,8 @@
 (const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
 (const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 (const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
-(const SPIRAL_RADIUS 6)          ; outward spiral radius after losing delivery trail
-(const SPIRAL_LEGS 12)           ; 2 * SPIRAL_RADIUS — total legs in spiral
+(const SPIRAL_RADIUS 7)          ; outward spiral radius after losing delivery trail
+(const SPIRAL_LEGS 14)           ; 2 * SPIRAL_RADIUS — total legs in spiral
 (const PICKUP_SIGNAL 10)         ; pickup signal threshold to trigger spiraling
 
 
@@ -264,7 +264,8 @@
 
     ; Pick new heading when counter (heading steps) runs out
     (when (<= counter 0)
-      (pick-nonwall-no-reverse dir (invert-dir dir))
+      (let ((back (invert-dir dir)))
+        (pick-nonwall-no-reverse dir back))
       (set! counter (+ (random HEADING_STEPS) 1)))
 
     ; Wall check — if blocked, enter SCANNING state
