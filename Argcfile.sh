@@ -5,11 +5,16 @@
 set -eu
 
 # @cmd Compile alisp to ant
-# @arg  file!   alisp file
-# @flag --copy  Copy the result
+# @arg    file!           alisp file
+# @flag   --copy          Copy the result
+# @option -D --define*    Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 compile() {
+	local -a dflags=()
+	for d in ${argc_define+"${argc_define[@]}"}; do
+		dflags+=(-D "$d")
+	done
 	local asm
-	asm="$(node antlisp.js "${argc_file:?}")"
+	asm="$(node antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")"
 	if [[ ${argc_copy+1} ]]; then
 		echo "$asm" | pbcopy
 		echo "Compiled and copied $argc_file"
@@ -19,11 +24,16 @@ compile() {
 }
 
 # @cmd Run an alisp file through the simulator
-# @arg  file!         alisp file
-# @option -m --map    Run only a specific map (e.g. "open-38bs6g")
+# @arg  file!           alisp file
+# @option -m --map      Run only a specific map (e.g. "open-38bs6g")
+# @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 test() {
+	local -a dflags=()
+	for d in ${argc_define+"${argc_define[@]}"}; do
+		dflags+=(-D "$d")
+	done
 	local asm
-	asm="$(node antlisp.js "${argc_file:?}")" || exit $?
+	asm="$(node antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
 	echo "$asm" | node run.js ${argc_map+-m "$argc_map"}
 }
 

@@ -30,9 +30,35 @@ The original forager program (dead-reckoning + pheromones, ~70 instructions of h
 ## Usage
 
 ```bash
-node antlisp.js program.alisp           # compile to stdout
-node antlisp.js program.alisp > out.asm # save to file
+node antlisp.js program.alisp                        # compile to stdout
+node antlisp.js program.alisp > out.asm              # save to file
+node antlisp.js -D EXPLORE_TIMEOUT=400 program.alisp # override a const
 ```
+
+### Const overrides (`-D`)
+
+Any `(const name value)` declared in the source can be overridden from the
+command line with `-D NAME=VALUE`. This is useful for hyperparameter sweeps
+without editing the source file.
+
+```bash
+# Single override
+argc test bridge.alisp -D EXPLORE_TIMEOUT=400
+
+# Multiple overrides
+argc test bridge.alisp -D EXPLORE_TIMEOUT=400 -D TRAIL_STRENGTH=80
+
+# Channel/direction values work too
+argc compile forager.alisp -D EXPLORING_PH=ch_blue
+```
+
+Rules:
+- The const **must be declared** in the source with `(const NAME ...)` — overrides
+  do not inject new consts.
+- A warning is printed to stderr if a `-D` name doesn't match any `(const ...)` in
+  the source (catches typos).
+- Numeric strings are parsed as numbers; everything else is treated as a
+  symbol (channel/direction names are uppercased automatically).
 
 ---
 

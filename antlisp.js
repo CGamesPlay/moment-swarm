@@ -130,6 +130,7 @@ class Compiler {
     this.tagbodyStack = [];        // stack of { tags: Map<name, asmLabel> }
     this.currentNode = null;       // track current AST node for error messages
     this.nodeStack = [];           // stack of nodes for context
+    this.constOverrides = new Map(); // CLI overrides: name -> string value
   }
 
   // Format location info for error messages
@@ -498,8 +499,20 @@ class Compiler {
   // Constants are resolved inline (no .const directive emitted)
   compileConst(list) {
     const name = list[1].value;
-    const value = this.resolveAtom(list[2]);
-    this.constValues.set(name, value);  // store for inline substitution
+    if (this.constOverrides.has(name)) {
+      // CLI override takes precedence; parse through resolveAtom for
+      // channel/direction normalization (e.g. "ch_red" → "CH_RED")
+      const rawVal = this.constOverrides.get(name);
+      const isNum = rawVal !== '' && !isNaN(Number(rawVal));
+      const node = isNum
+        ? { type: 'number', value: Number(rawVal) }
+        : { type: 'symbol', value: rawVal };
+      this.constValues.set(name, this.resolveAtom(node));
+      this.constOverrides.delete(name);  // mark as consumed
+    } else {
+      const value = this.resolveAtom(list[2]);
+      this.constValues.set(name, value);  // store for inline substitution
+    }
   }
 
   // ── Expression compiler ──
@@ -1030,21 +1043,39 @@ class CompileError extends Error {
 
 // ─── PUBLIC API ──────────────────────────────────────────────
 
-function compileAntLisp(source) {
+function compileAntLisp(source, options = {}) {
   const tokens = tokenize(source);
   const ast = parse(tokens);
   const compiler = new Compiler();
-  return compiler.compile(ast);
+  if (options.constOverrides) {
+    for (const [name, value] of Object.entries(options.constOverrides)) {
+      compiler.constOverrides.set(name, String(value));
+    }
+  }
+  const asm = compiler.compile(ast);
+  // Warn about any overrides that were never consumed (likely typos)
+  for (const name of compiler.constOverrides.keys()) {
+    process.stderr.write(`warning: const override -D ${name} did not match any (const ...) in source\n`);
+  }
+  return asm;
 }
 
 // Like compileAntLisp but returns { asm, varMap } where varMap is a
 // Map<varName, regString> of all let-bindings ever created in the program.
 // Used by the unit test harness for assert-reg-name lookups.
-function compileAntLispDebug(source) {
+function compileAntLispDebug(source, options = {}) {
   const tokens = tokenize(source);
   const ast = parse(tokens);
   const compiler = new Compiler();
+  if (options.constOverrides) {
+    for (const [name, value] of Object.entries(options.constOverrides)) {
+      compiler.constOverrides.set(name, String(value));
+    }
+  }
   const asm = compiler.compile(ast);
+  for (const name of compiler.constOverrides.keys()) {
+    process.stderr.write(`warning: const override -D ${name} did not match any (const ...) in source\n`);
+  }
   // compiler.allBindings is Map<name, regString> built during compileLet
   return { asm, varMap: new Map(compiler.allBindings) };
 }
@@ -1054,12 +1085,30 @@ function compileAntLispDebug(source) {
 if (require.main === module) {
   const fs = require('fs');
   const args = process.argv.slice(2);
-  if (args.length === 0) {
-    console.log('Usage: node antlisp.js <source.lisp>');
+  const constOverrides = {};
+  const positional = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-D' && i + 1 < args.length) {
+      const eq = args[++i].indexOf('=');
+      if (eq === -1) { console.error(`error: -D argument must be NAME=VALUE`); process.exit(1); }
+      constOverrides[args[i].slice(0, eq)] = args[i].slice(eq + 1);
+    } else if (args[i].startsWith('-D')) {
+      const rest = args[i].slice(2);
+      const eq = rest.indexOf('=');
+      if (eq === -1) { console.error(`error: -D argument must be NAME=VALUE`); process.exit(1); }
+      constOverrides[rest.slice(0, eq)] = rest.slice(eq + 1);
+    } else {
+      positional.push(args[i]);
+    }
+  }
+
+  if (positional.length === 0) {
+    console.log('Usage: node antlisp.js [-D NAME=VALUE]... <source.alisp>');
   } else {
     try {
-      const source = fs.readFileSync(args[0], 'utf-8');
-      console.log(compileAntLisp(source));
+      const source = fs.readFileSync(positional[0], 'utf-8');
+      console.log(compileAntLisp(source, { constOverrides }));
     } catch (err) {
       if (err instanceof CompileError) {
         console.error(`error: ${err.message}`);
