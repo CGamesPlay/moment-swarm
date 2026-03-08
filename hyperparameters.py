@@ -271,44 +271,11 @@ def _(df, mo, param_cols, score_col):
     """
 
     best_params = ", ".join(f"`{c}={best_row[c].item()}`" for c in param_cols)
-    worst_params = ", ".join(f"`{c}={worst_row[c].item()}`" for c in param_cols)
 
     mo.vstack(
         [
             mo.md(stats_md),
             mo.md(f"**Best combo:** {best_params} → **{best_row[score_col].item()}**"),
-            mo.md(
-                f"**Worst combo:** {worst_params} → **{worst_row[score_col].item()}**"
-            ),
-        ]
-    )
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Top & Bottom Combinations
-    """)
-    return
-
-
-@app.cell
-def _(df, mo, score_col):
-    mo.hstack(
-        [
-            mo.vstack(
-                [
-                    mo.md("### Top 5"),
-                    mo.ui.table(df.sort(score_col, descending=True).head(5)),
-                ]
-            ),
-            mo.vstack(
-                [
-                    mo.md("### Bottom 5"),
-                    mo.ui.table(df.sort(score_col).head(5)),
-                ]
-            ),
         ]
     )
     return
@@ -363,9 +330,9 @@ def _(alt, df, mo, param_cols, pl, score_col):
             width=250,
             height=200,
         )
-        _charts.append(mo.ui.altair_chart(_chart))
+        _charts.append(_chart)
 
-    mo.hstack(_charts)
+    mo.ui.altair_chart(alt.hconcat(*_charts))
     return
 
 

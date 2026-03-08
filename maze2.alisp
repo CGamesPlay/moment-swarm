@@ -8,15 +8,16 @@
 ; States: EXPLORING → SCANNING → RETURNING (no backtracking/lost)
 
 ; ── Constants ──
-(const TRAIL_PH ch_red)
-(const DELIVERING_PH ch_blue)
+(const TRAIL_PH ch_red)           ; gradient trail channel
+(const DELIVERING_PH ch_blue)    ; food-delivery breadcrumb channel
 
-(const MAX_TRAIL 255)
-(const EXPLORE_TIMEOUT 300)
-(const DELIVERING_STRENGTH 100)
-(const SCAN_STEPS 30)
-(const HEADING_STEPS 26)
-(const DELIVERY_THRESHOLD 175)
+(const MAX_TRAIL 255)            ; gradient seed intensity at nest
+(const DELIVERING_STRENGTH 100)  ; DELIVERING mark per tick while returning
+(const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
+(const HEADING_STEPS 26)         ; max steps before picking a new direction
+(const DELIVERY_THRESHOLD 125)   ; explore-age before responding to delivery trails
+(const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
+(const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 
 
 ; ══════════════════════════════════════════════
@@ -194,20 +195,22 @@
     exploring
     (set-tag exploring)
 
-    ; Timeout — too long without food, follow gradient home
-    (when (>= explore-age EXPLORE_TIMEOUT)
-      (go returning))
-
     ; Food check — grab and switch to returning
     (let ((food-dir (sense food)))
       (when (!= food-dir 0)
+        (mark-gradient)
         (set! dir food-dir)
         (move-with-tracking dir homepos)
+        ; tick ends here; resumes next tick on the food cell
         (pickup)
         (go returning)))
 
     ; Gradient trail marking
     (mark-gradient)
+
+    ; Gradient too weak — beyond the frontier, turn back
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (go returning))
 
     ; DELIVERING pheromone — responsive check every tick
     ; Follow trail toward food if crossing it (not already aligned)
@@ -253,7 +256,7 @@
         (set! counter wall-dir))
       ; Repurpose explore-age as scan countdown
       (set! explore-age SCAN_STEPS)
-      (go scanning))
+      (go scanning-marked))  ; skip mark-gradient — already called this tick
 
     (move-with-tracking dir homepos)
     (set! counter (- counter 1))
@@ -271,13 +274,21 @@
     ; Food check — grab even while scanning
     (let ((food-dir (sense food)))
       (when (!= food-dir 0)
+        (mark-gradient)
         (set! dir food-dir)
         (move-with-tracking dir homepos)
+        ; tick ends here; resumes next tick on the food cell
         (pickup)
         (go returning)))
 
     ; Gradient trail marking
     (mark-gradient)
+
+    ; Gradient too weak — beyond the frontier, turn back
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (go returning))
+
+    scanning-marked  ; entry point when mark-gradient already done (from exploring)
 
     ; Check if the blocked direction is now open (gap!)
     (when (!= (probe counter) 1)
@@ -322,8 +333,16 @@
         (set! counter 0)
         (go exploring)))
 
-    ; Mark delivering trail
-    (mark DELIVERING_PH DELIVERING_STRENGTH)
+    ; If not carrying food and gradient is strong, resume exploring
+    (unless (= (carrying?) 1)
+      (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
+        (set! explore-age 0)
+        (set! counter 0)
+        (go exploring)))
+
+    ; Mark delivering trail (only when carrying)
+    (when (= (carrying?) 1)
+      (mark DELIVERING_PH DELIVERING_STRENGTH))
 
     ; Gradient trail marking (reinforce on the way home)
     (mark-gradient)
