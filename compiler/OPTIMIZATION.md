@@ -58,11 +58,12 @@ With coalescing, the chain above becomes:
 
 ### Branch inversion (JGT+JMP → JLE)
 
-The ISA doesn't have JLE or JGE instructions. The codegen already uses
-comparison rewriting to convert `(gt a N)` → `(ge a N+1)` for constant
-N, which avoids the trampoline. But for register-register comparisons,
-there's no way to invert — the trampoline (conditional skip + JMP) is
-the only option.
+The ISA doesn't have JLE or JGE instructions. Instead of adding new
+instructions, comparison-aware block linearization in `linearizeBlocks`
+places the preferred fall-through successor immediately after each
+`br_cmp` block: elseBlock for gt/lt (which have only a true-jump), and
+thenBlock for ge/le (which have only a false-jump). This eliminates all
+trampolines (conditional skip + JMP) without needing JGE/JLE.
 
 ### Subroutine extraction (dedup via CALL/RET)
 

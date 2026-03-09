@@ -192,8 +192,10 @@ runSuite('Register Allocation', () => {
     assertEq(order[order.length - 1].label, 'merge');
   });
 
-  test('linearizeBlocks: loop body before exit (body is then-branch)', () => {
-    // Models a while loop: header branches to body (then) or exit (else)
+  test('linearizeBlocks: gt loop places elseBlock (exit) as fall-through', () => {
+    // Models a while loop: header branches to body (then) or exit (else).
+    // For `gt`, the only direct jump is JGT (true-jump to body), so exit
+    // must be fall-through (immediately after header) to avoid a trampoline.
     const entry = makeBlock('entry');
     const header = makeBlock('header');
     const body = makeBlock('body');
@@ -209,10 +211,8 @@ runSuite('Register Allocation', () => {
 
     const program = makeProgram([entry, header, body, exit]);
     const order = linearizeBlocks(program);
-    const bodyIdx = order.indexOf(body);
-    const exitIdx = order.indexOf(exit);
-    assert(bodyIdx < exitIdx,
-      `body (idx ${bodyIdx}) should come before exit (idx ${exitIdx}) to avoid fall-through into body`);
+    assertEq(order.indexOf(exit), order.indexOf(header) + 1,
+      'exit (elseBlock) should be fall-through after header for gt');
   });
 
   test('linearizeBlocks: loop body before exit (body is else-branch)', () => {
@@ -236,6 +236,51 @@ runSuite('Register Allocation', () => {
     const exitIdx = order.indexOf(exit);
     assert(bodyIdx < exitIdx,
       `body (idx ${bodyIdx}) should come before exit (idx ${exitIdx}) to avoid fall-through into body`);
+  });
+
+  test('linearizeBlocks: gt places elseBlock as fall-through', () => {
+    // For `gt`, codegen can emit a single JGT to thenBlock and fall through
+    // to elseBlock. So elseBlock must be immediately after entry.
+    const entry = makeBlock('entry');
+    const thenB = makeBlock('then');
+    const elseB = makeBlock('else');
+    const merge = makeBlock('merge');
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'gt', a: '%t0', b: 0, thenBlock: thenB, elseBlock: elseB };
+    link(entry, thenB);
+    link(entry, elseB);
+    thenB.terminator = { op: 'jmp', target: merge };
+    link(thenB, merge);
+    elseB.terminator = { op: 'jmp', target: merge };
+    link(elseB, merge);
+
+    const program = makeProgram([entry, thenB, elseB, merge]);
+    const order = linearizeBlocks(program);
+    assertEq(order.indexOf(elseB), order.indexOf(entry) + 1,
+      'elseBlock should be fall-through (immediately after entry) for gt');
+  });
+
+  test('linearizeBlocks: ge places thenBlock as fall-through', () => {
+    // For `ge`, codegen can emit a single JLT (false-jump) to elseBlock
+    // and fall through to thenBlock. So thenBlock must be immediately after entry.
+    const entry = makeBlock('entry');
+    const thenB = makeBlock('then');
+    const elseB = makeBlock('else');
+    const merge = makeBlock('merge');
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'ge', a: '%t0', b: 0, thenBlock: thenB, elseBlock: elseB };
+    link(entry, thenB);
+    link(entry, elseB);
+    thenB.terminator = { op: 'jmp', target: merge };
+    link(thenB, merge);
+    elseB.terminator = { op: 'jmp', target: merge };
+    link(elseB, merge);
+
+    // elseBlock listed before thenBlock so index-based sort would pick elseBlock
+    const program = makeProgram([entry, elseB, thenB, merge]);
+    const order = linearizeBlocks(program);
+    assertEq(order.indexOf(thenB), order.indexOf(entry) + 1,
+      'thenBlock should be fall-through (immediately after entry) for ge');
   });
 
   test('computeLiveIntervals: simple temps', () => {

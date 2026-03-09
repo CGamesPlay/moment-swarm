@@ -7,18 +7,26 @@ import { SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator } from './ssa';
 // ─── Linearize Blocks (Reverse Postorder) ───────────────────
 
 export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
-  const visited = new Set<BasicBlock>();
-  const postorder: BasicBlock[] = [];
+  // Greedy layout: start from entry, always choose the preferred fall-through
+  // successor next.  For br_cmp with gt/lt (true-jump only), elseBlock is the
+  // preferred fall-through; for ge/le (false-jump only), thenBlock is.
+  // For eq/ne (both jumps available), prefer the lower-indexed successor to
+  // keep loop bodies before exits.
+  //
+  // When the preferred successor is already placed, fall back to the other
+  // successor, then to reverse-postorder for the remaining blocks.
+
   const blockIndex = new Map<BasicBlock, number>();
   for (let i = 0; i < program.blocks.length; i++) {
     blockIndex.set(program.blocks[i], i);
   }
 
+  // First compute reverse-postorder as a fallback ordering.
+  const visited = new Set<BasicBlock>();
+  const postorder: BasicBlock[] = [];
   function dfs(block: BasicBlock): void {
     if (visited.has(block)) return;
     visited.add(block);
-    // Visit higher-indexed successors first so that lower-indexed ones
-    // (typically loop bodies) appear first in the reversed-postorder layout.
     const succs = [...block.succs].sort((a, b) =>
       (blockIndex.get(b) ?? 0) - (blockIndex.get(a) ?? 0));
     for (const succ of succs) {
@@ -26,9 +34,77 @@ export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
     }
     postorder.push(block);
   }
-
   dfs(program.entryBlock);
-  return postorder.reverse();
+  const rpo = postorder.reverse();
+
+  // Build the layout greedily.
+  const placed = new Set<BasicBlock>();
+  const layout: BasicBlock[] = [];
+
+  // Queue of blocks to lay out, seeded with RPO order.
+  // We use a worklist: process the first unplaced block, lay it out,
+  // then follow fall-through chains.
+  const rpoQueue = [...rpo];
+
+  while (rpoQueue.length > 0 || layout.length < rpo.length) {
+    // Pick the next unplaced block from RPO order
+    let next: BasicBlock | undefined;
+    while (rpoQueue.length > 0) {
+      const candidate = rpoQueue.shift()!;
+      if (!placed.has(candidate)) {
+        next = candidate;
+        break;
+      }
+    }
+    if (!next) break;
+
+    // Follow the fall-through chain from this block
+    let current: BasicBlock | undefined = next;
+    while (current && !placed.has(current)) {
+      placed.add(current);
+      layout.push(current);
+
+      // Determine the preferred fall-through successor
+      const term: Terminator | null = current.terminator;
+      current = undefined;
+      if (!term) continue;
+
+      if (term.op === 'jmp') {
+        // Follow jmp fall-through only for single-predecessor targets
+        // (not merge points), to avoid stealing merge blocks from br_cmp
+        // predecessors that need them as fall-through.
+        if (!placed.has(term.target) && term.target.preds.length <= 1) {
+          current = term.target;
+        }
+      } else if (term.op === 'br_cmp') {
+        const { cmpOp, thenBlock, elseBlock } = term;
+        let preferred: BasicBlock;
+        let other: BasicBlock;
+        if (cmpOp === 'gt' || cmpOp === 'lt') {
+          // Only true-jump exists → elseBlock must be fall-through
+          preferred = elseBlock;
+          other = thenBlock;
+        } else if (cmpOp === 'ge' || cmpOp === 'le') {
+          // Only false-jump exists → thenBlock must be fall-through
+          preferred = thenBlock;
+          other = elseBlock;
+        } else {
+          // eq/ne: both jumps available, prefer lower-indexed (loop body)
+          const ti = blockIndex.get(thenBlock) ?? 0;
+          const ei = blockIndex.get(elseBlock) ?? 0;
+          preferred = ti < ei ? thenBlock : elseBlock;
+          other = ti < ei ? elseBlock : thenBlock;
+        }
+        if (!placed.has(preferred)) {
+          current = preferred;
+        } else if (!placed.has(other)) {
+          current = other;
+        }
+      }
+    }
+  }
+
+  return layout;
 }
 
 // ─── Instruction Numbering ──────────────────────────────────
