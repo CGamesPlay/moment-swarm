@@ -1385,6 +1385,22 @@ function runTests() {
     '(const R 7) (let ((age 14)) (when (>= age (* 2 R)) (move 1)))',
     r => !r.includes('Cannot resolve'));
 
+  // --- Short-circuit and/or in conditional contexts ---
+
+  test('short-circuit and in if: no AND opcode',
+    `(let ((a 1) (b 2))
+       (if (and (= a 1) (= b 2))
+         (move n)
+         (move s)))`,
+    r => !r.includes(' AND ') && r.includes('JNE'));
+
+  test('short-circuit or in if: no OR opcode',
+    `(let ((a 1) (b 2))
+       (if (or (= a 1) (= b 2))
+         (move n)
+         (move s)))`,
+    r => !r.includes(' OR ') && r.includes('JEQ'));
+
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }
 

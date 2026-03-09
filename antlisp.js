@@ -804,6 +804,26 @@ class Compiler {
     if (!info) {
       // (not cond) flips polarity
       if (op === 'not') return this.needsTrampoline(list[1], !jumpOnFalse);
+      if (op === 'and') {
+        if (jumpOnFalse) {
+          return list.slice(1).some(c => this.needsTrampoline(c, true));
+        } else {
+          for (let i = 1; i < list.length - 1; i++) {
+            if (this.needsTrampoline(list[i], true)) return true;
+          }
+          return this.needsTrampoline(list[list.length - 1], false);
+        }
+      }
+      if (op === 'or') {
+        if (!jumpOnFalse) {
+          return list.slice(1).some(c => this.needsTrampoline(c, false));
+        } else {
+          for (let i = 1; i < list.length - 1; i++) {
+            if (this.needsTrampoline(list[i], false)) return true;
+          }
+          return this.needsTrampoline(list[list.length - 1], true);
+        }
+      }
       return false;
     }
     return jumpOnFalse ? !info.f : !info.t;
@@ -1113,6 +1133,42 @@ class Compiler {
       if (allocated) this.freeReg(a);
       return;
     }
+    if (op === 'and') {
+      if (jumpOnFalse) {
+        // Any false operand → jump to label
+        for (let i = 1; i < list.length; i++) {
+          this.compileCondJump(list[i], label, true);
+        }
+      } else {
+        // All must be true → jump to label
+        const endLabel = this.freshLabel('and_end');
+        for (let i = 1; i < list.length - 1; i++) {
+          this.compileCondJump(list[i], endLabel, true);
+        }
+        this.compileCondJump(list[list.length - 1], label, false);
+        this.emitLabel(endLabel);
+      }
+      return;
+    }
+
+    if (op === 'or') {
+      if (!jumpOnFalse) {
+        // Any true operand → jump to label
+        for (let i = 1; i < list.length; i++) {
+          this.compileCondJump(list[i], label, false);
+        }
+      } else {
+        // All must be false → jump to label
+        const endLabel = this.freshLabel('or_end');
+        for (let i = 1; i < list.length - 1; i++) {
+          this.compileCondJump(list[i], endLabel, false);
+        }
+        this.compileCondJump(list[list.length - 1], label, true);
+        this.emitLabel(endLabel);
+      }
+      return;
+    }
+
     if (op === 'carrying?') {
       const reg = this.allocReg();
       this.emit(`  CARRYING ${reg}`);

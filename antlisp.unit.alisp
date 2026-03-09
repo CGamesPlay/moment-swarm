@@ -363,6 +363,79 @@
   (assert-reg-name dx 4)
   (assert-reg-name dy -4))
 
+; ─── Short-circuit and/or in conditional contexts ──────────────
+
+;; --- short-circuit and ---
+(test "and short-circuit: both true takes then"
+  :run-once
+  (begin (let ((r 0))
+    (if (and (= 1 1) (= 2 2)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 10))
+
+(test "and short-circuit: first false takes else"
+  :run-once
+  (begin (let ((r 0))
+    (if (and (= 1 2) (= 2 2)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 20))
+
+(test "and short-circuit: second false takes else"
+  :run-once
+  (begin (let ((r 0))
+    (if (and (= 1 1) (= 2 3)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 20))
+
+(test "and short-circuit: three operands, middle false"
+  :run-once
+  (begin (let ((r 0))
+    (if (and (= 1 1) (= 2 9) (= 3 3)) (set! r 1) (set! r 0))))
+  (assert-reg-name r 0))
+
+(test "and short-circuit: in when context"
+  :run-once
+  (begin (let ((a 5) (b 10) (flag 0))
+    (when (and (> a 3) (> b 7)) (set! flag 1))))
+  (assert-reg-name flag 1))
+
+(test "and short-circuit: in when, first false skips body"
+  :run-once
+  (begin (let ((a 1) (b 10) (flag 0))
+    (when (and (> a 3) (> b 7)) (set! flag 1))))
+  (assert-reg-name flag 0))
+
+;; --- short-circuit or ---
+(test "or short-circuit: first true takes then"
+  :run-once
+  (begin (let ((r 0))
+    (if (or (= 1 1) (= 2 3)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 10))
+
+(test "or short-circuit: both false takes else"
+  :run-once
+  (begin (let ((r 0))
+    (if (or (= 1 2) (= 3 4)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 20))
+
+(test "or short-circuit: second true takes then"
+  :run-once
+  (begin (let ((r 0))
+    (if (or (= 1 2) (= 2 2)) (set! r 10) (set! r 20))))
+  (assert-reg-name r 10))
+
+(test "or short-circuit: in unless, both false runs body"
+  :run-once
+  (begin (let ((a 1) (b 2) (flag 0))
+    (unless (or (> a 5) (> b 5)) (set! flag 1))))
+  (assert-reg-name flag 1))
+
+;; --- composition ---
+(test "not-and: not (and true false) is true"
+  :run-once
+  (begin (let ((r 0))
+    (if (not (and (= 1 1) (= 2 3))) (set! r 1) (set! r 0))))
+  (assert-reg-name r 1))
+
+; ─── Loops & accumulators ──────────────────────────────────────
+
 (test "conditional accumulation: only even ticks increment flag"
   :ticks 10
   (begin
