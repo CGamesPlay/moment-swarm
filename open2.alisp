@@ -14,12 +14,12 @@
 
 (const MAX_TRAIL 255)            ; gradient seed intensity at points of interest
 (const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
-(const HEADING_STEPS 28)         ; max steps before picking a new direction
+(const HEADING_STEPS 26)         ; max steps before picking a new direction
 (const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
 (const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
 (const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
-(const SPIRAL_RADIUS 2)          ; outward spiral radius after losing delivery trail
-(const PICKUP_SIGNAL 10)         ; pickup signal threshold to trigger spiraling
+(const SPIRAL_RADIUS 3)          ; outward spiral radius after losing delivery trail
+(const PICKUP_SIGNAL 15)         ; pickup signal threshold to trigger spiraling
 
 
 ; ══════════════════════════════════════════════
@@ -84,15 +84,19 @@
 
 ; ─── High-level movement macros ──────────────────────────────
 
+; Move in `dir` and update packed dx/dy.
+; Precondition: caller has already verified dir is not a wall.
+(defmacro move-track-unsafe (dir packed)
+  (cond ((= dir 1) (dec-dy! packed))
+        ((= dir 2) (inc-dx! packed))
+        ((= dir 3) (inc-dy! packed))
+        ((= dir 4) (dec-dx! packed)))
+  (move dir))
+
 ; Move in `dir` with wall check; update packed dx/dy on success.
-; dx/dy update runs BEFORE move so it doesn't eat into the next tick's budget.
-(defmacro move-with-tracking (dir packed)
-  (unless (= (probe dir) 1)
-    (cond ((= dir 1) (dec-dy! packed))
-          ((= dir 2) (inc-dx! packed))
-          ((= dir 3) (inc-dy! packed))
-          ((= dir 4) (dec-dx! packed)))
-    (move dir)))
+; Returns 1 if moved, 0 if wall.
+(defmacro move-track (dir packed)
+  (if (= (probe dir) 1) 0 (move-track-unsafe dir packed)))
 
 ; Set dir toward nest based on homepos dx/dy.
 (defmacro home-dir-packed (dir packed)
@@ -124,7 +128,7 @@
     (when (!= food-dir 0)
       (mark-gradient)
       (set! dir food-dir)
-      (move-with-tracking dir homepos)
+      (move-track-unsafe dir homepos)
       (pickup)
       (mark PICKUP_PH 255)
       (go returning))))
@@ -286,7 +290,8 @@
       (set! explore-age SCAN_STEPS)
       (go scanning-marked))  ; skip mark-gradient — already called this tick
 
-    (move-with-tracking dir homepos)
+    ; dir is known clear (wall case jumped to scanning above)
+    (move-track-unsafe dir homepos)
     (set! counter (- counter 1))
     (set! explore-age (+ explore-age 1))
     (go exploring)
@@ -316,7 +321,8 @@
       (set! dir counter)
       (set! counter 0)
       (set! explore-age (+ (random HEADING_STEPS) 1))
-      (move-with-tracking dir homepos)
+      ; dir was just probed as not-wall
+      (move-track-unsafe dir homepos)
       (go exploring))
 
     ; Scan limit reached — go back to exploring
@@ -332,7 +338,7 @@
       (when (= (probe dir) 1)
         (pick-random-nonwall dir)))
 
-    (move-with-tracking dir homepos)
+    (move-track dir homepos)
     (set! explore-age (- explore-age 1))
     (go scanning)
 
@@ -374,8 +380,8 @@
       (set! explore-age SCAN_STEPS)
       (go scanning-marked))
 
-    ; Take a step in the current direction
-    (move-with-tracking dir homepos)
+    ; Take a step in the current direction (dir is known clear)
+    (move-track-unsafe dir homepos)
     (set! counter (- counter 1))
 
     ; If leg finished, turn right and start next leg
@@ -397,7 +403,8 @@
     (let ((nest-dir (sense nest)))
       (when (!= nest-dir 0)
         (set! dir nest-dir)
-        (move-with-tracking dir homepos)
+        ; nest is always passable
+        (move-track-unsafe dir homepos)
         (drop)
         (set! homepos 0)
         (set! explore-age 0)
@@ -420,7 +427,8 @@
       (when (!= trail-dir 0)
         (when (!= (probe trail-dir) 1)
           (set! dir trail-dir)
-          (move-with-tracking dir homepos)
+          ; trail-dir was just probed as not-wall
+          (move-track-unsafe dir homepos)
           (go returning))))
 
     ; Fallback: dead-reckon toward nest
@@ -429,7 +437,7 @@
       ; Dead-reckon blocked too — pick random non-wall
       (pick-random-nonwall dir))
 
-    (move-with-tracking dir homepos)
+    (move-track dir homepos)
     (go returning)))
 
 ; vim:ft=lisp:sw=2
