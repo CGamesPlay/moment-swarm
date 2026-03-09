@@ -11,8 +11,9 @@
 // Syntax:
 //   (test "name" [:opt val | :flag]* (begin ...) (assert-*) ...)
 //
-// The (begin ...) is the program body.  All (assert-*) forms come
-// after it, making the boundary between code and checks explicit.
+// The (begin ...) is the program body.  Inline (assert expr expected)
+// forms go inside the body and compile to ASSERTEQ opcodes.  Harness
+// (assert-*) forms come after it and are checked post-execution.
 // :run-once implies :ticks 1 when :ticks is not also given.
 //
 // Options:
@@ -27,13 +28,7 @@
 //   :ant-x x          start ant at x (default: map center)
 //   :ant-y y          start ant at y (default: map center)
 //
-// Assertion forms:
-//   (assert-reg rN value)           ; register rN == value
-//   (assert-reg rN op value)        ; register rN <op> value  (=,!=,<,>,<=,>=)
-//   (assert-reg-name varname value) ; named variable == value
-//   (assert-reg-name varname op v)  ; named variable <op> value
-//   (assert-carrying)               ; ant is carrying food
-//   (assert-not-carrying)           ; ant is not carrying food
+// Assertion forms (harness-side, checked after execution):
 //   (assert-food-collected n)       ; world.foodCollected == n
 //   (assert-food-collected op n)    ; world.foodCollected <op> n
 //   (assert-tick n)                 ; ran for exactly n ticks
@@ -244,13 +239,11 @@ function runTestBlock(testDef, preamble, verbose) {
                    : DEFAULT_CONFIG.maxOpsPerTick;
 
   // ── Compile ──────────────────────────────────────────────
-  // Combine preamble + body (assertions are stripped — they run
-  // against the VM state, not as part of the program).
   const source = [...preamble, ...body].map(astToSource).join("\n");
 
-  let asm, varMap;
+  let asm;
   try {
-    ({ asm, varMap } = compileAntLispDebug(source, { testing: true }));
+    ({ asm } = compileAntLispDebug(source, { testing: true }));
   } catch (e) {
     return { name, passed: false, error: `Compile error: ${e.message}`,
              asmSource: null, failedAssertions: [] };
@@ -315,59 +308,6 @@ function runTestBlock(testDef, preamble, verbose) {
 
     try {
       switch (kind) {
-
-        case "assert-reg": {
-          // (assert-reg rN value)  or  (assert-reg rN op value)
-          const regStr = list[1].value;
-          const regIdx = parseInt(regStr.slice(1), 10);
-          if (isNaN(regIdx) || regIdx < 0 || regIdx > 7)
-            throw new Error(`Invalid register: ${regStr}`);
-          const actual = ant0.regs[regIdx];
-          if (list.length === 3) {
-            const expected = Number(list[2].value);
-            if (actual !== expected)
-              failedAssertions.push(`assert-reg ${regStr} = ${expected}: got ${actual}`);
-          } else if (list.length === 4) {
-            const op = list[2].value, expected = Number(list[3].value);
-            if (!evalOp(actual, op, expected))
-              failedAssertions.push(`assert-reg ${regStr} ${op} ${expected}: got ${actual}`);
-          } else {
-            throw new Error("assert-reg: expected 2 or 3 args");
-          }
-          break;
-        }
-
-        case "assert-reg-name": {
-          // (assert-reg-name varname value)  or  (assert-reg-name varname op value)
-          const varName = list[1].value;
-          const regStr  = varMap.get(varName);
-          if (regStr === undefined)
-            throw new Error(`assert-reg-name: unknown variable "${varName}"`);
-          const regIdx = parseInt(regStr.slice(1), 10);
-          const actual = ant0.regs[regIdx];
-          if (list.length === 3) {
-            const expected = Number(list[2].value);
-            if (actual !== expected)
-              failedAssertions.push(`assert-reg-name ${varName} (${regStr}) = ${expected}: got ${actual}`);
-          } else if (list.length === 4) {
-            const op = list[2].value, expected = Number(list[3].value);
-            if (!evalOp(actual, op, expected))
-              failedAssertions.push(`assert-reg-name ${varName} (${regStr}) ${op} ${expected}: got ${actual}`);
-          } else {
-            throw new Error("assert-reg-name: expected 2 or 3 args");
-          }
-          break;
-        }
-
-        case "assert-carrying":
-          if (!ant0.carrying)
-            failedAssertions.push("assert-carrying: ant is not carrying food");
-          break;
-
-        case "assert-not-carrying":
-          if (ant0.carrying)
-            failedAssertions.push("assert-not-carrying: ant is carrying food");
-          break;
 
         case "assert-food-collected": {
           const actual = world.foodCollected;
@@ -474,7 +414,11 @@ function runUnitFile(filePath, verbose = false) {
     } else {
       console.log(`  ✗  ${result.name}`);
       if (result.error) console.log(`       ERROR: ${result.error}`);
-      for (const msg of result.failedAssertions) console.log(`       FAIL: ${msg}`);
+      const maxShown = 5;
+      for (let i = 0; i < result.failedAssertions.length && i < maxShown; i++)
+        console.log(`       FAIL: ${result.failedAssertions[i]}`);
+      if (result.failedAssertions.length > maxShown)
+        console.log(`       ... and ${result.failedAssertions.length - maxShown} more`);
       if (result.regState) {
         console.log(`       regs: ${result.regState}`);
         console.log(`       ant: x=${result.ant?.x} y=${result.ant?.y} carrying=${result.ant?.carrying} pc=${result.ant?.pc}  food=${result.foodCollected}  tick=${result.worldTick}`);
@@ -484,10 +428,16 @@ function runUnitFile(filePath, verbose = false) {
         result.asmSource.split("\n").forEach(l => console.log("         " + l));
       }
       failed++;
+      if (failed >= 5) {
+        console.log(`\n  ✗ Aborting after ${failed} failures`);
+        break;
+      }
     }
   }
 
-  console.log(`\n═══ ${passed} passed, ${failed} failed ═══\n`);
+  const skipped = tests.length - passed - failed;
+  const skippedMsg = skipped > 0 ? `, ${skipped} skipped` : '';
+  console.log(`\n═══ ${passed} passed, ${failed} failed${skippedMsg} ═══\n`);
   process.exit(failed > 0 ? 1 : 0);
 }
 

@@ -120,7 +120,7 @@ class Compiler {
     this.usedRegs = new Set();     // registers currently in use
     this.bindings = new Map();     // variable name -> register string
 
-    this.allBindings = new Map();  // every let-binding ever made: name -> reg (for debug/assert-reg-name)
+    this.allBindings = new Map();  // every let-binding ever made: name -> reg (for debug)
 
     this.macros = new Map();       // macro name -> { params: [...], body: [...] }
     this.constValues = new Map();  // const name -> resolved value (for inline substitution)
@@ -1567,7 +1567,7 @@ function compileAntLisp(source, options = {}) {
 
 // Like compileAntLisp but returns { asm, varMap } where varMap is a
 // Map<varName, regString> of all let-bindings ever created in the program.
-// Used by the unit test harness for assert-reg-name lookups.
+// Used by the unit test harness for debug lookups.
 function compileAntLispDebug(source, options = {}) {
   const tokens = tokenize(source);
   const ast = parse(tokens);

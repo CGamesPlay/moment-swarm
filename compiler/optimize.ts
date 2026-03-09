@@ -181,6 +181,13 @@ export function copyPropagation(program: SSAProgram): void {
       block.terminator.b = replaceUse(block.terminator.b);
     }
   }
+
+  // Update allBindings so debug var→temp mappings follow copy chains
+  for (const [name, temp] of program.allBindings) {
+    if (copyMap.has(temp)) {
+      program.allBindings.set(name, resolve(temp));
+    }
+  }
 }
 
 // ─── 4c: Dead Code Elimination ──────────────────────────────
