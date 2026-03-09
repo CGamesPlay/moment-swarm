@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 7: Peephole Optimization
+// AntLisp Pipeline — Phase 7: Peephole Optimization
 // ═══════════════════════════════════════════════════════════════
 
 export function peephole(lines: string[]): string[] {

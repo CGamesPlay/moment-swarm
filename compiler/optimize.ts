@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 4: Optimization Passes
+// AntLisp Pipeline — Phase 4: Optimization Passes
 // ═══════════════════════════════════════════════════════════════
 
 import { SSAProgram, BasicBlock, SSAInstr, PhiNode, isSideEffectFree, CmpOp } from './ssa';

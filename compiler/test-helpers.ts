@@ -9,7 +9,7 @@ import { lowerToSSA, SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator, prin
 import { optimize } from './optimize';
 import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
 import { generateCode } from './codegen';
-import { peephole } from './peephole2';
+import { peephole } from './peephole';
 
 // ─── Test Harness ───────────────────────────────────────────
 

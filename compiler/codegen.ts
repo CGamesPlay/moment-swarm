@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 6: Code Generation
+// AntLisp Pipeline — Phase 6: Code Generation
 // ═══════════════════════════════════════════════════════════════
 
 import { SSAProgram, BasicBlock, SSAInstr, Terminator, CmpOp } from './ssa';

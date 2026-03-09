@@ -35,8 +35,8 @@ Score: 48/1000  (4.8% avg collection, 12 maps, 0 stalls, 778ms)
 We've built Antlisp, a lisp-based language specifically to solve this challenge.
 
 - ANTLISP.md is the language specification
-- compiler/antlisp.js is the compiler
-- compiler/antlisp.test.js is the compiler test suite
+- compiler/antlisp.ts is the compiler
+- compiler/antlisp.test.js is the integration test suite
 
 To compile an alisp file to antssembly, use `argc compile file.alisp`. To compile and test, use `argc test file.alisp`. Same output format as testing the compiled antssembly directly.
 

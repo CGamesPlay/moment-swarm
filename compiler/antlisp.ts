@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Entry Point
+// AntLisp Pipeline — Entry Point
 // ═══════════════════════════════════════════════════════════════
 //
 // Pipeline: Source → Tokenize → Parse → AST
@@ -18,7 +18,7 @@ import { lowerToSSA, printSSA } from './ssa';
 import { optimize } from './optimize';
 import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
 import { generateCode } from './codegen';
-import { peephole } from './peephole2';
+import { peephole } from './peephole';
 
 export interface CompileOptions {
   constOverrides?: Record<string, string>;
@@ -109,7 +109,7 @@ if (require.main === module) {
   }
 
   if (positional.length === 0) {
-    console.log('Usage: npx tsx compiler/antlisp2.ts [--dump-ssa] [-D NAME=VALUE]... <source.alisp>');
+    console.log('Usage: npx tsx compiler/antlisp.ts [--dump-ssa] [-D NAME=VALUE]... <source.alisp>');
   } else {
     try {
       const source = fs.readFileSync(positional[0], 'utf-8');

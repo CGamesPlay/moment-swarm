@@ -1,12 +1,11 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 — Integration Tests + Old-Compiler Analysis Tests
+// AntLisp — Integration Tests
 // ═══════════════════════════════════════════════════════════════
 //
-// Per-stage unit tests live in *.test.ts files. This file keeps:
-//   - End-to-end integration tests that exercise cross-stage interactions
-//   - Old-compiler analysis utility tests (until old compiler is retired)
+// Per-stage unit tests live in *.test.ts files. This file keeps
+// end-to-end integration tests that exercise cross-stage interactions.
 
-const { compileAntLisp } = require('./antlisp2');
+const { compileAntLisp } = require('./antlisp');
 
 function runTests() {
   const suiteName = 'Integration';
@@ -152,107 +151,6 @@ function runTests() {
       const moves = (r.match(/MOVE/g) || []).length;
       return moves === 3;
     });
-
-  // ═══════════════════════════════════════════════════════════════
-  // OLD-COMPILER ANALYSIS UTILITY TESTS
-  // (keep until old compiler is retired)
-  // ═══════════════════════════════════════════════════════════════
-
-  {
-    const { Compiler, tokenize, parse } = require('./antlisp');
-    function makeAST(src) {
-      return parse(tokenize(src)).body[0];
-    }
-    function makeCompiler() { return new Compiler(); }
-
-    // countSymbolRefs
-    {
-      const c = makeCompiler();
-      const node = makeAST('(let ((x 1)) x x x)');
-      const body = node.value.slice(2);
-      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
-      const ok = count === 3;
-      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 3 refs to x`);
-      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const node = makeAST('(let ((x 1)) (+ x 1))');
-      const body = node.value.slice(2);
-      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
-      const ok = count === 1;
-      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 1 ref to x in (+ x 1)`);
-      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const node = makeAST('(let ((x 1)) (if (= x 0) x 1))');
-      const body = node.value.slice(2);
-      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
-      const ok = count === 2;
-      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 2 refs to x in if`);
-      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
-    }
-
-    // bodyContainsGo
-    {
-      const c = makeCompiler();
-      const body1 = [makeAST('(go label)')];
-      const ok1 = c.bodyContainsGo(body1) === true;
-      console.log(`${ok1 ? '✓' : '✗'} bodyContainsGo: (go label) returns true`);
-      if (!ok1) failed++; else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const body2 = [makeAST('(move random)')];
-      const ok2 = c.bodyContainsGo(body2) === false;
-      console.log(`${ok2 ? '✓' : '✗'} bodyContainsGo: (move random) returns false`);
-      if (!ok2) failed++; else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const body3 = [makeAST('(when (= x 0) (go label))')];
-      const ok3 = c.bodyContainsGo(body3) === true;
-      console.log(`${ok3 ? '✓' : '✗'} bodyContainsGo: nested go returns true`);
-      if (!ok3) failed++; else passed++;
-    }
-
-    // findLastUseIndex
-    {
-      const c = makeCompiler();
-      const forms = [makeAST('(+ x 1)'), makeAST('(move y)'), makeAST('(+ x 2)')];
-      const idx = c.findLastUseIndex('x', forms);
-      const ok = idx === 2;
-      console.log(`${ok ? '✓' : '✗'} findLastUseIndex: x last used at index 2`);
-      if (!ok) { console.log(`  got: ${idx}`); failed++; } else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const forms = [makeAST('(+ x 1)'), makeAST('(move y)')];
-      const idx = c.findLastUseIndex('x', forms);
-      const ok = idx === 0;
-      console.log(`${ok ? '✓' : '✗'} findLastUseIndex: x last used at index 0`);
-      if (!ok) { console.log(`  got: ${idx}`); failed++; } else passed++;
-    }
-
-    // isSingleSetUse
-    {
-      const c = makeCompiler();
-      const forms = [makeAST('(set! dir food-dir)'), makeAST('(move dir)')];
-      const result = c.isSingleSetUse('food-dir', forms);
-      const ok = result !== null && result.target === 'dir';
-      console.log(`${ok ? '✓' : '✗'} isSingleSetUse: (set! dir food-dir) returns target=dir`);
-      if (!ok) { console.log(`  got: ${JSON.stringify(result)}`); failed++; } else passed++;
-    }
-    {
-      const c = makeCompiler();
-      const forms = [makeAST('(+ food-dir 1)'), makeAST('(move dir)')];
-      const result = c.isSingleSetUse('food-dir', forms);
-      const ok = result === null;
-      console.log(`${ok ? '✓' : '✗'} isSingleSetUse: non-set! usage returns null`);
-      if (!ok) { console.log(`  got: ${JSON.stringify(result)}`); failed++; } else passed++;
-    }
-  }
 
   console.log(`  ${failed > 0 ? '✗' : '✓'} ${suiteName}: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -1,14 +1,6 @@
-# AntLisp v2 — S-Expression Language for Antssembly
+# AntLisp — S-Expression Language for Antssembly
 
 A Scheme-like language that compiles to flat Antssembly for the SWARM ant colony challenge.
-
-## What Changed in v2
-
-The original forager program (dead-reckoning + pheromones, ~70 instructions of hand-written assembly) exposed several gaps in v1. v2 fixes them:
-
-- **`let` for all bindings** — use `(let ((var expr)) ...)` for both long-lived state and short-lived locals; registers are freed when the scope exits
-- **Compound expression arguments** — `(mark ch_red (* timer 2))` and `(move (+ (random 4) 1))` now work; sub-expressions auto-compile to temp registers
-- **Safe unary negation** — `(set! x (- x))` compiles to `MUL x -1` (1 instruction, no temp register)
 
 ## Quick Example
 
@@ -30,9 +22,9 @@ The original forager program (dead-reckoning + pheromones, ~70 instructions of h
 ## Usage
 
 ```bash
-node compiler/antlisp.js program.alisp                        # compile to stdout
-node compiler/antlisp.js program.alisp > out.asm              # save to file
-node compiler/antlisp.js -D EXPLORE_TIMEOUT=400 program.alisp # override a const
+argc compile program.alisp                        # compile to stdout
+argc compile program.alisp > out.asm              # save to file
+argc compile -D EXPLORE_TIMEOUT=400 program.alisp # override a const
 ```
 
 ### Const overrides (`-D`)
@@ -263,6 +255,27 @@ expansion gets its own fresh tags automatically.
     (move dir)
     (pickup)))
 ```
+
+---
+
+## Compiler Optimizations
+
+The compiler performs several optimization passes on the SSA intermediate
+representation before register allocation:
+
+- **Constant folding** — evaluates arithmetic on compile-time constants and
+  eliminates branches with known conditions.
+- **Copy propagation** — removes trivial register-to-register copies, following
+  chains to their source.
+- **Dead code elimination** — removes unused temporaries and phi nodes, respecting
+  side effects (sensing and actions are never eliminated).
+- **Dead block elimination** — removes unreachable basic blocks and cleans up
+  phi entries that reference them.
+- **Comparison rewriting** — converts `gt N` → `ge N+1` and `lt N` → `le N-1`
+  to match the assembly's comparison operators (`<=`, `>=`, `==`, `!=`).
+
+After code generation, a peephole pass removes dead stores (consecutive `SET` to
+the same register) and redundant jumps (jump to the immediately following label).
 
 ---
 

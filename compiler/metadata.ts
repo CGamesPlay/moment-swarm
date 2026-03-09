@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 2: Metadata Collection
+// AntLisp Pipeline — Phase 2: Metadata Collection
 // ═══════════════════════════════════════════════════════════════
 
 import { ASTNode } from './parse';

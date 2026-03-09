@@ -44,7 +44,7 @@
 "use strict";
 
 const fs = require("fs");
-const { compileAntLispDebug } = require("./antlisp2");
+const { compileAntLispDebug } = require("./antlisp");
 const { tokenize, parse } = require("./parse");
 const {
   parseAssembly,

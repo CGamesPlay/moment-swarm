@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 5: Register Allocation
+// AntLisp Pipeline — Phase 5: Register Allocation
 // ═══════════════════════════════════════════════════════════════
 
 import { SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator } from './ssa';

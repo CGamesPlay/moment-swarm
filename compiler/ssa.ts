@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 3: SSA IR Types + Lowering
+// AntLisp Pipeline — Phase 3: SSA IR Types + Lowering
 // ═══════════════════════════════════════════════════════════════
 
 import { ASTNode, ListNode } from './parse';

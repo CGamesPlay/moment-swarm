@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { runSuite, test, assertEq } from './test-helpers';
-import { peephole } from './peephole2';
+import { peephole } from './peephole';
 
 runSuite('Peephole', () => {
   test('dead store: consecutive SET to same register', () => {

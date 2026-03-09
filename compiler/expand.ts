@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// AntLisp v2 Pipeline — Phase 1: Macro Expansion + Const Resolution
+// AntLisp Pipeline — Phase 1: Macro Expansion + Const Resolution
 // ═══════════════════════════════════════════════════════════════
 
 import { ASTNode, ListNode, cloneAST } from './parse';

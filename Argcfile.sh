@@ -18,7 +18,7 @@ compile() {
 		flags+=(--dump-ssa)
 	fi
 	local asm
-	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${flags+"${flags[@]}"} "${argc_file:?}")"
+	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")"
 	if [[ ${argc_copy+1} ]]; then
 		echo "$asm" | pbcopy
 		echo "Compiled and copied $argc_file"
@@ -38,7 +38,7 @@ test() {
 		flags+=(-D "$d")
 	done
 	local asm
-	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
+	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
 	echo "$asm" | npx --prefix compiler tsx compiler/run.ts ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
 }
 
