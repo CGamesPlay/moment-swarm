@@ -54,11 +54,11 @@ export function generateCode(
       if (line) output.push(line);
     }
 
-    // Emit phi copies before terminator
+    // Emit phi copies before terminator, resolving parallel move conflicts
     const copies = phiCopiesPerBlock.get(block);
     if (copies) {
-      for (const { from, to } of copies) {
-        output.push(`  SET ${to} ${from}`);
+      for (const line of resolveParallelMoves(copies)) {
+        output.push(line);
       }
     }
 
@@ -70,6 +70,102 @@ export function generateCode(
   }
 
   return output.join('\n');
+}
+
+// Resolve parallel move conflicts in phi copies.
+// When multiple copies must happen "simultaneously", naive sequential emission
+// can clobber a source before it's read. This function reorders copies so that
+// each source is read before its register is overwritten, breaking cycles with
+// a temporary register when necessary.
+function resolveParallelMoves(copies: { from: string; to: string }[]): string[] {
+  if (copies.length <= 1) {
+    return copies.map(c => `  SET ${c.to} ${c.from}`);
+  }
+
+  const output: string[] = [];
+  // Work on a mutable copy
+  const pending = copies.map(c => ({ from: c.from, to: c.to }));
+
+  // Build a map: register → copy that writes to it
+  const writtenBy = new Map<string, number>();
+  for (let i = 0; i < pending.length; i++) {
+    writtenBy.set(pending[i].to, i);
+  }
+
+  // Emit copies where the destination is not a source of any other pending copy
+  const emitted = new Set<number>();
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (let i = 0; i < pending.length; i++) {
+      if (emitted.has(i)) continue;
+      const { from, to } = pending[i];
+      // Check if 'to' is needed as a source by any other pending copy
+      let blocked = false;
+      for (let j = 0; j < pending.length; j++) {
+        if (j === i || emitted.has(j)) continue;
+        if (pending[j].from === to) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) {
+        output.push(`  SET ${to} ${from}`);
+        emitted.add(i);
+        progress = true;
+      }
+    }
+  }
+
+  // Any remaining copies form cycles — break with a temp register.
+  // Find a register not used by any copy in the cycle as a temp.
+  if (emitted.size < pending.length) {
+    const usedRegs = new Set<string>();
+    for (const c of pending) {
+      usedRegs.add(c.from);
+      usedRegs.add(c.to);
+    }
+    let tempReg = '';
+    for (let i = 0; i < 8; i++) {
+      if (!usedRegs.has(`r${i}`)) {
+        tempReg = `r${i}`;
+        break;
+      }
+    }
+
+    for (let i = 0; i < pending.length; i++) {
+      if (emitted.has(i)) continue;
+      // Start of a cycle: save first source to temp, emit chain, then restore
+      const cycleStart = i;
+      output.push(`  SET ${tempReg} ${pending[cycleStart].from}`);
+      emitted.add(cycleStart);
+
+      // Follow the chain: find the copy whose source is our destination
+      let cur = cycleStart;
+      while (true) {
+        const { to } = pending[cur];
+        // Find the next copy in the cycle: its source is our destination
+        let next = -1;
+        for (let j = 0; j < pending.length; j++) {
+          if (!emitted.has(j) && pending[j].from === to) {
+            next = j;
+            break;
+          }
+        }
+        if (next === -1) {
+          // End of chain: write from temp
+          output.push(`  SET ${to} ${tempReg}`);
+          break;
+        }
+        // Emit this copy (safe now, we'll handle source later)
+        output.push(`  SET ${pending[next].to} ${pending[next].from}`);
+        emitted.add(next);
+        cur = next;
+      }
+    }
+  }
+
+  return output;
 }
 
 function emitInstr(instr: SSAInstr): string | null {

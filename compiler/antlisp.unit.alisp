@@ -720,3 +720,52 @@
   (begin
     (let ((x 3) (y 4))
       (assert (+ x y) 7))))
+
+; ─── Phi-node cond/set! regression ──────────────────────────────
+; When a cond with set! on multiple outer variables is nested inside
+; an if-branch (creating an outer join point with phi nodes), the
+; codegen must not clobber the just-computed value with the
+; "copy unchanged variable" move.
+
+(test "cond set! inside if: dir=4 decrements dx, preserves dy"
+  :run-once
+  (begin
+    (let ((dx 5) (dy 10))
+      ; carrying? returns 0 on blank map, so (+ 0 4) = 4
+      (let ((dir (+ (carrying?) 4)))
+        (if (!= dir 0)
+          (cond ((= dir 1) (set! dy (- dy 1)))
+                ((= dir 2) (set! dx (+ dx 1)))
+                ((= dir 3) (set! dy (+ dy 1)))
+                ((= dir 4) (set! dx (- dx 1))))
+          (begin)))
+      (assert dx 4)
+      (assert dy 10))))
+
+(test "cond set! inside if: dir=1 decrements dy, preserves dx"
+  :run-once
+  (begin
+    (let ((dx 5) (dy 10))
+      (let ((dir (+ (carrying?) 1)))
+        (if (!= dir 0)
+          (cond ((= dir 1) (set! dy (- dy 1)))
+                ((= dir 2) (set! dx (+ dx 1)))
+                ((= dir 3) (set! dy (+ dy 1)))
+                ((= dir 4) (set! dx (- dx 1))))
+          (begin)))
+      (assert dx 5)
+      (assert dy 9))))
+
+(test "cond set! inside if: dir=2 increments dx, preserves dy"
+  :run-once
+  (begin
+    (let ((dx 5) (dy 10))
+      (let ((dir (+ (carrying?) 2)))
+        (if (!= dir 0)
+          (cond ((= dir 1) (set! dy (- dy 1)))
+                ((= dir 2) (set! dx (+ dx 1)))
+                ((= dir 3) (set! dy (+ dy 1)))
+                ((= dir 4) (set! dx (- dx 1))))
+          (begin)))
+      (assert dx 6)
+      (assert dy 10))))

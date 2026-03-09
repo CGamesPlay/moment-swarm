@@ -277,6 +277,61 @@ runSuite('Register Allocation', () => {
     assert(r0 !== r1, `t0 and t1 should get different registers (both got ${r0})`);
   });
 
+  // ── Phi copy ordering (parallel move) tests ──
+
+  test('phi copies: cond set! inside if does not clobber via sequential copies', () => {
+    // Minimal reproduction of the cheater.alisp bug:
+    // Two outer variables (dx, dy) mutated in different cond branches,
+    // nested inside an if that creates an outer join point with phi nodes.
+    // The phi copies at each cond branch must not clobber each other.
+    const asm = compileSource(`(let ((dx 5) (dy 10))
+       (let ((dir (+ (carrying?) 4)))
+         (if (!= dir 0)
+           (cond ((= dir 1) (set! dy (- dy 1)))
+                 ((= dir 2) (set! dx (+ dx 1)))
+                 ((= dir 3) (set! dy (+ dy 1)))
+                 ((= dir 4) (set! dx (- dx 1))))
+           (begin)))
+       (mark ch_red dx)
+       (mark ch_green dy))`);
+    // After the cond with dir=4, dx should be 4 and dy should be 10.
+    // The bug was that sequential phi copies would clobber: both end up as dy (10).
+    // Verify that the assembly doesn't have a pattern where a phi copy
+    // destination is immediately read as a source (lost copy).
+    //
+    // We check this end-to-end: the cond_body for dir=4 should compute
+    // dx-1 = 4, and the value that reaches MARK CH_RED must be 4, not 10.
+    // Since this is a compile-time test, we verify the assembly structure:
+    // there should be no adjacent "SET rX rY; SET rZ rX" where the second
+    // SET reads the just-written register (unless rX == source of first SET).
+
+    // Simplest check: compile + run via the unit test harness already catches it,
+    // but we can also verify that constants 4 and 10 appear correctly.
+    // The key structural check: in any cond body block, if there are two
+    // SET instructions for phi copies, they must not have a read-after-write hazard.
+    const lines = asm.split('\n');
+    for (let i = 0; i < lines.length - 1; i++) {
+      const m1 = lines[i].match(/^\s*SET (r\d+) (r\d+)\s*$/);
+      const m2 = lines[i + 1].match(/^\s*SET (r\d+) (r\d+)\s*$/);
+      if (m1 && m2) {
+        const [, dest1] = m1;
+        const [, , src2] = m2;
+        // If the second copy reads from the first copy's destination,
+        // and they're both phi copies (back-to-back SETs), that's a lost copy.
+        // Exception: if they're part of a swap (handled by temp), that's fine.
+        if (dest1 === src2) {
+          // Check if the original source is still available
+          // This is the actual bug: SET r2 r1; SET r3 r2 loses the old r2 value
+          const [, , src1] = m1;
+          const [, dest2] = m2;
+          assert(src1 === dest2,
+            `Lost copy hazard at line ${i + 1}: "${lines[i].trim()}" then "${lines[i + 1].trim()}" — ` +
+            `${dest1} is overwritten before ${src2} is read`);
+        }
+      }
+    }
+  });
+
   test('diamond CFG: exclusive branch temps get non-overlapping intervals', () => {
     // Diamond: entry -> left/right -> merge
     // %t0 defined in entry (condition)
