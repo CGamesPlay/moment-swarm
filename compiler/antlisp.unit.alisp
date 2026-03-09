@@ -2,8 +2,8 @@
 ; AntLisp Unit Tests
 ; ═══════════════════════════════════════════════════════════════
 ;
-; Run with: node antlisp.unit.js antlisp.unit.alisp
-; Or:       argc unit antlisp.unit.alisp
+; Run with: node compiler/antlisp.unit.js compiler/antlisp.unit.alisp
+; Or:       argc unit compiler/antlisp.unit.alisp
 ;
 ; Syntax:
 ;   (test "name" [:opt val | :flag]* (begin ...) (assert-*) ...)

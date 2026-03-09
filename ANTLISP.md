@@ -30,9 +30,9 @@ The original forager program (dead-reckoning + pheromones, ~70 instructions of h
 ## Usage
 
 ```bash
-node antlisp.js program.alisp                        # compile to stdout
-node antlisp.js program.alisp > out.asm              # save to file
-node antlisp.js -D EXPLORE_TIMEOUT=400 program.alisp # override a const
+node compiler/antlisp.js program.alisp                        # compile to stdout
+node compiler/antlisp.js program.alisp > out.asm              # save to file
+node compiler/antlisp.js -D EXPLORE_TIMEOUT=400 program.alisp # override a const
 ```
 
 ### Const overrides (`-D`)

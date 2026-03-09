@@ -11,7 +11,7 @@ argc unit tests.unit.alisp
 argc unit tests.unit.alisp --verbose   # also prints assembly and register state
 ```
 
-Or directly: `node antlisp.unit.js tests.unit.alisp`
+Or directly: `node compiler/antlisp.unit.js tests.unit.alisp`
 
 Test files contain `(test ...)` blocks. Any top-level forms outside a `(test ...)` block are shared preamble prepended to every test (useful for shared macros or constants).
 

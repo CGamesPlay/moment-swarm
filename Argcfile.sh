@@ -14,7 +14,7 @@ compile() {
 		dflags+=(-D "$d")
 	done
 	local asm
-	asm="$(node antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")"
+	asm="$(node compiler/antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")"
 	if [[ ${argc_copy+1} ]]; then
 		echo "$asm" | pbcopy
 		echo "Compiled and copied $argc_file"
@@ -34,20 +34,47 @@ test() {
 		dflags+=(-D "$d")
 	done
 	local asm
-	asm="$(node antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
-	echo "$asm" | node run.js ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
-}
-
-# @cmd Run compiler tests
-selftest() {
-	node antlisp.test.js
+	asm="$(node compiler/antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
+	echo "$asm" | npx --prefix compiler tsx compiler/run.ts ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
 }
 
 # @cmd Run alisp unit tests
 # @arg  file!           .unit.alisp test file
 # @flag -v --verbose    Show compiled assembly and register state for each test
 unit() {
-	node antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
+	node compiler/antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
+}
+
+# @cmd Run all compiler tests (unit, self-test, type-check)
+# @flag -v --verbose  Show individual test names
+selftest() {
+	local output rc
+	echo "═══ Compiler tests ═══"
+	rc=0; output="$(node compiler/antlisp.test.js 2>&1)" || rc=$?
+	if [[ ${argc_verbose+1} ]]; then
+		echo "$output"
+	else
+		echo "$output" | grep -v '^✓'
+	fi
+	[[ $rc -eq 0 ]] || exit $rc
+
+	echo "═══ Unit tests ═══"
+	local f
+	for f in compiler/*.unit.alisp; do
+		[[ -f "$f" ]] || continue
+		echo "── $f ──"
+		rc=0; output="$(node compiler/antlisp.unit.js "$f" 2>&1)" || rc=$?
+		if [[ ${argc_verbose+1} ]]; then
+			echo "$output"
+		else
+			echo "$output" | grep -v '^  ✓'
+		fi
+		[[ $rc -eq 0 ]] || exit $rc
+	done
+
+	echo "═══ TypeScript ═══"
+	npx --prefix compiler tsc -p compiler --noEmit
+	echo "tsc: OK"
 }
 
 if ! command -v argc >/dev/null; then
