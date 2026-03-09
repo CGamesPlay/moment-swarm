@@ -1401,6 +1401,326 @@ function runTests() {
          (move s)))`,
     r => !r.includes(' OR ') && r.includes('JEQ'));
 
+  // --- Analysis utility tests ---
+
+  {
+    const { Compiler, tokenize, parse } = require('./antlisp');
+    function makeAST(src) {
+      return parse(tokenize(src)).body[0];
+    }
+    function makeCompiler() { return new Compiler(); }
+
+    // countSymbolRefs
+    {
+      const c = makeCompiler();
+      const node = makeAST('(let ((x 1)) x x x)');
+      const body = node.value.slice(2);
+      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
+      const ok = count === 3;
+      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 3 refs to x`);
+      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const node = makeAST('(let ((x 1)) (+ x 1))');
+      const body = node.value.slice(2);
+      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
+      const ok = count === 1;
+      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 1 ref to x in (+ x 1)`);
+      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const node = makeAST('(let ((x 1)) (if (= x 0) x 1))');
+      const body = node.value.slice(2);
+      const count = body.reduce((n, f) => n + c.countSymbolRefs('x', f), 0);
+      const ok = count === 2;
+      console.log(`${ok ? '✓' : '✗'} countSymbolRefs: 2 refs to x in if`);
+      if (!ok) { console.log(`  got: ${count}`); failed++; } else passed++;
+    }
+
+    // bodyContainsGo
+    {
+      const c = makeCompiler();
+      const body1 = [makeAST('(go label)')];
+      const ok1 = c.bodyContainsGo(body1) === true;
+      console.log(`${ok1 ? '✓' : '✗'} bodyContainsGo: (go label) returns true`);
+      if (!ok1) failed++; else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const body2 = [makeAST('(move random)')];
+      const ok2 = c.bodyContainsGo(body2) === false;
+      console.log(`${ok2 ? '✓' : '✗'} bodyContainsGo: (move random) returns false`);
+      if (!ok2) failed++; else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const body3 = [makeAST('(when (= x 0) (go label))')];
+      const ok3 = c.bodyContainsGo(body3) === true;
+      console.log(`${ok3 ? '✓' : '✗'} bodyContainsGo: nested go returns true`);
+      if (!ok3) failed++; else passed++;
+    }
+
+    // findLastUseIndex
+    {
+      const c = makeCompiler();
+      const forms = [makeAST('(+ x 1)'), makeAST('(move y)'), makeAST('(+ x 2)')];
+      const idx = c.findLastUseIndex('x', forms);
+      const ok = idx === 2;
+      console.log(`${ok ? '✓' : '✗'} findLastUseIndex: x last used at index 2`);
+      if (!ok) { console.log(`  got: ${idx}`); failed++; } else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const forms = [makeAST('(+ x 1)'), makeAST('(move y)')];
+      const idx = c.findLastUseIndex('x', forms);
+      const ok = idx === 0;
+      console.log(`${ok ? '✓' : '✗'} findLastUseIndex: x last used at index 0`);
+      if (!ok) { console.log(`  got: ${idx}`); failed++; } else passed++;
+    }
+
+    // isSingleSetUse
+    {
+      const c = makeCompiler();
+      const forms = [makeAST('(set! dir food-dir)'), makeAST('(move dir)')];
+      const result = c.isSingleSetUse('food-dir', forms);
+      const ok = result !== null && result.target === 'dir';
+      console.log(`${ok ? '✓' : '✗'} isSingleSetUse: (set! dir food-dir) returns target=dir`);
+      if (!ok) { console.log(`  got: ${JSON.stringify(result)}`); failed++; } else passed++;
+    }
+    {
+      const c = makeCompiler();
+      const forms = [makeAST('(+ food-dir 1)'), makeAST('(move dir)')];
+      const result = c.isSingleSetUse('food-dir', forms);
+      const ok = result === null;
+      console.log(`${ok ? '✓' : '✗'} isSingleSetUse: non-set! usage returns null`);
+      if (!ok) { console.log(`  got: ${JSON.stringify(result)}`); failed++; } else passed++;
+    }
+  }
+
+  // --- Register optimization tests ---
+
+  // --- Let-forwarding ---
+  test('let-forwarding: single-use binding into set!',
+    `(let ((dir 0))
+       (let ((food-dir (sense food)))
+         (set! dir food-dir)
+         (move dir)))`,
+    r => {
+      return r.includes('SENSE FOOD r0') && !r.includes('SET r0 r1');
+    });
+
+  test('let-forwarding: no forward when set! is conditional (when)',
+    `(let ((dir 0))
+       (let ((food-dir (sense food)))
+         (when (!= food-dir 0)
+           (set! dir food-dir))
+         (move dir)))`,
+    r => {
+      // set! is inside when — conditional, so forwarding into dir's register
+      // would clobber dir's old value when the condition is false
+      return r.includes('SENSE FOOD r1');
+    });
+
+  // go only jumps upward out of let scopes, so forwarding IS safe here
+  test('let-forwarding: forward still works with go in body',
+    `(let ((dir 0))
+       (tagbody
+         again
+         (let ((food-dir (sense food)))
+           (set! dir food-dir)
+           (go again))))`,
+    r => {
+      return r.includes('SENSE FOOD r0');
+    });
+
+  test('let-forwarding: no forward when binding is set! target',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (set! x 5)
+         (set! dir x)
+         (move dir)))`,
+    r => {
+      return !r.includes('SENSE FOOD r0');
+    });
+
+  test('let-forwarding: no forward when set! is conditional (target in cond)',
+    `(let ((dir 3))
+       (let ((x (sense food)))
+         (when (!= dir 0)
+           (set! dir x))
+         (move dir)))`,
+    r => {
+      // set! is inside when — conditional, so no forwarding
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: no forward when set! is conditional (target read before)',
+    `(let ((dir 3))
+       (let ((x (sense food)))
+         (when (!= x 0)
+           (move dir)
+           (set! dir x))
+         (move dir)))`,
+    r => {
+      // set! is inside when — conditional, so no forwarding
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: no forward when set! is conditional (intervening forms)',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (when (!= x 0)
+           (move random)
+           (set! dir x))
+         (move dir)))`,
+    r => {
+      // set! is inside when — conditional, so no forwarding
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: no forward when set! is deeply nested in conditionals',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (when (!= x 0)
+           (when (!= x 3)
+             (set! dir x)))
+         (move dir)))`,
+    r => {
+      // set! is nested inside two when forms — conditional
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: no forward for trail-dir pattern (conditional set!)',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (when (!= x 0)
+           (when (!= (probe x) 1)
+             (set! dir x)))
+         (move dir)))`,
+    r => {
+      // set! is inside nested when — conditional
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: no forward when target read in earlier body form',
+    `(let ((dir 3))
+       (let ((x (sense food)))
+         (move dir)
+         (when (!= x 0)
+           (set! dir x))
+         (move dir)))`,
+    r => {
+      // set! is conditional AND dir is read before — no forwarding
+      return r.includes('SENSE FOOD r1');
+    });
+
+  test('let-forwarding: unconditional set! in begin',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (begin
+           (move random)
+           (set! dir x))
+         (move dir)))`,
+    r => {
+      // set! is inside begin (unconditional) — safe to forward
+      return r.includes('SENSE FOOD r0');
+    });
+
+  test('let-forwarding: multi-ref unconditional',
+    `(let ((dir 0))
+       (let ((x (sense food)))
+         (mark ch_red x)
+         (set! dir x)
+         (move dir)))`,
+    r => {
+      // x has 2 refs but set! is unconditional — safe to forward
+      return r.includes('SENSE FOOD r0');
+    });
+
+  // --- Dead register clobbering ---
+  test('dead-reg clobber: reuses dead binding register in arith',
+    `(let ((current 10))
+       (let ((strongest 20))
+         (set! strongest (- strongest 1))
+         (mark ch_red (- strongest current))))`,
+    r => {
+      // (- strongest current) should reuse strongest's register in-place
+      // since strongest is dead after this expression
+      return !r.match(/SET r2 r1/) && r.includes('MARK CH_RED r1');
+    });
+
+  test('dead-reg clobber: no clobber when binding used later',
+    `(let ((current 10))
+       (let ((strongest 20))
+         (mark ch_red (- strongest current))
+         (move strongest)))`,
+    r => {
+      // strongest is NOT dead after mark — used by move
+      // Should use a temp register for the subtraction result
+      return r.includes('SET r2 r1');
+    });
+
+  test('dead-reg clobber: no clobber when used twice in same form',
+    `(let ((current 10))
+       (let ((strongest 20))
+         (mark strongest (- strongest current))))`,
+    r => {
+      // strongest appears as both mark channel arg AND in (- strongest current)
+      // clobbering would destroy the value needed by the first arg of mark
+      return r.includes('SET r2 r1');
+    });
+
+  // --- Dead register scavenging via allocReg fallback ---
+  // All 8 regs occupied (a-h = r0-r7), then a is dead after mark.
+  // The inner (+ c 0) has a symbol first arg so compileArith clobbers c's reg.
+  // The outer (+ ... d) has a compound first arg, so compileArith calls
+  // allocReg() which must scavenge a's dead register from clobberableRegs.
+  test('dead-reg scavenge: allocReg reuses dead reg at register pressure',
+    `(let ((a 1) (b 2) (c 3) (d 4) (e 5) (f 6) (g 7) (h 8))
+       (mark ch_red a)
+       (mark ch_blue (+ (+ c 0) d)))`,
+    r => {
+      // Should compile without register exhaustion, using a's r0 for the outer +
+      return r.includes('MARK CH_BLUE') && r.includes('SET r0 r2');
+    });
+
+  // Regression: clobberable register not consumed must still be freed.
+  // When a binding is marked clobberable at its last use but nobody
+  // actually takes it from clobberableRegs (e.g. it's read as a plain
+  // symbol arg, not via compileArith clobbering), it must still be
+  // freed at scope exit. This is the minimal repro for the open2.alisp
+  // register leak in dec-dx!/inc-dx! macros.
+  test('dead-reg: unconsumed clobberable reg freed at scope exit',
+    `(let ((packed 0))
+       (let ((tmp 0))
+         (set! tmp (and packed 255))
+         (set! packed (or packed tmp)))
+       (let ((tmp2 0))
+         (move random)))`,
+    r => {
+      // tmp's register should be freed after the first inner let exits,
+      // even though it was marked clobberable. tmp2 should reuse it.
+      return r.includes('MOVE RANDOM');
+    });
+
+  // --- Integration: open2.alisp compiles with optimizations enabled ---
+  // (The mark-gradient (- strongest current) pattern still uses a temp
+  // because strongest has multiple refs within the same when body form;
+  // sub-expression liveness would be needed to optimize that.)
+  {
+    const fs = require('fs');
+    test('open2 integration: compiles successfully with optimizations',
+      fs.readFileSync('open2.alisp', 'utf8'),
+      r => {
+        // Verify it compiles and produces expected structure
+        return r.includes('.tag 0 exploring') &&
+               r.includes('MARK CH_RED') &&
+               r.includes('MOVE');
+      });
+  }
+
   console.log(`\n═══ ${passed} passed, ${failed} failed ═══`);
 }
 

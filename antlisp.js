@@ -131,6 +131,7 @@ class Compiler {
     this.currentNode = null;       // track current AST node for error messages
     this.nodeStack = [];           // stack of nodes for context
     this.constOverrides = new Map(); // CLI overrides: name -> string value
+    this.clobberableRegs = new Set();  // registers whose bindings are dead but not yet freed
   }
 
   // Format location info for error messages
@@ -185,6 +186,12 @@ class Compiler {
         return `r${i}`;
       }
     }
+    // Scavenge a dead-but-not-yet-freed register before giving up
+    if (this.clobberableRegs.size > 0) {
+      const reg = this.clobberableRegs.values().next().value;
+      this.clobberableRegs.delete(reg);
+      return reg;
+    }
     const inUse = [...this.usedRegs].sort().map(r => `r${r}`).join(', ');
     throw this.errorAt(`Register exhaustion — all registers in use (currently: ${inUse}). Reduce nesting or free variables.`);
   }
@@ -201,6 +208,224 @@ class Compiler {
   emit(line) { this.output.push(line); }
   emitLabel(label) { this.output.push(`${label}:`); }
   emitComment(text) { this.output.push(`  ; ${text}`); }
+
+  // ── AST Analysis Utilities (for register optimization) ──
+
+  // Count occurrences of a symbol name in an AST node (recursive)
+  countSymbolRefs(name, node) {
+    if (node.type === 'symbol') return node.value === name ? 1 : 0;
+    if (node.type === 'number' || node.type === 'string') return 0;
+    if (node.type === 'list') {
+      return node.value.reduce((n, child) => n + this.countSymbolRefs(name, child), 0);
+    }
+    return 0;
+  }
+
+  // Find the index of the last form in bodyForms that references the symbol
+  findLastUseIndex(name, bodyForms) {
+    for (let i = bodyForms.length - 1; i >= 0; i--) {
+      if (this.countSymbolRefs(name, bodyForms[i]) > 0) return i;
+    }
+    return -1;
+  }
+
+  // Check if the only use of `name` in bodyForms is (set! target name)
+  // Returns { target } if so, null otherwise
+  isSingleSetUse(name, bodyForms) {
+    let setTarget = null;
+    for (const form of bodyForms) {
+      if (form.type === 'list' && form.value.length === 3 &&
+          form.value[0].type === 'symbol' && form.value[0].value === 'set!' &&
+          form.value[2].type === 'symbol' && form.value[2].value === name) {
+        if (setTarget !== null) return null;  // multiple set! uses
+        setTarget = form.value[1].value;
+      } else if (this.countSymbolRefs(name, form) > 0) {
+        return null;  // used outside a set!
+      }
+    }
+    return setTarget ? { target: setTarget } : null;
+  }
+
+  // Check if any form in bodyForms contains a (go ...) statement (recursive)
+  bodyContainsGo(bodyForms) {
+    for (const form of bodyForms) {
+      if (this._nodeContainsGo(form)) return true;
+    }
+    return false;
+  }
+
+  _nodeContainsGo(node) {
+    if (node.type !== 'list') return false;
+    const list = node.value;
+    if (list.length > 0 && list[0].type === 'symbol' && list[0].value === 'go') return true;
+    return list.some(child => this._nodeContainsGo(child));
+  }
+
+  // Recursively search bodyForms for (set! TARGET name) where name is the VALUE.
+  // Returns { target, formIndex } or null. Returns null if multiple different targets found.
+  // Only finds set! uses on unconditional execution paths — a set! inside when/if/unless/cond
+  // is not guaranteed to execute, so forwarding into the target register would clobber
+  // the target's old value even when the branch isn't taken.
+  findDeepSetUse(name, bodyForms) {
+    let result = null;
+    for (let i = 0; i < bodyForms.length; i++) {
+      const targets = this._collectUnconditionalSetTargets(name, bodyForms[i]);
+      for (const t of targets) {
+        if (result !== null && result.target !== t) return null;  // multiple different targets
+        result = { target: t, formIndex: i };
+      }
+    }
+    return result;
+  }
+
+  // Collect all target names from (set! target name) forms within a node,
+  // but only on unconditional execution paths. Does NOT descend into
+  // when/if/unless/cond bodies since those are conditional.
+  _collectUnconditionalSetTargets(name, node) {
+    if (!node || node.type !== 'list') return [];
+    const list = node.value;
+    if (!list || list.length === 0) return [];
+    const targets = [];
+    // Direct match: (set! target name)
+    if (list.length === 3 && list[0].type === 'symbol' && list[0].value === 'set!' &&
+        list[1].type === 'symbol' && list[2].type === 'symbol' && list[2].value === name) {
+      targets.push(list[1].value);
+      return targets;
+    }
+    const head = list[0].type === 'symbol' ? list[0].value : null;
+    // Conditional forms: don't recurse into their bodies
+    if (head === 'when' || head === 'unless' || head === 'if' || head === 'cond') {
+      return targets;
+    }
+    // begin: all forms are unconditionally executed sequentially
+    if (head === 'begin') {
+      for (let i = 1; i < list.length; i++) {
+        targets.push(...this._collectUnconditionalSetTargets(name, list[i]));
+      }
+      return targets;
+    }
+    // For other forms, recurse into children
+    for (const child of list) {
+      targets.push(...this._collectUnconditionalSetTargets(name, child));
+    }
+    return targets;
+  }
+
+  // Collect all target names from (set! target name) forms within a node (any depth)
+  _collectSetTargets(name, node) {
+    if (node.type !== 'list') return [];
+    const list = node.value;
+    const targets = [];
+    if (list.length === 3 && list[0].type === 'symbol' && list[0].value === 'set!' &&
+        list[1].type === 'symbol' && list[2].type === 'symbol' && list[2].value === name) {
+      targets.push(list[1].value);
+    }
+    for (const child of list) {
+      targets.push(...this._collectSetTargets(name, child));
+    }
+    return targets;
+  }
+
+  // Check if a node contains (set! targetName bindingName) anywhere
+  _containsSetUse(targetName, bindingName, node) {
+    if (node.type !== 'list') return false;
+    const list = node.value;
+    if (list.length === 3 && list[0].type === 'symbol' && list[0].value === 'set!' &&
+        list[1].type === 'symbol' && list[1].value === targetName &&
+        list[2].type === 'symbol' && list[2].value === bindingName) return true;
+    return list.some(child => this._containsSetUse(targetName, bindingName, child));
+  }
+
+  // Count refs to targetName that execute before the (set! targetName bindingName) form.
+  // Walks AST respecting execution order (condition before body in when/if, sequential in begin).
+  // Uses _containsSetUse to navigate toward the set! (not countSymbolRefs, which would
+  // be confused by non-set! reads of bindingName in conditions).
+  countRefsBeforeSet(targetName, bindingName, node) {
+    if (node.type !== 'list') return this.countSymbolRefs(targetName, node);
+    const list = node.value;
+    if (list.length === 0) return 0;
+    const head = list[0].type === 'symbol' ? list[0].value : null;
+
+    // Direct match: (set! targetName bindingName) — we've reached the set!, 0 refs before it
+    if (head === 'set!' && list.length === 3 &&
+        list[1].type === 'symbol' && list[1].value === targetName &&
+        list[2].type === 'symbol' && list[2].value === bindingName) {
+      return 0;
+    }
+
+    // when/unless: condition executes first, then body forms sequentially
+    if ((head === 'when' || head === 'unless') && list.length >= 3) {
+      const cond = list[1];
+      const bodyForms = list.slice(2);
+      // If the set! is inside the condition, recurse into condition
+      if (this._containsSetUse(targetName, bindingName, cond)) {
+        return this.countRefsBeforeSet(targetName, bindingName, cond);
+      }
+      // Otherwise condition fully executes before body — count all target refs in it
+      let count = this.countSymbolRefs(targetName, cond);
+      // Walk body forms sequentially
+      for (const form of bodyForms) {
+        if (this._containsSetUse(targetName, bindingName, form)) {
+          return count + this.countRefsBeforeSet(targetName, bindingName, form);
+        }
+        count += this.countSymbolRefs(targetName, form);
+      }
+      return count;  // set! not found in this subtree
+    }
+
+    // if: condition first, then branch that contains the set!
+    if (head === 'if' && list.length >= 4) {
+      const cond = list[1];
+      if (this._containsSetUse(targetName, bindingName, cond)) {
+        return this.countRefsBeforeSet(targetName, bindingName, cond);
+      }
+      let count = this.countSymbolRefs(targetName, cond);
+      for (let i = 2; i < list.length; i++) {
+        if (this._containsSetUse(targetName, bindingName, list[i])) {
+          return count + this.countRefsBeforeSet(targetName, bindingName, list[i]);
+        }
+      }
+      return count;
+    }
+
+    // begin: sequential
+    if (head === 'begin') {
+      let count = 0;
+      for (let i = 1; i < list.length; i++) {
+        if (this._containsSetUse(targetName, bindingName, list[i])) {
+          return count + this.countRefsBeforeSet(targetName, bindingName, list[i]);
+        }
+        count += this.countSymbolRefs(targetName, list[i]);
+      }
+      return count;
+    }
+
+    // Generic form: walk children sequentially (operator then args)
+    let count = 0;
+    for (const child of list) {
+      if (this._containsSetUse(targetName, bindingName, child)) {
+        return count + this.countRefsBeforeSet(targetName, bindingName, child);
+      }
+      count += this.countSymbolRefs(targetName, child);
+    }
+    return count;
+  }
+
+  // Check if `name` is a set! target anywhere in bodyForms
+  _isSetTarget(name, bodyForms) {
+    for (const form of bodyForms) {
+      if (this._nodeIsSetTarget(name, form)) return true;
+    }
+    return false;
+  }
+
+  _nodeIsSetTarget(name, node) {
+    if (node.type !== 'list') return false;
+    const list = node.value;
+    if (list.length >= 2 && list[0].type === 'symbol' && list[0].value === 'set!' &&
+        list[1].type === 'symbol' && list[1].value === name) return true;
+    return list.some(child => this._nodeIsSetTarget(name, child));
+  }
 
   // ── Atom resolution ──
 
@@ -287,9 +512,9 @@ class Compiler {
     // Try constant folding before allocating a register
     const folded = this.tryEvalConst(node);
     if (folded !== null) return { val: String(folded), tempReg: null };
-    // Compound expression — compile into a temp register
-    const reg = this.allocReg();
-    this.compileExpr(node, reg);
+    // Compound expression — compile without a forced dest to allow
+    // clobber/scavenge optimizations to pick registers
+    const reg = this.compileExpr(node, null);
     return { val: reg, tempReg: reg };
   }
 
@@ -731,24 +956,109 @@ class Compiler {
     const bindings = list[1].value;
     const savedBindings = new Map(this.bindings);
     const allocatedRegs = [];
+    const isAlias = [];  // parallel to allocatedRegs: true if forwarded (skip freeReg)
+    const bodyForms = list.slice(2);
 
     for (const binding of bindings) {
       const pair = binding.value;
       const name = pair[0].value;
-      const reg = this.allocReg();
-      allocatedRegs.push(reg);
-      this.compileInto(pair[1], reg);
-      this.bindings.set(name, reg);
-      this.allBindings.set(name, reg);  // record for assert-reg-name
+
+      // Let-forwarding: if body contains exactly one (set! target name) at
+      // any depth, and target's old value isn't read before that set!,
+      // compile the initializer directly into target's register.
+      let forwarded = false;
+      if (!this._isSetTarget(name, bodyForms)) {
+        const setUse = this.findDeepSetUse(name, bodyForms);
+        if (setUse && this.bindings.has(setUse.target)) {
+          const targetReg = this.bindings.get(setUse.target);
+          // Check target's old value isn't read before the set!
+          let targetSafe = true;
+          for (let f = 0; f < setUse.formIndex; f++) {
+            if (this.countSymbolRefs(setUse.target, bodyForms[f]) > 0) {
+              targetSafe = false;
+              break;
+            }
+          }
+          if (targetSafe) {
+            targetSafe = this.countRefsBeforeSet(
+              setUse.target, name, bodyForms[setUse.formIndex]) === 0;
+          }
+          if (targetSafe) {
+            this.compileInto(pair[1], targetReg);
+            this.bindings.set(name, targetReg);
+            this.allBindings.set(name, targetReg);
+            allocatedRegs.push(null);  // no register to free
+            isAlias.push(true);
+            forwarded = true;
+          }
+        }
+      }
+
+      if (!forwarded) {
+        const reg = this.allocReg();
+        allocatedRegs.push(reg);
+        isAlias.push(false);
+        this.compileInto(pair[1], reg);
+        this.bindings.set(name, reg);
+        this.allBindings.set(name, reg);
+      }
     }
+
+    // Pre-compute last-use indices for dead register reuse
+    const bindingNames = bindings.map(b => b.value[0].value);
+    const bindingRegs = bindingNames.map(n => this.bindings.get(n));
+    const lastUseIdx = bindingNames.map(n => this.findLastUseIndex(n, bodyForms));
+
+    const savedClobberableRegs = new Set(this.clobberableRegs);
+    // Track which regs THIS let scope freed early (scoped, not global)
+    const myEarlyFreed = new Set();
 
     let result = null;
-    for (let i = 2; i < list.length; i++) {
-      result = this.compileExpr(list[i], i === list.length - 1 ? destReg : null);
+    for (let i = 0; i < bodyForms.length; i++) {
+      // Mark registers as clobberable when their binding is dead (last
+      // use was in an earlier form) or when the last use is in this form
+      // and appears only once (safe to reuse in-place).
+      // (go ...) only jumps upward out of let scopes, never back in,
+      // so liveness analysis within a let body is always safe.
+      for (let b = 0; b < bindingNames.length; b++) {
+        if (isAlias[b]) continue;
+        const reg = bindingRegs[b];
+        if (!reg || myEarlyFreed.has(reg)) continue;
+        if (lastUseIdx[b] < i) {
+          // Binding is dead — register can be scavenged
+          this.clobberableRegs.add(reg);
+          myEarlyFreed.add(reg);
+        } else if (lastUseIdx[b] === i &&
+                   this.countSymbolRefs(bindingNames[b], bodyForms[i]) === 1) {
+          // Last use is in this form, appears once — can clobber in-place
+          this.clobberableRegs.add(reg);
+          myEarlyFreed.add(reg);
+        }
+      }
+
+      result = this.compileExpr(list[i + 2], i === bodyForms.length - 1 ? destReg : null);
     }
 
+    // Determine which early-freed registers were actually consumed
+    // (removed from clobberableRegs by compileArith or allocReg scavenging).
+    // Unconsumed ones must still be freed normally.
+    const consumed = new Set();
+    for (const reg of myEarlyFreed) {
+      if (!this.clobberableRegs.has(reg)) {
+        consumed.add(reg);
+      }
+    }
+
+    // Restore clobberable state and free registers
+    this.clobberableRegs = savedClobberableRegs;
     this.bindings = savedBindings;
-    for (const reg of allocatedRegs) this.freeReg(reg);
+    for (let i = 0; i < allocatedRegs.length; i++) {
+      const reg = allocatedRegs[i];
+      if (!reg) continue;  // alias — no register to free
+      if (!consumed.has(reg)) {
+        this.freeReg(reg);
+      }
+    }
     return result;
   }
 
@@ -1056,7 +1366,17 @@ class Compiler {
       return reg;
     }
 
-    const reg = destReg || this.allocReg();
+    // If no destReg and the first operand is a symbol resolving to a
+    // clobberable (dead) register, reuse it in-place instead of allocating
+    let reg = destReg;
+    if (!reg && list[1].type === 'symbol') {
+      const resolved = this.resolveAtom(list[1]);
+      if (resolved.startsWith('r') && this.clobberableRegs.has(resolved)) {
+        reg = resolved;
+        this.clobberableRegs.delete(resolved);
+      }
+    }
+    if (!reg) reg = this.allocReg();
     this.compileInto(list[1], reg);
     for (let i = 2; i < list.length; i++) {
       const a = this.resolveArg(list[i]);

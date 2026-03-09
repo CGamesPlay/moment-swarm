@@ -447,3 +447,22 @@
         (move random))))
   (assert-reg-name tick-count 10)
   (assert-reg-name flag 5))
+
+; ─── Let-forwarding safety ─────────────────────────────────
+
+; Regression: conditional set! must not clobber target's old value.
+; This is the wall-dir pattern from open2.alisp: (let ((saved dir)) ...
+; (set! counter saved)). The set! into counter is unconditional within
+; the let body, but the binding's initializer (dir) must not overwrite
+; counter's register at binding time if the forwarding is unsafe.
+; Here we test the simpler conditional case: when the condition is false,
+; target must retain its old value.
+(test "let-forwarding: conditional set! preserves target when branch not taken"
+  :run-once
+  (begin
+    (let ((target 42) (x 0))
+      (let ((saved x))
+        (when (!= saved 0)
+          (set! target saved)))))
+  ; x=0 so when is not taken, target must still be 42
+  (assert-reg-name target 42))
