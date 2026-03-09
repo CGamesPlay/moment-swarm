@@ -47,19 +47,74 @@ def _(mo):
 
 @app.cell
 def _(mo, os):
-    _alisp_files = sorted(
-        f
-        for f in os.listdir(".")
-        if f.endswith(".alisp") and not f.endswith(".unit.alisp")
-    )
+    def _list_alisp_files():
+        return sorted(
+            f
+            for f in os.listdir(".")
+            if f.endswith(".alisp") and not f.endswith(".unit.alisp")
+        )
+
+    _alisp_files = _list_alisp_files()
+
+    refresh_button = mo.ui.button(label="↺ Refresh", kind="neutral")
+
     sweep_file = mo.ui.dropdown(
         options=_alisp_files,
         value=_alisp_files[0] if _alisp_files else None,
         label="Alisp file",
     )
+    mo.hstack([sweep_file, refresh_button], align="end", gap=1)
+    return refresh_button, sweep_file
+
+
+@app.cell
+def _(os, re, refresh_button, sweep_file):
+    # Re-list files when refresh is clicked (reactive on refresh_button.value)
+    _trigger = refresh_button.value  # depend on button state
+
+    _alisp_files = sorted(
+        f
+        for f in os.listdir(".")
+        if f.endswith(".alisp") and not f.endswith(".unit.alisp")
+    )
+
+    # Auto-detect numeric (const ...) from selected file
+    def _parse_numeric_consts(path):
+        """Return list of (name, value) for numeric-valued (const NAME VALUE) lines."""
+        results = []
+        if not path or not os.path.exists(path):
+            return results
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                m = re.match(r'^\(const\s+(\w+)\s+(-?\d+(?:\.\d+)?)\s*\)', line)
+                if m:
+                    name, val = m.group(1), m.group(2)
+                    # Skip obvious state/ID constants (all-caps with small integers 0-9)
+                    # that are likely enum IDs, not tunable hyperparams.
+                    # Heuristic: skip if name starts with S_ or value is 0-9
+                    if name.startswith("S_"):
+                        continue
+                    results.append((name, val))
+        return results
+
+    _detected = _parse_numeric_consts(sweep_file.value)
+
+    if _detected:
+        _default_params = "\n".join(f"{n}={v}" for n, v in _detected)
+    else:
+        _default_params = "EXPLORE_TIMEOUT=200,300,400\nTRAIL_STRENGTH=100,125,150\nSCAN_STEPS=25,30,35"
+
+    detected_params_default = _default_params
+    alisp_files_refreshed = _alisp_files
+    return (detected_params_default,)
+
+
+@app.cell
+def _(detected_params_default, mo, sweep_file):
     sweep_map = mo.ui.text(value="", label="Map filter (blank = all)")
     sweep_params = mo.ui.text_area(
-        value="EXPLORE_TIMEOUT=200,300,400\nTRAIL_STRENGTH=100,125,150\nSCAN_STEPS=25,30,35",
+        value=detected_params_default,
         label="Parameters (NAME=val1,val2,...)",
         full_width=True,
     )
@@ -67,11 +122,11 @@ def _(mo, os):
     sweep_op_limit = mo.ui.checkbox(value=False, label="No op limit")
     mo.hstack(
         [
-            mo.vstack([sweep_file, sweep_params]),
+            mo.vstack([mo.md(f"**File:** `{sweep_file.value}`"), sweep_params]),
             mo.vstack([sweep_map, sweep_parallel, sweep_op_limit]),
         ]
     )
-    return sweep_file, sweep_map, sweep_op_limit, sweep_parallel, sweep_params
+    return sweep_map, sweep_op_limit, sweep_parallel, sweep_params
 
 
 @app.cell
@@ -270,15 +325,18 @@ def _(df, mo, param_cols, score_col):
     | **Num combinations** | {len(df)} |
     """
 
-    best_params = ", ".join(f"`{c}={best_row[c].item()}`" for c in param_cols)
+    # Best combo in (const ...) format
+    _const_lines = "\n".join(
+        f"(const {c} {best_row[c].item()})" for c in param_cols
+    )
+    best_combo_md = f"**Best combo** → score **{best_row[score_col].item()}**\n\n```\n{_const_lines}\n```"
 
-    mo.vstack(
+    mo.hstack(
         [
-            mo.md(stats_md),
-            mo.md(
-                f"**Best combo:** {best_params} → **{best_row[score_col].item()}**"
-            ),
-        ]
+            mo.vstack([mo.md(stats_md)]),
+            mo.vstack([mo.md(best_combo_md)]),
+        ],
+        gap=4,
     )
     return
 
@@ -435,129 +493,6 @@ def _(alt, df, mo, param_cols, pl, score_col):
             _heatmaps.append(_hm + _text)
 
     mo.ui.altair_chart(alt.hconcat(*_heatmaps))
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Suggest Next Sweep
-
-    Configure the search to find promising regions for the next experiment.
-    """)
-    return
-
-
-@app.cell
-def _(df, mo, param_cols, pl, product, score_col):
-    # Analyze which parameter values appear in top runs
-    _top_frac = 0.25
-    _n_top = max(1, int(len(df) * _top_frac))
-    _top_df = df.sort(score_col, descending=True).head(_n_top)
-
-    _suggestions = {}
-    for _param in param_cols:
-        _all_vals = sorted(df[_param].unique().to_list())
-        _top_vals = _top_df[_param].to_list()
-
-        # Count how often each value appears in top runs
-        _val_counts = {}
-        for _v in _all_vals:
-            _val_counts[_v] = _top_vals.count(_v)
-
-        # Find the best-performing value
-        _best_val = max(_val_counts, key=_val_counts.get)
-        _best_idx = _all_vals.index(_best_val)
-
-        # Suggest exploring around the best value
-        _suggested = set()
-        _suggested.add(_best_val)
-
-        # Add neighbors in the existing grid
-        if _best_idx > 0:
-            _suggested.add(_all_vals[_best_idx - 1])
-        if _best_idx < len(_all_vals) - 1:
-            _suggested.add(_all_vals[_best_idx + 1])
-
-        # Add midpoints between existing values
-        if len(_all_vals) >= 2:
-            _midpoints = set()
-            for _j in range(len(_all_vals) - 1):
-                _mid = (_all_vals[_j] + _all_vals[_j + 1]) / 2
-                # Only add if it's a "nice" number (integer or simple fraction)
-                if _mid == int(_mid):
-                    _midpoints.add(int(_mid))
-            _suggested.update(_midpoints)
-
-        _suggestions[_param] = sorted(_suggested)
-
-    # Generate the suggested sweep grid
-    _sweep_combos = list(product(*[_suggestions[_p] for _p in param_cols]))
-
-    # Filter out already-tested combinations
-    _tested = set()
-    for _row in df.iter_rows(named=True):
-        _tested.add(tuple(_row[_p] for _p in param_cols))
-    _new_combos = [_c for _c in _sweep_combos if _c not in _tested]
-
-    _sweep_df = (
-        pl.DataFrame([dict(zip(param_cols, _combo)) for _combo in _new_combos])
-        if _new_combos
-        else pl.DataFrame()
-    )
-
-    _parts = []
-    _parts.append(mo.md("### Analysis of Top Performers"))
-
-    for _param in param_cols:
-        _all_vals = sorted(df[_param].unique().to_list())
-        # Mean score per value
-        _means = (
-            df.group_by(_param)
-            .agg(pl.col(score_col).mean().alias("mean"))
-            .sort("mean", descending=True)
-        )
-        _best_param_val = _means[_param][0]
-        _best_mean = _means["mean"][0]
-        _parts.append(
-            mo.md(
-                f"- **{_param}**: best mean score at `{_best_param_val}` ({_best_mean:.1f}), suggest exploring: `{_suggestions[_param]}`"
-            )
-        )
-
-    _parts.append(mo.md(f"### Suggested Next Sweep"))
-    _parts.append(
-        mo.md(
-            f"**{len(_new_combos)} untested combinations** from refining around top performers:"
-        )
-    )
-
-    if len(_sweep_df) > 0:
-        _parts.append(mo.ui.table(_sweep_df))
-
-    # Generate CSV for easy copy-paste
-    if len(_new_combos) > 0:
-        _csv_lines = [",".join(param_cols)]
-        for _combo in _new_combos:
-            _csv_lines.append(",".join(str(_v) for _v in _combo))
-        _sweep_csv = "\n".join(_csv_lines)
-        _parts.append(mo.md(f"### CSV for next sweep\n```\n{_sweep_csv}\n```"))
-
-    mo.vstack(_parts)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Raw Data Explorer
-    """)
-    return
-
-
-@app.cell
-def _(df, mo):
-    mo.ui.dataframe(df)
     return
 
 
