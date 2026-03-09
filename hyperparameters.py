@@ -142,27 +142,21 @@ def _(
             for _i in range(len(sweep_names)):
                 _dflags.extend(["-D", f"{sweep_names[_i]}={_combo[_i]}"])
 
-            _compile_result = subprocess.run(
-                ["node", "antlisp.js"] + _dflags + [sweep_file.value],
+            _test_result = subprocess.run(
+                ["argc", "test"] + _dflags + _map_flag + _op_flag + [sweep_file.value],
                 capture_output=True,
                 text=True,
                 cwd=_project_dir,
             )
-            if _compile_result.returncode != 0:
-                return _combo, None, _compile_result.stderr.strip()
+            if _test_result.returncode != 0:
+                return _combo, None, _test_result.stderr.strip()
 
-            _run_result = subprocess.run(
-                ["node", "run.js"] + _map_flag + _op_flag,
-                input=_compile_result.stdout,
-                capture_output=True,
-                text=True,
-                cwd=_project_dir,
+            _match = re.search(
+                r"^Score:\s*(\d+)", _test_result.stdout, re.MULTILINE
             )
-
-            _match = re.search(r"^Score:\s*(\d+)", _run_result.stdout, re.MULTILINE)
             if _match:
                 return _combo, int(_match.group(1)), None
-            return _combo, None, _run_result.stdout + _run_result.stderr
+            return _combo, None, _test_result.stdout + _test_result.stderr
 
         _results = []
         _errors = []
@@ -200,7 +194,9 @@ def _(
             )
         ]
         if _errors:
-            _err_lines = [f"- `{_c}`: {_e.replace("\n", "\n  ")}" for _c, _e in _errors[:5]]
+            _err_lines = [
+                f"- `{_c}`: {_e.replace('\n', '\n  ')}" for _c, _e in _errors[:5]
+            ]
             _parts.append(mo.md("**Errors:**\n" + "\n".join(_err_lines)))
         mo.output.replace(mo.vstack(_parts))
 
@@ -236,7 +232,8 @@ def _(csv_input, mo, pl):
     import io as _io
 
     mo.stop(
-        not csv_input.value.strip(), mo.md("*Run a sweep or paste CSV data to begin.*")
+        not csv_input.value.strip(),
+        mo.md("*Run a sweep or paste CSV data to begin.*"),
     )
 
     df = pl.read_csv(_io.StringIO(csv_input.value.strip()))
@@ -278,7 +275,9 @@ def _(df, mo, param_cols, score_col):
     mo.vstack(
         [
             mo.md(stats_md),
-            mo.md(f"**Best combo:** {best_params} → **{best_row[score_col].item()}**"),
+            mo.md(
+                f"**Best combo:** {best_params} → **{best_row[score_col].item()}**"
+            ),
         ]
     )
     return
@@ -349,7 +348,9 @@ def _(mo):
 
 @app.cell
 def _(alt, df, mo, param_cols, pl, score_col):
-    mo.stop(len(param_cols) < 2, mo.md("*Need at least 2 parameters for heatmaps.*"))
+    mo.stop(
+        len(param_cols) < 2, mo.md("*Need at least 2 parameters for heatmaps.*")
+    )
 
     _grand_mean = df[score_col].mean()
     # Marginal means for each parameter value
@@ -395,7 +396,9 @@ def _(alt, df, mo, param_cols, pl, score_col):
                         "interaction:Q",
                         title="Interaction",
                         scale=alt.Scale(
-                            scheme="redblue", domain=[-_max_abs, _max_abs], reverse=True
+                            scheme="redblue",
+                            domain=[-_max_abs, _max_abs],
+                            reverse=True,
                         ),
                     ),
                     tooltip=[
@@ -404,7 +407,9 @@ def _(alt, df, mo, param_cols, pl, score_col):
                         alt.Tooltip(
                             "interaction:Q", title="Interaction", format="+.1f"
                         ),
-                        alt.Tooltip("mean_score:Q", title="Mean Score", format=".1f"),
+                        alt.Tooltip(
+                            "mean_score:Q", title="Mean Score", format=".1f"
+                        ),
                     ],
                 )
                 .properties(
