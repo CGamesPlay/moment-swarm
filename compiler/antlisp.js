@@ -132,6 +132,7 @@ class Compiler {
     this.nodeStack = [];           // stack of nodes for context
     this.constOverrides = new Map(); // CLI overrides: name -> string value
     this.clobberableRegs = new Set();  // registers whose bindings are dead but not yet freed
+    this.testing = false;              // when true, (assert expr expected) compiles to ASSERTEQ
   }
 
   // Format location info for error messages
@@ -893,6 +894,23 @@ class Compiler {
         return null;
       }
 
+      case 'assert': {
+        if (!this.testing) throw this.errorAt('(assert ...) is only available in testing mode', node);
+        let expr = this.resolveArg(list[1]);
+        // ASSERTEQ requires a register as first operand — if the expression
+        // folded to a constant, load it into a temp register
+        if (!expr.tempReg && !/^r[0-7]$/.test(expr.val)) {
+          const reg = this.allocReg();
+          this.emit(`  SET ${reg} ${expr.val}`);
+          expr = { val: reg, tempReg: reg };
+        }
+        const expected = this.resolveArg(list[2]);
+        this.emit(`  ASSERTEQ ${expr.val} ${expected.val}`);
+        if (expr.tempReg) this.freeReg(expr.tempReg);
+        if (expected.tempReg) this.freeReg(expected.tempReg);
+        return null;
+      }
+
       case '=': case '!=': case '>': case '<': case '>=': case '<=':
       case 'not': case 'zero?':
         return this.compileComparison(list, destReg);
@@ -1533,6 +1551,7 @@ function compileAntLisp(source, options = {}) {
   const tokens = tokenize(source);
   const ast = parse(tokens);
   const compiler = new Compiler();
+  if (options.testing) compiler.testing = true;
   if (options.constOverrides) {
     for (const [name, value] of Object.entries(options.constOverrides)) {
       compiler.constOverrides.set(name, String(value));
@@ -1553,6 +1572,7 @@ function compileAntLispDebug(source, options = {}) {
   const tokens = tokenize(source);
   const ast = parse(tokens);
   const compiler = new Compiler();
+  if (options.testing) compiler.testing = true;
   if (options.constOverrides) {
     for (const [name, value] of Object.entries(options.constOverrides)) {
       compiler.constOverrides.set(name, String(value));

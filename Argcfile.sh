@@ -14,7 +14,7 @@ compile() {
 		dflags+=(-D "$d")
 	done
 	local asm
-	asm="$(node compiler/antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")"
+	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${dflags+"${dflags[@]}"} "${argc_file:?}")"
 	if [[ ${argc_copy+1} ]]; then
 		echo "$asm" | pbcopy
 		echo "Compiled and copied $argc_file"
@@ -34,7 +34,7 @@ test() {
 		dflags+=(-D "$d")
 	done
 	local asm
-	asm="$(node compiler/antlisp.js ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
+	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
 	echo "$asm" | npx --prefix compiler tsx compiler/run.ts ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
 }
 
@@ -42,28 +42,31 @@ test() {
 # @arg  file!           .unit.alisp test file
 # @flag -v --verbose    Show compiled assembly and register state for each test
 unit() {
-	node compiler/antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
+	npx --prefix compiler tsx compiler/antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
 }
 
 # @cmd Run all compiler tests (unit, self-test, type-check)
 # @flag -v --verbose  Show individual test names
 selftest() {
-	local output rc
-	echo "═══ Compiler tests ═══"
-	rc=0; output="$(node compiler/antlisp.test.js 2>&1)" || rc=$?
-	if [[ ${argc_verbose+1} ]]; then
-		echo "$output"
-	else
-		echo "$output" | grep -v '^✓'
-	fi
-	[[ $rc -eq 0 ]] || exit $rc
+	local output rc f
 
-	echo "═══ Unit tests ═══"
-	local f
+	echo "═══ Compiler tests ═══"
+	for f in compiler/*.test.ts compiler/antlisp.test.js; do
+		[[ -f "$f" ]] || continue
+		rc=0; output="$(npx --prefix compiler tsx "$f" 2>&1)" || rc=$?
+		if [[ ${argc_verbose+1} ]]; then
+			echo "$output"
+		else
+			echo "$output" | grep -v '^✓ '
+		fi
+		[[ $rc -eq 0 ]] || exit $rc
+	done
+
+	echo "═══ Runtime unit tests ═══"
 	for f in compiler/*.unit.alisp; do
 		[[ -f "$f" ]] || continue
 		echo "── $f ──"
-		rc=0; output="$(node compiler/antlisp.unit.js "$f" 2>&1)" || rc=$?
+		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js "$f" 2>&1)" || rc=$?
 		if [[ ${argc_verbose+1} ]]; then
 			echo "$output"
 		else

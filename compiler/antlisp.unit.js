@@ -49,7 +49,8 @@
 "use strict";
 
 const fs = require("fs");
-const { compileAntLispDebug, tokenize, parse } = require("./antlisp");
+const { compileAntLispDebug } = require("./antlisp2");
+const { tokenize, parse } = require("./parse");
 const {
   parseAssembly,
   CellType, DEFAULT_CONFIG, RNG,
@@ -249,7 +250,7 @@ function runTestBlock(testDef, preamble, verbose) {
 
   let asm, varMap;
   try {
-    ({ asm, varMap } = compileAntLispDebug(source));
+    ({ asm, varMap } = compileAntLispDebug(source, { testing: true }));
   } catch (e) {
     return { name, passed: false, error: `Compile error: ${e.message}`,
              asmSource: null, failedAssertions: [] };
@@ -408,6 +409,15 @@ function runTestBlock(testDef, preamble, verbose) {
       }
     } catch (e) {
       failedAssertions.push(`${kind}: ERROR — ${e.message}`);
+    }
+  }
+
+  // Check VM-level ASSERTEQ results
+  if (ant0._assertions) {
+    for (const a of ant0._assertions) {
+      if (!a.passed) {
+        failedAssertions.push(`assert (pc=${a.pc}): expected ${a.expected}, got ${a.actual}`);
+      }
     }
   }
 

@@ -34,6 +34,7 @@ const Opcode = Object.freeze({
   RANDOM: 16, MARK: 17,
   JMP: 18, CALL: 19, JEQ: 20, JNE: 21, JGT: 22, JLT: 23,
   MOVE: 24, PICKUP: 25, DROP: 26, ID: 27, NOP: 28, TAG: 29,
+  ASSERTEQ: 30,
 });
 
 const BC_STRIDE = 5;
@@ -401,6 +402,15 @@ function parseAssembly(source) {
         return { op, operands: [val] };
       }
 
+      case Opcode.ASSERTEQ: {
+        if (args.length !== 2) throw new AssemblyError(lineNum, "ASSERTEQ requires 2 args: <reg> <expected>");
+        const reg = parseRegister(args[0]);
+        if (reg === null) throw new AssemblyError(lineNum, `Expected register, got: "${args[0]}"`);
+        const expected = parseOperand(args[1]);
+        if (!expected) throw new AssemblyError(lineNum, `Invalid expected value: "${args[1]}"`);
+        return { op, operands: [{ type: "lit", val: reg }, expected] };
+      }
+
       default:
         throw new AssemblyError(lineNum, `Unhandled opcode: ${mnemonic}`);
     }
@@ -732,6 +742,16 @@ function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps,
         const val = (flags & 1) ? regs[a0] : a0;
         ant.tag = val < 0 ? 0 : val > 7 ? (val & 7) : val;
         opsUsed--;  // TAG doesn't count against op budget
+        pc++;
+        break;
+      }
+
+      case Opcode.ASSERTEQ: {
+        const actual = regs[a0];
+        const expected = (flags & 2) ? regs[a1] : a1;
+        if (!ant._assertions) ant._assertions = [];
+        ant._assertions.push({ pc: pc, actual, expected, passed: actual === expected });
+        opsUsed--;  // ASSERTEQ doesn't count against op budget
         pc++;
         break;
       }
