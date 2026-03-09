@@ -101,7 +101,7 @@ export function generateCode(
 // can clobber a source before it's read. This function reorders copies so that
 // each source is read before its register is overwritten, breaking cycles with
 // a temporary register when necessary.
-function resolveParallelMoves(copies: { from: string; to: string }[], liveRegs: Set<string>): string[] {
+export function resolveParallelMoves(copies: { from: string; to: string }[], liveRegs: Set<string>): string[] {
   if (copies.length <= 1) {
     return copies.map(c => `  SET ${c.to} ${c.from}`);
   }
@@ -159,16 +159,16 @@ function resolveParallelMoves(copies: { from: string; to: string }[], liveRegs: 
 
     for (let i = 0; i < pending.length; i++) {
       if (emitted.has(i)) continue;
-      // Start of a cycle: save first source to temp, emit chain, then restore
+      // Start of a cycle: save first source to temp, collect chain, emit reversed
       const cycleStart = i;
       output.push(`  SET ${tempReg} ${pending[cycleStart].from}`);
       emitted.add(cycleStart);
 
-      // Follow the chain: find the copy whose source is our destination
+      // Collect chain copies: follow from cycleStart's destination forward
+      const chain: number[] = [];
       let cur = cycleStart;
       while (true) {
         const { to } = pending[cur];
-        // Find the next copy in the cycle: its source is our destination
         let next = -1;
         for (let j = 0; j < pending.length; j++) {
           if (!emitted.has(j) && pending[j].from === to) {
@@ -176,16 +176,20 @@ function resolveParallelMoves(copies: { from: string; to: string }[], liveRegs: 
             break;
           }
         }
-        if (next === -1) {
-          // End of chain: restore temp to cycle start's destination
-          output.push(`  SET ${pending[cycleStart].to} ${tempReg}`);
-          break;
-        }
-        // Emit this copy (safe now, we'll handle source later)
-        output.push(`  SET ${pending[next].to} ${pending[next].from}`);
+        if (next === -1) break;
+        chain.push(next);
         emitted.add(next);
         cur = next;
       }
+
+      // Emit chain copies in reverse so each source is read before its
+      // register is overwritten by an earlier copy in the chain
+      for (let k = chain.length - 1; k >= 0; k--) {
+        const c = pending[chain[k]];
+        output.push(`  SET ${c.to} ${c.from}`);
+      }
+      // Restore temp to cycle start's destination
+      output.push(`  SET ${pending[cycleStart].to} ${tempReg}`);
     }
   }
 
