@@ -332,6 +332,172 @@ runSuite('Register Allocation', () => {
     }
   });
 
+  test('phi copies: swap cycle (r0 ↔ r1) uses temp register correctly', () => {
+    // When two variables need to swap registers at a tagbody transition,
+    // resolveParallelMoves must emit 3 SET instructions to swap via a temp.
+    // Bug: the final restore wrote to the wrong destination, producing only
+    // 2 instructions after peephole (a no-op) instead of a proper 3-instruction swap.
+    //
+    // A correct swap of r0↔r1 via temp r2:
+    //   SET r2 r1    ; save r1 to temp
+    //   SET r1 r0    ; r1 = old r0
+    //   SET r0 r2    ; r0 = temp = old r1
+    //
+    // The bug produced (before peephole):
+    //   SET r2 r1    ; save r1 to temp
+    //   SET r1 r0    ; r1 = old r0
+    //   SET r1 r2    ; r1 = temp — WRONG, overwrites r1, r0 never written
+    //
+    // After peephole, the redundant SET r1 r0 / SET r1 r2 collapsed to:
+    //   SET r2 r1
+    //   SET r1 r2    ; this is a no-op — r0 and r1 are unchanged
+    const asm = compileSource(`
+      (defmacro inc-dx! (packed)
+        (let ((tmp 0))
+          (set! tmp (and packed 255))
+          (set! tmp (+ tmp 1))
+          (set! tmp (and tmp 255))
+          (set! packed (and packed 0xFFFFFF00))
+          (set! packed (or packed tmp))))
+      (defmacro dec-dy! (packed)
+        (let ((tmp 0))
+          (set! tmp (rshift packed 8))
+          (set! tmp (and tmp 255))
+          (set! tmp (- tmp 1))
+          (set! tmp (and tmp 255))
+          (set! tmp (lshift tmp 8))
+          (set! packed (and packed 0xFFFF00FF))
+          (set! packed (or packed tmp))))
+      (defmacro inc-dy! (packed)
+        (let ((tmp 0))
+          (set! tmp (rshift packed 8))
+          (set! tmp (and tmp 255))
+          (set! tmp (+ tmp 1))
+          (set! tmp (and tmp 255))
+          (set! tmp (lshift tmp 8))
+          (set! packed (and packed 0xFFFF00FF))
+          (set! packed (or packed tmp))))
+      (defmacro dec-dx! (packed)
+        (let ((tmp 0))
+          (set! tmp (and packed 255))
+          (set! tmp (- tmp 1))
+          (set! tmp (and tmp 255))
+          (set! packed (and packed 0xFFFFFF00))
+          (set! packed (or packed tmp))))
+      (defmacro move-with-tracking-packed (dir packed)
+        (unless (= (probe dir) 1)
+          (move dir)
+          (cond ((= dir 1) (dec-dy! packed))
+                ((= dir 2) (inc-dx! packed))
+                ((= dir 3) (inc-dy! packed))
+                ((= dir 4) (dec-dx! packed)))))
+      (let ((dir 0) (homepos 0))
+        (tagbody
+          exploring
+          (set! dir (sense food))
+          (when (!= dir 0)
+            (move-with-tracking-packed dir homepos)
+            (pickup)
+            (go returning))
+          (move random)
+          (go exploring)
+          returning
+          (let ((nest-dir (sense nest)))
+            (when (!= nest-dir 0)
+              (set! dir nest-dir)
+              (move-with-tracking-packed dir homepos)
+              (drop)
+              (set! homepos 0)
+              (go exploring)))
+          (move-with-tracking-packed dir homepos)
+          (go returning)))`);
+
+    // Find the PICKUP instruction. The phi copies immediately after it must
+    // be a 3-instruction swap (SET temp src; SET dst1 src2; SET dst2 temp).
+    // With the bug, peephole collapses the broken sequence to 2 instructions.
+    const lines = asm.split('\n').map(l => l.trim());
+    const pickupIdx = lines.findIndex(l => l === 'PICKUP');
+    assert(pickupIdx !== -1, 'Expected PICKUP instruction in assembly');
+
+    // Count consecutive SET rX rY instructions after PICKUP
+    let setCount = 0;
+    for (let i = pickupIdx + 1; i < lines.length; i++) {
+      if (lines[i].match(/^SET r\d+ r\d+$/)) {
+        setCount++;
+      } else {
+        break;
+      }
+    }
+
+    assertEq(setCount, 3,
+      `Expected 3 SET instructions after PICKUP (a proper swap), got ${setCount}: ` +
+      lines.slice(pickupIdx, pickupIdx + setCount + 2).join(' | '));
+  });
+
+  test('phi copies: swap temp register must not clobber live values', () => {
+    // When resolveParallelMoves breaks a cycle with a temp register, the temp
+    // must not be a register that holds a live value not involved in the swap.
+    //
+    // This models the LOST→EXPLORING transition in bridge.alisp:
+    // - dir (r0), counter (r1), explore-age (r2) are live at exploring header
+    // - counter and explore-age are both set to 0 (new const temps in r1, r2)
+    // - The phi swap of r1↔r2 picks r0 (dir) as temp, clobbering dir
+    //
+    // At __tag_lost_, the phi copies should only write to the two registers
+    // being swapped plus the temp. The temp must NOT be a register that holds
+    // a value needed after the transition (dir in r0).
+    //
+    // We detect this by counting how many distinct registers are written as
+    // SET destinations between __tag_lost_ and the JMP. A correct swap of
+    // r1↔r2 writes exactly 3 SETs to {r1, r2, temp} where temp != r0.
+    // The bug writes to {r0, r1, r2} — 3 registers when only 2 should change.
+    const asm = compileSource(`
+      (let ((dir 0) (counter 0) (explore-age 0))
+        (tagbody
+          exploring
+          (when (>= explore-age 10)
+            (go lost))
+          (set! dir (+ (random 4) 1))
+          (mark ch_red dir)
+          (set! counter (- counter 1))
+          (set! explore-age (+ explore-age 1))
+          (go exploring)
+          lost
+          (set! explore-age 0)
+          (set! counter 0)
+          (go exploring)))`);
+
+    const lines = asm.split('\n').map(l => l.trim());
+    const lostIdx = lines.findIndex(l => l.includes('__tag_lost_'));
+    assert(lostIdx !== -1, 'Expected __tag_lost_ label in assembly');
+
+    // Collect all SET destinations between __tag_lost_ and JMP
+    const setDests = new Set<string>();
+    for (let i = lostIdx + 1; i < lines.length; i++) {
+      if (lines[i].startsWith('JMP')) break;
+      const setMatch = lines[i].match(/^SET (r\d+)/);
+      if (setMatch) {
+        setDests.add(setMatch[1]);
+      }
+    }
+
+    // The swap involves 2 registers (counter and explore-age).
+    // A correct implementation writes to those 2 registers plus a temp that
+    // is NOT dir's register. With the bug, it writes to 3 registers including
+    // dir's register (r0). We check that the SET destinations are at most
+    // the 2 swap registers plus 1 temp, and that the temp is not used as a
+    // source of the final value at the exploring header.
+    //
+    // Simplest check: the number of distinct registers written should be <= 3,
+    // and they should not include a register that is unchanged by the transition
+    // (dir). Dir's register at the tag header is r0 (first phi, first allocated).
+    // After the lost block sets const 0 into r1 and r2, the swap should only
+    // touch r1, r2, and a temp that is r3+ (not r0).
+    assert(!setDests.has('r0'),
+      `Swap temp clobbered r0 (dir) at __tag_lost_: writes to {${[...setDests].join(', ')}} — ` +
+      `resolveParallelMoves used dir's register as temp`);
+  });
+
   test('lifetime holes: temp captured by phi has shorter interval than merge output', () => {
     // Models the bridge.alisp pattern: a temp defined before a branch is captured
     // by a phi node, so its interval ends at the phi rather than spanning the

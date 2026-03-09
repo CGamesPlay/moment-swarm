@@ -26,6 +26,29 @@ export function generateCode(
     phiCopiesPerBlock.get(block)!.push({ from, to });
   }
 
+  // Build live register map: block → all registers holding values that flow to
+  // successor phis (including coalesced ones that have no copy). This is needed
+  // so resolveParallelMoves avoids using live registers as swap temps.
+  const liveRegsAtEnd = new Map<BasicBlock, Set<string>>();
+  for (const block of program.blocks) {
+    for (const phi of block.phis) {
+      const destReg = allocResult.allocation.get(phi.dest);
+      for (const entry of phi.entries) {
+        let sourceReg: string;
+        if (entry.value.startsWith('%t')) {
+          sourceReg = allocResult.allocation.get(entry.value) ?? entry.value;
+        } else {
+          sourceReg = entry.value;
+        }
+        // Both the source (live value) and dest (target) registers are in use
+        if (!liveRegsAtEnd.has(entry.block)) liveRegsAtEnd.set(entry.block, new Set());
+        const regs = liveRegsAtEnd.get(entry.block)!;
+        regs.add(sourceReg);
+        if (destReg) regs.add(destReg);
+      }
+    }
+  }
+
   // Collect all labels that are actually jump targets (referenced by terminators)
   const referencedLabels = new Set<string>();
   for (const block of linearized) {
@@ -57,7 +80,8 @@ export function generateCode(
     // Emit phi copies before terminator, resolving parallel move conflicts
     const copies = phiCopiesPerBlock.get(block);
     if (copies) {
-      for (const line of resolveParallelMoves(copies)) {
+      const liveRegs = liveRegsAtEnd.get(block) ?? new Set<string>();
+      for (const line of resolveParallelMoves(copies, liveRegs)) {
         output.push(line);
       }
     }
@@ -77,7 +101,7 @@ export function generateCode(
 // can clobber a source before it's read. This function reorders copies so that
 // each source is read before its register is overwritten, breaking cycles with
 // a temporary register when necessary.
-function resolveParallelMoves(copies: { from: string; to: string }[]): string[] {
+function resolveParallelMoves(copies: { from: string; to: string }[], liveRegs: Set<string>): string[] {
   if (copies.length <= 1) {
     return copies.map(c => `  SET ${c.to} ${c.from}`);
   }
@@ -118,9 +142,9 @@ function resolveParallelMoves(copies: { from: string; to: string }[]): string[] 
   }
 
   // Any remaining copies form cycles — break with a temp register.
-  // Find a register not used by any copy in the cycle as a temp.
+  // Find a register not used by any copy in the cycle AND not live as a temp.
   if (emitted.size < pending.length) {
-    const usedRegs = new Set<string>();
+    const usedRegs = new Set<string>(liveRegs);
     for (const c of pending) {
       usedRegs.add(c.from);
       usedRegs.add(c.to);
@@ -153,8 +177,8 @@ function resolveParallelMoves(copies: { from: string; to: string }[]): string[] 
           }
         }
         if (next === -1) {
-          // End of chain: write from temp
-          output.push(`  SET ${to} ${tempReg}`);
+          // End of chain: restore temp to cycle start's destination
+          output.push(`  SET ${pending[cycleStart].to} ${tempReg}`);
           break;
         }
         // Emit this copy (safe now, we'll handle source later)
