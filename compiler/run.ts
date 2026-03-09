@@ -1,7 +1,7 @@
-#!/usr/bin/env node
-"use strict";
+#!/usr/bin/env -S npx tsx
+import * as fs from "fs";
 
-const fs = require("fs");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const engine = require("./node-engine");
 
 // ─── Usage ───────────────────────────────────────────────────────────────────
@@ -27,11 +27,41 @@ Options:
   -h, --help            Show this help
 `.trim();
 
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface EvalMap {
+  name: string;
+  totalFood: number;
+  nestX: number;
+  nestY: number;
+}
+
+interface World {
+  foodCollected: number;
+  stallCounts?: number;
+  stallsByTag?: Record<string, number>;
+}
+
+interface Program {
+  instructions: unknown[];
+  tagNames?: Map<number, string>;
+}
+
+interface SimResult {
+  name: string;
+  collected: number;
+  total: number;
+  ratio: number;
+  elapsed: number;
+  stalls: number;
+  stallsByTag: Record<string, number>;
+}
+
 // ─── Arg parsing ─────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-let file = null;
-let mapFilter = null;
+let file: string | null = null;
+let mapFilter: string | null = null;
 let seed = 42;
 let numMaps = 12;
 let maxTicks = 2000;
@@ -87,7 +117,7 @@ for (let i = 0; i < args.length; i++) {
 // ─── List maps mode ──────────────────────────────────────────────────────────
 
 if (listMaps) {
-  const maps = engine.generateEvalMaps(128, 128, seed, numMaps);
+  const maps: EvalMap[] = engine.generateEvalMaps(128, 128, seed, numMaps);
   for (let i = 0; i < maps.length; i++) {
     const m = maps[i];
     console.log(`${String(i + 1).padStart(3)}  ${m.name.padEnd(24)} food: ${String(m.totalFood).padStart(5)}  nest: ${m.nestX},${m.nestY}`);
@@ -99,7 +129,7 @@ if (listMaps) {
 
 (async () => {
 
-let source;
+let source: string;
 if (file) {
   if (!fs.existsSync(file)) {
     console.error(`File not found: ${file}`);
@@ -107,10 +137,10 @@ if (file) {
   }
   source = fs.readFileSync(file, "utf8");
 } else if (!process.stdin.isTTY) {
-  source = await new Promise((resolve, reject) => {
-    const chunks = [];
+  source = await new Promise<string>((resolve, reject) => {
+    const chunks: string[] = [];
     process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => chunks.push(chunk));
+    process.stdin.on("data", (chunk: string) => chunks.push(chunk));
     process.stdin.on("end", () => resolve(chunks.join("")));
     process.stdin.on("error", reject);
   });
@@ -122,12 +152,12 @@ if (file) {
 
 // ─── Assemble ────────────────────────────────────────────────────────────────
 
-let program;
+let program: Program;
 try {
   program = engine.parseAssembly(source);
 } catch (e) {
   if (e instanceof engine.AssemblyError) {
-    console.error(`Assembly error: ${e.message}`);
+    console.error(`Assembly error: ${(e as Error).message}`);
     process.exit(1);
   }
   throw e;
@@ -140,11 +170,11 @@ if (!quiet) {
 // ─── Generate maps ───────────────────────────────────────────────────────────
 
 const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick };
-const allMaps = engine.generateEvalMaps(config.mapWidth, config.mapHeight, seed, numMaps);
+const allMaps: EvalMap[] = engine.generateEvalMaps(config.mapWidth, config.mapHeight, seed, numMaps);
 
-let maps;
+let maps: EvalMap[];
 if (mapFilter) {
-  const match = allMaps.find(m => m.name === mapFilter);
+  const match = allMaps.find((m: EvalMap) => m.name === mapFilter);
   if (!match) {
     console.error(`Map "${mapFilter}" not found. Available maps:`);
     for (const m of allMaps) console.error(`  ${m.name}`);
@@ -157,11 +187,11 @@ if (mapFilter) {
 
 // ─── Run simulation ─────────────────────────────────────────────────────────
 
-const results = [];
+const results: SimResult[] = [];
 
 for (let i = 0; i < maps.length; i++) {
   const map = maps[i];
-  const world = engine.createWorld(engine.cloneMap(map), program, config);
+  const world: World = engine.createWorld(engine.cloneMap(map), program, config);
   const t0 = Date.now();
 
   for (let t = 0; t < maxTicks; t++) {
@@ -183,8 +213,8 @@ for (let i = 0; i < maps.length; i++) {
     // Format stalls-by-tag using .tag names from assembly
     let tagDetail = '';
     if (stalls > 0) {
-      const tagNames = program.tagNames || new Map();
-      const parts = [];
+      const tagNames = program.tagNames || new Map<number, string>();
+      const parts: string[] = [];
       for (const [tag, count] of Object.entries(stallsByTag).sort((a, b) => b[1] - a[1])) {
         const name = tagNames.get(Number(tag)) || `tag${tag}`;
         parts.push(`${name}:${count}`);

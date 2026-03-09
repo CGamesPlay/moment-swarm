@@ -3,10 +3,10 @@
 ## Challenge
 
 - reference.md is the ISA specification
-- node-engine.js is the virtual machine, ported to node.
-- run.js is a CLI for the above.
+- compiler/node-engine.js is the virtual machine, ported to node.
+- compiler/run.ts is a CLI for the above.
 
-Testbed usage: `node run.js brain.ant`
+Testbed usage: `npx --prefix compiler tsx compiler/run.ts brain.ant`
 
 Runs the training dataset using the given antssembly file. Prints a per-map score and a total score.
 
@@ -35,14 +35,16 @@ Score: 48/1000  (4.8% avg collection, 12 maps, 0 stalls, 778ms)
 We've built Antlisp, a lisp-based language specifically to solve this challenge.
 
 - ANTLISP.md is the language specification
-- antlisp.js is the compiler
-- antlisp.test.js is the compiler test suite
+- compiler/antlisp.ts is the compiler
+- compiler/antlisp.test.js is the integration test suite
 
 To compile an alisp file to antssembly, use `argc compile file.alisp`. To compile and test, use `argc test file.alisp`. Same output format as testing the compiled antssembly directly.
 
 The language is very limited, due to only having 8 registers and no stack. We may wish to improve compiler optimizations if it becomes difficult to create the kinds of programs we want to.
 
 The 64-op limit is particularly concerning for our compiled language. The "stalls" display indicates the number of times the op limit was hit during the run, and the tag of each ant when the stall happened. Before optimizing for stalls, verify that stalls are actually causing problems by `argc test file.alisp -o 1000`.
+
+If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No exceptions.
 
 ## ISA notes
 
