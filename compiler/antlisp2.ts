@@ -16,7 +16,7 @@ import { expandMacros } from './expand';
 import { collectMetadata } from './metadata';
 import { lowerToSSA, printSSA } from './ssa';
 import { optimize } from './optimize';
-import { linearizeBlocks, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
+import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
 import { generateCode } from './codegen';
 import { peephole } from './peephole2';
 
@@ -59,7 +59,7 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   // Phase 5: Register allocation
   const linearized = linearizeBlocks(ssaProgram);
   const numbered = numberInstructions(linearized);
-  const intervals = computeLiveIntervals(numbered);
+  const intervals = computeLiveIntervals(linearized, numbered);
   const allocResult = linearScan(ssaProgram, intervals);
   applyAllocation(ssaProgram, allocResult.allocation);
 
@@ -81,23 +81,6 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   return { asm, varMap };
 }
 
-// Re-export numberInstructions from regalloc (needed here)
-function numberInstructions(blocks: import('./ssa').BasicBlock[]) {
-  const numbered: any[] = [];
-  let index = 0;
-  for (const block of blocks) {
-    for (const phi of block.phis) {
-      numbered.push({ index: index++, block, kind: 'phi', phi });
-    }
-    for (const instr of block.instrs) {
-      numbered.push({ index: index++, block, kind: 'instr', instr });
-    }
-    if (block.terminator) {
-      numbered.push({ index: index++, block, kind: 'terminator', terminator: block.terminator });
-    }
-  }
-  return numbered;
-}
 
 // ─── CLI ─────────────────────────────────────────────────────
 

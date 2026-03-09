@@ -7,7 +7,7 @@ import { expandMacros, ExpandResult, tryEvalConst } from './expand';
 import { collectMetadata, Metadata } from './metadata';
 import { lowerToSSA, SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator, printSSA } from './ssa';
 import { optimize } from './optimize';
-import { linearizeBlocks, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
+import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
 import { generateCode } from './codegen';
 import { peephole } from './peephole2';
 
@@ -128,7 +128,7 @@ export function compileSource(src: string, opts?: { constOverrides?: Record<stri
   optimize(program);
   const linearized = linearizeBlocks(program);
   const numbered = numberInstructions(linearized);
-  const intervals = computeLiveIntervals(numbered);
+  const intervals = computeLiveIntervals(linearized, numbered);
   const allocResult = linearScan(program, intervals);
   applyAllocation(program, allocResult.allocation);
   const rawAsm = generateCode(program, linearized, allocResult);
@@ -136,22 +136,6 @@ export function compileSource(src: string, opts?: { constOverrides?: Record<stri
   return peephole(lines).join('\n');
 }
 
-function numberInstructions(blocks: BasicBlock[]) {
-  const numbered: any[] = [];
-  let index = 0;
-  for (const block of blocks) {
-    for (const phi of block.phis) {
-      numbered.push({ index: index++, block, kind: 'phi', phi });
-    }
-    for (const instr of block.instrs) {
-      numbered.push({ index: index++, block, kind: 'instr', instr });
-    }
-    if (block.terminator) {
-      numbered.push({ index: index++, block, kind: 'terminator', terminator: block.terminator });
-    }
-  }
-  return numbered;
-}
 
 // ─── SSA Builders ───────────────────────────────────────────
 

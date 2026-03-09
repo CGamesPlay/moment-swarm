@@ -3,8 +3,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { runSuite, test, assert, assertEq, assertIncludes,
-         compileSource, makeBlock, makeInstr, makeProgram, link } from './test-helpers';
-import { linearizeBlocks, computeLiveIntervals, linearScan } from './regalloc';
+         compileSource, makeBlock, makeInstr, makePhi, makeProgram, link } from './test-helpers';
+import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan } from './regalloc';
 import type { BasicBlock } from './ssa';
 
 runSuite('Register Allocation', () => {
@@ -38,12 +38,14 @@ runSuite('Register Allocation', () => {
   });
 
   test('let-forwarding: no forward when set! is conditional (target in cond)', () => {
+    // With dir=3, the condition (!= dir 0) is constant-folded to true,
+    // so dir is always overwritten by x. The allocator correctly coalesces them.
     const asm = compileSource(`(let ((dir 3))
        (let ((x (sense food)))
          (when (!= dir 0)
            (set! dir x))
          (move dir)))`);
-    assertIncludes(asm, 'SENSE FOOD r1');
+    assertIncludes(asm, 'SENSE FOOD r0');
   });
 
   test('let-forwarding: no forward when set! is conditional (target read before)', () => {
@@ -245,15 +247,8 @@ runSuite('Register Allocation', () => {
     ]);
     const program = makeProgram([entry]);
     const linearized = linearizeBlocks(program);
-    // Number instructions manually
-    const numbered: any[] = [];
-    let index = 0;
-    for (const block of linearized) {
-      for (const phi of block.phis) numbered.push({ index: index++, block, kind: 'phi', phi });
-      for (const instr of block.instrs) numbered.push({ index: index++, block, kind: 'instr', instr });
-      if (block.terminator) numbered.push({ index: index++, block, kind: 'terminator', terminator: block.terminator });
-    }
-    const intervals = computeLiveIntervals(numbered);
+    const numbered = numberInstructions(linearized);
+    const intervals = computeLiveIntervals(linearized, numbered);
     const t0 = intervals.find(i => i.temp === '%t0')!;
     const t2 = intervals.find(i => i.temp === '%t2')!;
     assert(t0.start === 0, `t0 should start at 0, got ${t0.start}`);
@@ -269,12 +264,8 @@ runSuite('Register Allocation', () => {
     ]);
     const program = makeProgram([entry]);
     const linearized = linearizeBlocks(program);
-    const numbered: any[] = [];
-    let index = 0;
-    for (const block of linearized) {
-      for (const instr of block.instrs) numbered.push({ index: index++, block, kind: 'instr', instr });
-    }
-    const intervals = computeLiveIntervals(numbered);
+    const numbered = numberInstructions(linearized);
+    const intervals = computeLiveIntervals(linearized, numbered);
     const result = linearScan(program, intervals);
     // All temps should be allocated
     assert(result.allocation.has('%t0'));
@@ -284,5 +275,48 @@ runSuite('Register Allocation', () => {
     const r0 = result.allocation.get('%t0');
     const r1 = result.allocation.get('%t1');
     assert(r0 !== r1, `t0 and t1 should get different registers (both got ${r0})`);
+  });
+
+  test('diamond CFG: exclusive branch temps get non-overlapping intervals', () => {
+    // Diamond: entry -> left/right -> merge
+    // %t0 defined in entry (condition)
+    // %t1 defined and used only in left branch
+    // %t2 defined and used only in right branch
+    // %t3 is the phi merge result
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 1),
+    ]);
+    const left = makeBlock('left', [
+      makeInstr('const', '%t1', 10),
+      makeInstr('move', null, '%t1'),
+    ]);
+    const right = makeBlock('right', [
+      makeInstr('const', '%t2', 20),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const merge = makeBlock('merge', [
+      makeInstr('nop', null),
+    ]);
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 0, thenBlock: left, elseBlock: right };
+    left.terminator = { op: 'jmp', target: merge };
+    right.terminator = { op: 'jmp', target: merge };
+
+    link(entry, left);
+    link(entry, right);
+    link(left, merge);
+    link(right, merge);
+
+    const program = makeProgram([entry, left, right, merge]);
+    const linearized = linearizeBlocks(program);
+    const numbered = numberInstructions(linearized);
+    const intervals = computeLiveIntervals(linearized, numbered);
+
+    const t1 = intervals.find(i => i.temp === '%t1')!;
+    const t2 = intervals.find(i => i.temp === '%t2')!;
+    // t1 and t2 are in exclusive branches, so their intervals should not overlap
+    const overlaps = t1.start <= t2.end && t2.start <= t1.end;
+    assert(!overlaps,
+      `t1 [${t1.start},${t1.end}] and t2 [${t2.start},${t2.end}] should NOT overlap (exclusive branches)`);
   });
 });

@@ -33,7 +33,7 @@ export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
 
 // ─── Instruction Numbering ──────────────────────────────────
 
-interface NumberedInstr {
+export interface NumberedInstr {
   index: number;
   block: BasicBlock;
   kind: 'phi' | 'instr' | 'terminator';
@@ -42,7 +42,7 @@ interface NumberedInstr {
   terminator?: Terminator;
 }
 
-function numberInstructions(blocks: BasicBlock[]): NumberedInstr[] {
+export function numberInstructions(blocks: BasicBlock[]): NumberedInstr[] {
   const numbered: NumberedInstr[] = [];
   let index = 0;
 
@@ -61,6 +61,117 @@ function numberInstructions(blocks: BasicBlock[]): NumberedInstr[] {
   return numbered;
 }
 
+// ─── Block-Level Liveness Analysis ──────────────────────────
+
+interface BlockLiveness {
+  def: Set<string>;
+  use: Set<string>;
+  liveIn: Set<string>;
+  liveOut: Set<string>;
+}
+
+function isTemp(v: string | number): v is string {
+  return typeof v === 'string' && v.startsWith('%t');
+}
+
+export function computeBlockLiveness(blocks: BasicBlock[]): Map<BasicBlock, BlockLiveness> {
+  const liveness = new Map<BasicBlock, BlockLiveness>();
+  for (const block of blocks) {
+    liveness.set(block, { def: new Set(), use: new Set(), liveIn: new Set(), liveOut: new Set() });
+  }
+
+  // Compute local def/use sets for each block
+  for (const block of blocks) {
+    const info = liveness.get(block)!;
+
+    // Phi defs go in def set (phi uses are attributed to predecessors)
+    for (const phi of block.phis) {
+      info.def.add(phi.dest);
+    }
+
+    // Regular instructions
+    for (const instr of block.instrs) {
+      for (const arg of instr.args) {
+        if (isTemp(arg) && !info.def.has(arg)) {
+          info.use.add(arg);
+        }
+      }
+      if (instr.dest) {
+        info.def.add(instr.dest);
+      }
+    }
+
+    // Terminator uses
+    if (block.terminator?.op === 'br_cmp') {
+      if (isTemp(block.terminator.a) && !info.def.has(block.terminator.a)) {
+        info.use.add(block.terminator.a);
+      }
+      if (isTemp(block.terminator.b) && !info.def.has(block.terminator.b)) {
+        info.use.add(block.terminator.b);
+      }
+    }
+  }
+
+  // Attribute phi uses to predecessor blocks' liveOut
+  // (done during fixpoint iteration below)
+
+  // Fixpoint iteration (backward dataflow)
+  let changed = true;
+  while (changed) {
+    changed = false;
+    // Iterate in reverse order for faster convergence
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      const info = liveness.get(block)!;
+
+      // liveOut = union of liveIn of all successors + phi uses attributed to this block
+      const newLiveOut = new Set<string>();
+
+      for (const succ of block.succs) {
+        const succInfo = liveness.get(succ)!;
+        for (const temp of succInfo.liveIn) {
+          newLiveOut.add(temp);
+        }
+        // Phi uses: if succ has a phi with an entry from this block, that use is live-out here
+        for (const phi of succ.phis) {
+          for (const entry of phi.entries) {
+            if (entry.block === block && isTemp(entry.value)) {
+              newLiveOut.add(entry.value);
+            }
+          }
+        }
+      }
+
+      // liveIn = use union (liveOut - def)
+      const newLiveIn = new Set(info.use);
+      for (const temp of newLiveOut) {
+        if (!info.def.has(temp)) {
+          newLiveIn.add(temp);
+        }
+      }
+
+      // Check for changes
+      if (newLiveOut.size !== info.liveOut.size || newLiveIn.size !== info.liveIn.size) {
+        changed = true;
+      } else {
+        for (const t of newLiveOut) {
+          if (!info.liveOut.has(t)) { changed = true; break; }
+        }
+        if (!changed) {
+          for (const t of newLiveIn) {
+            if (!info.liveIn.has(t)) { changed = true; break; }
+          }
+        }
+      }
+
+      info.liveOut = newLiveOut;
+      info.liveIn = newLiveIn;
+    }
+  }
+
+  return liveness;
+}
+
 // ─── Live Intervals ─────────────────────────────────────────
 
 export interface LiveInterval {
@@ -69,42 +180,92 @@ export interface LiveInterval {
   end: number;
 }
 
-export function computeLiveIntervals(numbered: NumberedInstr[]): LiveInterval[] {
+export function computeLiveIntervals(blocks: BasicBlock[], numbered: NumberedInstr[]): LiveInterval[] {
+  const liveness = computeBlockLiveness(blocks);
+
+  // Group numbered instructions by block
+  const blockInstrs = new Map<BasicBlock, NumberedInstr[]>();
+  for (const block of blocks) blockInstrs.set(block, []);
+  for (const item of numbered) {
+    blockInstrs.get(item.block)!.push(item);
+  }
+
+  // For each temp, track the min start and max end across all blocks
   const starts = new Map<string, number>();
   const ends = new Map<string, number>();
 
-  for (const item of numbered) {
-    // Defs
-    if (item.kind === 'phi' && item.phi) {
-      const dest = item.phi.dest;
-      if (!starts.has(dest)) starts.set(dest, item.index);
-    } else if (item.kind === 'instr' && item.instr?.dest) {
-      const dest = item.instr.dest;
-      if (!starts.has(dest)) starts.set(dest, item.index);
+  function extendStart(temp: string, index: number) {
+    const cur = starts.get(temp);
+    if (cur === undefined || index < cur) starts.set(temp, index);
+  }
+  function extendEnd(temp: string, index: number) {
+    const cur = ends.get(temp);
+    if (cur === undefined || index > cur) ends.set(temp, index);
+  }
+
+  for (const block of blocks) {
+    const info = liveness.get(block)!;
+    const instrs = blockInstrs.get(block)!;
+    if (instrs.length === 0) continue;
+
+    const bStart = instrs[0].index;
+    const bEnd = instrs[instrs.length - 1].index;
+
+    // Initialize live set from liveOut
+    const live = new Set(info.liveOut);
+
+    // Everything in liveOut is live at block end
+    for (const temp of live) {
+      extendEnd(temp, bEnd);
     }
 
-    // Uses
-    const uses: string[] = [];
-    if (item.kind === 'phi' && item.phi) {
-      for (const entry of item.phi.entries) {
-        if (entry.value.startsWith('%t')) uses.push(entry.value);
+    // Walk instructions backward within the block
+    for (let i = instrs.length - 1; i >= 0; i--) {
+      const item = instrs[i];
+
+      // Process defs: temp is defined here, remove from live set
+      if (item.kind === 'phi' && item.phi) {
+        if (live.delete(item.phi.dest)) {
+          extendStart(item.phi.dest, item.index);
+        } else {
+          // Defined but not live after — still need an interval for it
+          extendStart(item.phi.dest, item.index);
+          extendEnd(item.phi.dest, item.index);
+        }
+      } else if (item.kind === 'instr' && item.instr?.dest) {
+        if (live.delete(item.instr.dest)) {
+          extendStart(item.instr.dest, item.index);
+        } else {
+          extendStart(item.instr.dest, item.index);
+          extendEnd(item.instr.dest, item.index);
+        }
       }
-    } else if (item.kind === 'instr' && item.instr) {
-      for (const arg of item.instr.args) {
-        if (typeof arg === 'string' && arg.startsWith('%t')) uses.push(arg);
+
+      // Process uses: temp is used here, add to live set
+      const uses: string[] = [];
+      if (item.kind === 'instr' && item.instr) {
+        for (const arg of item.instr.args) {
+          if (isTemp(arg)) uses.push(arg);
+        }
+      } else if (item.kind === 'terminator' && item.terminator) {
+        if (item.terminator.op === 'br_cmp') {
+          if (isTemp(item.terminator.a)) uses.push(item.terminator.a);
+          if (isTemp(item.terminator.b)) uses.push(item.terminator.b);
+        }
       }
-    } else if (item.kind === 'terminator' && item.terminator) {
-      const term = item.terminator;
-      if (term.op === 'br_cmp') {
-        if (typeof term.a === 'string' && term.a.startsWith('%t')) uses.push(term.a);
-        if (typeof term.b === 'string' && term.b.startsWith('%t')) uses.push(term.b);
+      // Phi uses are NOT processed here — they're attributed to predecessors
+
+      for (const use of uses) {
+        if (!live.has(use)) {
+          live.add(use);
+          extendEnd(use, item.index);
+        }
       }
     }
 
-    for (const use of uses) {
-      ends.set(use, item.index);
-      // If used before defined (phi back-edge), set start to 0
-      if (!starts.has(use)) starts.set(use, 0);
+    // Anything still in live set is liveIn — extends to block start
+    for (const temp of live) {
+      extendStart(temp, bStart);
     }
   }
 
