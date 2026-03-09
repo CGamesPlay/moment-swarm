@@ -333,6 +333,21 @@ export function linearScan(
     }
   }
 
+  // Arithmetic operand hints: prefer dest in same register as first arg
+  const arithOps = new Set([
+    'add', 'sub', 'mul', 'div', 'mod',
+    'and', 'or', 'xor', 'lshift', 'rshift',
+  ]);
+  for (const block of program.blocks) {
+    for (const instr of block.instrs) {
+      if (arithOps.has(instr.op) && instr.dest && typeof instr.args[0] === 'string') {
+        if (!hints.has(instr.dest)) {
+          hints.set(instr.dest, instr.args[0] as string);
+        }
+      }
+    }
+  }
+
   for (const interval of sorted) {
     // Expire old intervals
     const expired: number[] = [];
@@ -371,6 +386,18 @@ export function linearScan(
       const hintReg = parseInt(allocation.get(hintTemp)!.slice(1), 10);
       if (freeRegs.has(hintReg)) {
         assigned = hintReg;
+      } else {
+        // The hinted register is occupied. If the occupant's interval ends at
+        // exactly this instruction (last use is the instruction that defines
+        // interval.temp), we can expire it early — the two-operand instruction
+        // reads the source before writing the dest, so the register is safe to
+        // reuse.
+        const occupantIdx = active.findIndex(a => a.reg === hintReg && a.end === interval.start);
+        if (occupantIdx !== -1) {
+          active.splice(occupantIdx, 1);
+          freeRegs.add(hintReg);
+          assigned = hintReg;
+        }
       }
     }
 

@@ -545,6 +545,54 @@ runSuite('Register Allocation', () => {
     }
   });
 
+  // ── Arithmetic coalescing tests ──
+
+  test('arithmetic coalescing: no SET between ADD and AND in simple chain', () => {
+    // When (and (+ x 1) 255) is compiled, the AND should reuse the same
+    // register as the ADD result, eliminating the SET between them.
+    const asm = compileSource('(let ((x (sense food))) (set! x (and (+ x 1) 255)) (move x))');
+    const lines = asm.split('\n').map(l => l.trim());
+
+    // Find the ADD instruction
+    const addIdx = lines.findIndex(l => l.match(/^ADD r\d+ 1$/));
+    assert(addIdx !== -1, 'Expected ADD instruction');
+
+    // Find the AND instruction after the ADD
+    const andIdx = lines.findIndex((l, i) => i > addIdx && l.match(/^AND r\d+ 255$/));
+    assert(andIdx !== -1, 'Expected AND instruction after ADD');
+
+    // Count SET instructions between ADD and AND
+    let setCount = 0;
+    for (let i = addIdx + 1; i < andIdx; i++) {
+      if (lines[i].match(/^SET r\d+ r\d+$/)) {
+        setCount++;
+      }
+    }
+    assertEq(setCount, 0,
+      `Expected no SET between ADD and AND, got ${setCount}: ${lines.slice(addIdx, andIdx + 1).join(' | ')}`);
+  });
+
+  test('arithmetic coalescing: packed field update reduces SETs', () => {
+    // The dec-dy! pattern generates many redundant SETs without arithmetic
+    // coalescing hints. With hints, the count should drop significantly.
+    const asm = compileSource(`(let ((packed (sense food)))
+      (let ((tmp 0))
+        (set! tmp (rshift packed 8))
+        (set! tmp (and tmp 255))
+        (set! tmp (- tmp 1))
+        (set! tmp (and tmp 255))
+        (set! tmp (lshift tmp 8))
+        (set! packed (and packed 16711935))
+        (set! packed (or packed tmp)))
+      (mark ch_red packed))`);
+
+    const setCount = asm.split('\n').filter(l => l.trim().match(/^SET r\d+ r\d+$/)).length;
+    // Before arithmetic coalescing: 7 register-to-register SETs
+    // After: should be significantly fewer (3 or less)
+    assert(setCount <= 3,
+      `Expected at most 3 register-to-register SETs, got ${setCount}:\n${asm}`);
+  });
+
   test('diamond CFG: exclusive branch temps get non-overlapping intervals', () => {
     // Diamond: entry -> left/right -> merge
     // %t0 defined in entry (condition)
