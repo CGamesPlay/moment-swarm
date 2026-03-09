@@ -339,6 +339,113 @@ runSuite('SSA', () => {
     assertIncludes(ir, 'pickup');
   });
 
+  // ── Loop phi correctness ──
+
+  test('while: phi entries reference predecessor blocks, not the header', () => {
+    const program = lowerSource('(let ((x 10)) (while (> x 5) (set! x (- x 1))))');
+    const header = program.blocks.find(b => b.label.startsWith('__while_'))!;
+    assert(header.phis.length > 0, 'header should have phis');
+    for (const phi of header.phis) {
+      for (const entry of phi.entries) {
+        assert(entry.block !== header,
+          `phi ${phi.dest} has entry from header block itself (${entry.block.label}), should reference a predecessor`);
+      }
+    }
+  });
+
+  test('loop: phi entries reference predecessor blocks, not the header', () => {
+    const program = lowerSource('(let ((x 0)) (loop (set! x (+ x 1)) (if (= x 5) (break))))');
+    const header = program.blocks.find(b => b.label.startsWith('__loop_'))!;
+    assert(header.phis.length > 0, 'header should have phis');
+    for (const phi of header.phis) {
+      for (const entry of phi.entries) {
+        assert(entry.block !== header,
+          `phi ${phi.dest} has entry from header block itself (${entry.block.label}), should reference a predecessor`);
+      }
+    }
+  });
+
+  test('dotimes: phi entries reference predecessor blocks, not the header', () => {
+    const program = lowerSource('(let ((count 0)) (dotimes (i 5) (set! count (+ count 1))))');
+    const header = program.blocks.find(b => b.label.startsWith('__dotimes_'))!;
+    assert(header.phis.length > 0, 'header should have phis');
+    for (const phi of header.phis) {
+      for (const entry of phi.entries) {
+        assert(entry.block !== header,
+          `phi ${phi.dest} has entry from header block itself (${entry.block.label}), should reference a predecessor`);
+      }
+    }
+  });
+
+  test('dotimes: post-loop code references phi temps, not pre-loop values', () => {
+    // After dotimes, "count" should resolve to the header phi temp,
+    // not the original %t for the initial value
+    const program = lowerSource(
+      '(let ((count 0)) (dotimes (i 5) (set! count (+ count 1))) (mark ch_red count))');
+    const exitBlock = program.blocks.find(b => b.label.startsWith('__enddotimes_'))!;
+    const header = program.blocks.find(b => b.label.startsWith('__dotimes_'))!;
+    // The mark instruction in the exit block should use a phi temp from the header,
+    // not the initial const temp from the entry block
+    const markInstr = exitBlock.instrs.find(i => i.op === 'mark');
+    assert(!!markInstr, 'exit block should have a mark instruction');
+    const phiDests = new Set(header.phis.map(p => p.dest));
+    const markArg = markInstr!.args[1];
+    assert(phiDests.has(markArg as string),
+      `mark's value arg (${markArg}) should be a header phi temp, not a pre-loop value`);
+  });
+
+  // ── set! through let scope in if branches ──
+
+  test('set! to outer var inside let propagates through if merge', () => {
+    // When set! modifies an outer variable inside a let block,
+    // the update must be visible after the let scope ends.
+    // Bug: lowerLet restores savedEnv, discarding the set! update.
+    const program = lowerSource(`
+      (let ((x 0))
+        (if (carrying?)
+          (let ((a (sense nest)))
+            (set! x (+ x 1)))
+          (let ((b (sense food)))
+            (set! x (- x 1))))
+        (move x))`);
+    // The move at the end should use a phi that merges the two set! results,
+    // not the original x value
+    const mergeBlock = program.blocks.find(b => b.label.startsWith('__endif_'))!;
+    assert(mergeBlock.phis.length > 0,
+      'endif merge block must have a phi for x (set! in both branches inside let)');
+  });
+
+  test('loop phi picks up set! inside let in if branches', () => {
+    // Minimal reproduction of the cheater.alisp bug:
+    // set! inside let inside both if branches within a loop
+    // should produce non-self-referencing loop header phis.
+    const program = lowerSource(`
+      (let ((x 0))
+        (loop
+          (if (carrying?)
+            (begin
+              (let ((a (sense nest)))
+                (if (!= a 0)
+                  (set! x (+ x 1))
+                  (set! x (- x 1))))
+              (move 1))
+            (begin
+              (let ((b (sense food)))
+                (if (!= b 0)
+                  (set! x (+ x 10))
+                  (set! x (- x 10))))
+              (move 2)))))`);
+    const header = program.blocks.find(b => b.label.startsWith('__loop_'))!;
+    assert(header.phis.length > 0, 'loop header should have phis for x');
+    for (const phi of header.phis) {
+      for (const entry of phi.entries) {
+        assert(entry.value !== phi.dest,
+          `loop phi ${phi.dest} self-references via ${entry.block.label} — ` +
+          `set! inside let is being lost`);
+      }
+    }
+  });
+
   test('comment is no-op', () => {
     const program = lowerSource('(comment "test") (move random)');
     assert(hasOp(program, 'move'));

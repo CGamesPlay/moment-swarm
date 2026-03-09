@@ -190,6 +190,52 @@ runSuite('Register Allocation', () => {
     assertEq(order[order.length - 1].label, 'merge');
   });
 
+  test('linearizeBlocks: loop body before exit (body is then-branch)', () => {
+    // Models a while loop: header branches to body (then) or exit (else)
+    const entry = makeBlock('entry');
+    const header = makeBlock('header');
+    const body = makeBlock('body');
+    const exit = makeBlock('exit');
+
+    entry.terminator = { op: 'jmp', target: header };
+    link(entry, header);
+    header.terminator = { op: 'br_cmp', cmpOp: 'gt', a: '%t0', b: 0, thenBlock: body, elseBlock: exit };
+    link(header, body);
+    link(header, exit);
+    body.terminator = { op: 'jmp', target: header };
+    link(body, header);
+
+    const program = makeProgram([entry, header, body, exit]);
+    const order = linearizeBlocks(program);
+    const bodyIdx = order.indexOf(body);
+    const exitIdx = order.indexOf(exit);
+    assert(bodyIdx < exitIdx,
+      `body (idx ${bodyIdx}) should come before exit (idx ${exitIdx}) to avoid fall-through into body`);
+  });
+
+  test('linearizeBlocks: loop body before exit (body is else-branch)', () => {
+    // Models a dotimes loop: header branches to exit (then) or body (else)
+    const entry = makeBlock('entry');
+    const header = makeBlock('header');
+    const body = makeBlock('body');
+    const exit = makeBlock('exit');
+
+    entry.terminator = { op: 'jmp', target: header };
+    link(entry, header);
+    header.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 5, thenBlock: exit, elseBlock: body };
+    link(header, exit);
+    link(header, body);
+    body.terminator = { op: 'jmp', target: header };
+    link(body, header);
+
+    const program = makeProgram([entry, header, body, exit]);
+    const order = linearizeBlocks(program);
+    const bodyIdx = order.indexOf(body);
+    const exitIdx = order.indexOf(exit);
+    assert(bodyIdx < exitIdx,
+      `body (idx ${bodyIdx}) should come before exit (idx ${exitIdx}) to avoid fall-through into body`);
+  });
+
   test('computeLiveIntervals: simple temps', () => {
     const entry = makeBlock('entry', [
       makeInstr('const', '%t0', 42),

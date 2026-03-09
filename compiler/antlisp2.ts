@@ -14,7 +14,7 @@
 import { tokenize, parse } from './parse';
 import { expandMacros } from './expand';
 import { collectMetadata } from './metadata';
-import { lowerToSSA } from './ssa';
+import { lowerToSSA, printSSA } from './ssa';
 import { optimize } from './optimize';
 import { linearizeBlocks, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
 import { generateCode } from './codegen';
@@ -106,9 +106,12 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const constOverrides: Record<string, string> = {};
   const positional: string[] = [];
+  let dumpSSA = false;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '-D' && i + 1 < args.length) {
+    if (args[i] === '--dump-ssa') {
+      dumpSSA = true;
+    } else if (args[i] === '-D' && i + 1 < args.length) {
       const eq = args[++i].indexOf('=');
       if (eq === -1) { console.error(`error: -D argument must be NAME=VALUE`); process.exit(1); }
       constOverrides[args[i].slice(0, eq)] = args[i].slice(eq + 1);
@@ -123,11 +126,22 @@ if (require.main === module) {
   }
 
   if (positional.length === 0) {
-    console.log('Usage: npx tsx compiler/antlisp2.ts [-D NAME=VALUE]... <source.alisp>');
+    console.log('Usage: npx tsx compiler/antlisp2.ts [--dump-ssa] [-D NAME=VALUE]... <source.alisp>');
   } else {
     try {
       const source = fs.readFileSync(positional[0], 'utf-8');
-      console.log(compileAntLisp(source, { constOverrides }));
+      if (dumpSSA) {
+        const tokens = tokenize(source);
+        const ast = parse(tokens);
+        const constMap = constOverrides ? new Map(Object.entries(constOverrides)) : undefined;
+        const expanded = expandMacros(ast.body, { constOverrides: constMap });
+        const metadata = collectMetadata(expanded.forms);
+        const ssaProgram = lowerToSSA(metadata.forms, metadata.tags, metadata.aliases, expanded.constValues);
+        optimize(ssaProgram);
+        console.log(printSSA(ssaProgram));
+      } else {
+        console.log(compileAntLisp(source, { constOverrides }));
+      }
     } catch (err: any) {
       console.error(`error: ${err.message}`);
       process.exit(1);

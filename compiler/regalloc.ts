@@ -9,11 +9,19 @@ import { SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator } from './ssa';
 export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
   const visited = new Set<BasicBlock>();
   const postorder: BasicBlock[] = [];
+  const blockIndex = new Map<BasicBlock, number>();
+  for (let i = 0; i < program.blocks.length; i++) {
+    blockIndex.set(program.blocks[i], i);
+  }
 
   function dfs(block: BasicBlock): void {
     if (visited.has(block)) return;
     visited.add(block);
-    for (const succ of block.succs) {
+    // Visit higher-indexed successors first so that lower-indexed ones
+    // (typically loop bodies) appear first in the reversed-postorder layout.
+    const succs = [...block.succs].sort((a, b) =>
+      (blockIndex.get(b) ?? 0) - (blockIndex.get(a) ?? 0));
+    for (const succ of succs) {
       dfs(succ);
     }
     postorder.push(block);

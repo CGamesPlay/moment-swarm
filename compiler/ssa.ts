@@ -325,6 +325,14 @@ export class SSALowering {
       result = this.lowerExpr(list[i]);
     }
 
+    // Restore let-local bindings but preserve set! updates to outer variables.
+    // Any variable that existed before the let and was mutated (set!) inside
+    // the let body must keep its updated SSA temp in the restored env.
+    for (const [name, temp] of this.env) {
+      if (savedEnv.has(name)) {
+        savedEnv.set(name, temp);
+      }
+    }
     this.env = savedEnv;
     return result;
   }
@@ -503,11 +511,12 @@ export class SSALowering {
     const exitBlock = this.makeBlock('endloop');
 
     this.jumpTo(headerBlock);
+    const loopPred = this.currentBlock;
     this.sealBlock(headerBlock);
 
     // Placeholder phis for mutable variables
     const envBefore = new Map(this.env);
-    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore);
+    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, loopPred);
 
     this.jumpTo(bodyBlock);
     this.sealBlock(bodyBlock);
@@ -536,10 +545,11 @@ export class SSALowering {
     const exitBlock = this.makeBlock('endwhile');
 
     this.jumpTo(headerBlock);
+    const whilePred = this.currentBlock;
     this.sealBlock(headerBlock);
 
     const envBefore = new Map(this.env);
-    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore);
+    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, whilePred);
 
     // Condition
     this.lowerCondBranch(list[1], bodyBlock, exitBlock);
@@ -585,10 +595,11 @@ export class SSALowering {
     const exitBlock = this.makeBlock('enddotimes');
 
     this.jumpTo(headerBlock);
+    const dotimesPred = this.currentBlock;
     this.sealBlock(headerBlock);
 
     const envBefore = new Map(this.env);
-    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore);
+    const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, dotimesPred);
 
     // Condition: i == count → exit
     const iTemp = this.env.get(varName)!;
@@ -614,7 +625,14 @@ export class SSALowering {
 
     this.loopStack.pop();
     this.sealBlock(exitBlock);
+    // Restore env to remove the loop variable from scope, then
+    // overlay loop header phis so post-loop code sees updated values
     this.env = savedEnv;
+    for (const [name, phiTemp] of phiMap) {
+      if (savedEnv.has(name)) {
+        this.env.set(name, phiTemp);
+      }
+    }
     return '';
   }
 
@@ -1063,6 +1081,7 @@ export class SSALowering {
   private insertLoopHeaderPhis(
     headerBlock: BasicBlock,
     env: Map<string, string>,
+    predBlock: BasicBlock,
   ): Map<string, string> {
     // Create placeholder phis for all variables in scope
     const phiMap = new Map<string, string>();
@@ -1070,7 +1089,7 @@ export class SSALowering {
       const phiTemp = this.freshTemp();
       headerBlock.phis.push({
         dest: phiTemp,
-        entries: [{ block: this.currentBlock, value: temp }],
+        entries: [{ block: predBlock, value: temp }],
         // The back-edge entry will be filled later
       });
       this.env.set(name, phiTemp);

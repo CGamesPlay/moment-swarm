@@ -60,6 +60,14 @@ Rules:
 - Numeric strings are parsed as numbers; everything else is treated as a
   symbol (channel/direction names are uppercased automatically).
 
+### Conversion to SSA
+
+When diagnosing register exhaustion, it can be useful to output the optimized SSA form of the program.
+
+```bash
+argc compile --dump-ssa file.alisp
+```
+
 ---
 
 ## Language Reference

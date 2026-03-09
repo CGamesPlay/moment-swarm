@@ -7,14 +7,18 @@ set -eu
 # @cmd Compile alisp to ant
 # @arg    file!           alisp file
 # @flag   --copy          Copy the result
+# @flag   --dump-ssa      Dump the SSA of the program
 # @option -D --define*    Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 compile() {
-	local -a dflags=()
+	local -a flags=()
 	for d in ${argc_define+"${argc_define[@]}"}; do
-		dflags+=(-D "$d")
+		flags+=(-D "$d")
 	done
+	if [[ ${argc_dump_ssa+1} ]]; then
+		flags+=(--dump-ssa)
+	fi
 	local asm
-	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${dflags+"${dflags[@]}"} "${argc_file:?}")"
+	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${flags+"${flags[@]}"} "${argc_file:?}")"
 	if [[ ${argc_copy+1} ]]; then
 		echo "$asm" | pbcopy
 		echo "Compiled and copied $argc_file"
@@ -29,12 +33,12 @@ compile() {
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 test() {
-	local -a dflags=()
+	local -a flags=()
 	for d in ${argc_define+"${argc_define[@]}"}; do
-		dflags+=(-D "$d")
+		flags+=(-D "$d")
 	done
 	local asm
-	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${dflags+"${dflags[@]}"} "${argc_file:?}")" || exit $?
+	asm="$(npx --prefix compiler tsx compiler/antlisp2.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
 	echo "$asm" | npx --prefix compiler tsx compiler/run.ts ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
 }
 
