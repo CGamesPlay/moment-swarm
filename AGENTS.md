@@ -47,7 +47,8 @@ The 64-op limit is particularly concerning for our compiled language. The "stall
 ## ISA notes
 
 - SMELL, SNIFF, and SENSE work at a distance of 1 cell only. A wall never has pheremone. Pheremone on the other side of a wall doesn't matter, because it's further than 1 cell away.
-- The tick ends, preserving registers and PC, after 64 opcodes or one of the actions (MOVE, DROP, etc).
+- Actions (MOVE, DROP, PICKUP) and the 64-op limit end the ant's tick, but this is invisible to the program: PC advances past the action, all registers are preserved, and execution resumes at the next instruction on the following tick. There is no reset or re-entry — from the program's perspective, actions are ordinary instructions. Code after a MOVE runs normally (on the next tick).
+- Hitting the 64-op limit without an action is a "stall" — the ant wastes a tick doing nothing visible. The goal is to reach an action within budget every tick.
 - The program restarts automatically if it reaches the end.
 - Pheremone decays at a rate of 1 per tick, independently between all channels. The decay happens after all ants mark the cell.
 

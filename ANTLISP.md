@@ -142,7 +142,7 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
 (id)                        ; ant index 0-199
 ```
 
-### Actions (end tick)
+### Actions
 
 ```lisp
 (move n)  (move (+ (random 4) 1))  ; compound expressions OK
@@ -150,6 +150,24 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
 (mark ch_red (* timer 2))          ; compound amount OK
 (set-tag tagname)                  ; set ant tag for viewer visualization (auto-allocated)
 ```
+
+**Tick model**: `move`, `pickup`, and `drop` are "actions" that end the
+ant's tick — but this is purely a scheduling detail. From the program's
+perspective these are ordinary instructions: the program counter advances
+past them, registers are preserved, and execution resumes at the very
+next instruction on the following tick. There is no reset, no re-entry,
+no observable discontinuity. The only effect is that other ants get a
+turn and pheromones decay between ticks.
+
+A tick also ends if 64 ops execute without hitting an action (a "stall").
+Stalls are wasteful because the ant does nothing visible that tick.
+The op budget resets each tick, so the goal is to reach an action within
+64 ops every tick.
+
+Code that follows an action runs normally on the next tick — it is fine
+to place bookkeeping (e.g. updating a displacement tracker) after a
+`(move ...)` and before looping back, and macros can contain actions
+internally without any special handling.
 
 ### Macros
 
