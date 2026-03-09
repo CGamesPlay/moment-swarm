@@ -41,7 +41,13 @@ export function constantFolding(program: SSAProgram): void {
       });
 
       const allConst = args.every(a => a !== null);
-      if (!allConst) continue;
+      if (!allConst) {
+        instr.args = instr.args.map(a => {
+          if (typeof a === 'string' && constMap.has(a)) return constMap.get(a)!;
+          return a;
+        });
+        continue;
+      }
 
       const vals = args as number[];
       let result: number | null = null;
@@ -72,8 +78,14 @@ export function constantFolding(program: SSAProgram): void {
     // Fold constant branches
     if (block.terminator?.op === 'br_cmp') {
       const term = block.terminator;
-      const a = typeof term.a === 'number' ? term.a : constMap.get(term.a) ?? null;
-      const b = typeof term.b === 'number' ? term.b : constMap.get(term.b) ?? null;
+      if (typeof term.a === 'string' && constMap.has(term.a)) {
+        term.a = constMap.get(term.a)!;
+      }
+      if (typeof term.b === 'string' && constMap.has(term.b)) {
+        term.b = constMap.get(term.b)!;
+      }
+      const a = typeof term.a === 'number' ? term.a : null;
+      const b = typeof term.b === 'number' ? term.b : null;
 
       if (a !== null && b !== null) {
         let result: boolean;

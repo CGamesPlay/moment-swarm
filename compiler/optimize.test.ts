@@ -153,4 +153,78 @@ runSuite('Optimize', () => {
       assertEq(entry.terminator.b, 9);
     }
   });
+
+  // ── Constant propagation into operands ──
+
+  test('const prop: inline into partial-const add', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 5),
+      makeInstr('add', '%t2', '%t0', '%t1'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const program = makeProgram([entry]);
+    constantFolding(program);
+    const addInstr = entry.instrs.find(i => i.dest === '%t2')!;
+    assertEq(addInstr.op, 'add');
+    assertEq(addInstr.args[0], 5, 'first arg should be numeric 5');
+    assertEq(addInstr.args[1], '%t1', 'second arg should remain a temp');
+  });
+
+  test('const prop: inline 0 into sub (motivating case)', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 0),
+      makeInstr('sub', '%t2', '%t0', '%t1'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const program = makeProgram([entry]);
+    constantFolding(program);
+    const subInstr = entry.instrs.find(i => i.dest === '%t2')!;
+    assertEq(subInstr.op, 'sub');
+    assertEq(subInstr.args[0], 0, 'first arg should be numeric 0');
+    assertEq(subInstr.args[1], '%t1', 'second arg should remain a temp');
+  });
+
+  test('const prop: inline into br_cmp operand', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 10),
+    ]);
+    const thenB = makeBlock('then', [makeInstr('move', null, 'N')]);
+    const elseB = makeBlock('else', [makeInstr('move', null, 'S')]);
+    entry.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: '%t1', thenBlock: thenB, elseBlock: elseB };
+    link(entry, thenB);
+    link(entry, elseB);
+    const program = makeProgram([entry, thenB, elseB]);
+    constantFolding(program);
+    assert(entry.terminator.op === 'br_cmp', 'should still be br_cmp');
+    if (entry.terminator.op === 'br_cmp') {
+      assertEq(entry.terminator.a, 10, 'a should be inlined to 10');
+      assertEq(entry.terminator.b, '%t1', 'b should remain a temp');
+    }
+  });
+
+  test('const prop: all-const still folds (regression)', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 3),
+      makeInstr('const', '%t1', 7),
+      makeInstr('add', '%t2', '%t0', '%t1'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const program = makeProgram([entry]);
+    constantFolding(program);
+    const addInstr = entry.instrs.find(i => i.dest === '%t2')!;
+    assertEq(addInstr.op, 'const', 'should fold to const');
+    assertEq(addInstr.args[0], 10, 'should fold to 10');
+  });
+
+  test('const prop: dead const removed by DCE after propagation', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 5),
+      makeInstr('add', '%t2', '%t0', '%t1'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const program = makeProgram([entry]);
+    constantFolding(program);
+    deadCodeElimination(program);
+    assert(!entry.instrs.some(i => i.dest === '%t0'), 'dead const %t0 should be removed');
+  });
 });
