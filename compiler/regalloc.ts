@@ -190,17 +190,13 @@ export function computeLiveIntervals(blocks: BasicBlock[], numbered: NumberedIns
     blockInstrs.get(item.block)!.push(item);
   }
 
-  // For each temp, track the min start and max end across all blocks
-  const starts = new Map<string, number>();
-  const ends = new Map<string, number>();
+  // Collect per-block sub-ranges for each temp
+  const ranges = new Map<string, [number, number][]>();
 
-  function extendStart(temp: string, index: number) {
-    const cur = starts.get(temp);
-    if (cur === undefined || index < cur) starts.set(temp, index);
-  }
-  function extendEnd(temp: string, index: number) {
-    const cur = ends.get(temp);
-    if (cur === undefined || index > cur) ends.set(temp, index);
+  function addRange(temp: string, start: number, end: number) {
+    let list = ranges.get(temp);
+    if (!list) { list = []; ranges.set(temp, list); }
+    list.push([start, end]);
   }
 
   for (const block of blocks) {
@@ -214,9 +210,12 @@ export function computeLiveIntervals(blocks: BasicBlock[], numbered: NumberedIns
     // Initialize live set from liveOut
     const live = new Set(info.liveOut);
 
+    // Track end point for each temp within this block
+    const blockEnd = new Map<string, number>();
+
     // Everything in liveOut is live at block end
     for (const temp of live) {
-      extendEnd(temp, bEnd);
+      blockEnd.set(temp, bEnd);
     }
 
     // Walk instructions backward within the block
@@ -225,19 +224,21 @@ export function computeLiveIntervals(blocks: BasicBlock[], numbered: NumberedIns
 
       // Process defs: temp is defined here, remove from live set
       if (item.kind === 'phi' && item.phi) {
-        if (live.delete(item.phi.dest)) {
-          extendStart(item.phi.dest, item.index);
+        const dest = item.phi.dest;
+        if (live.delete(dest)) {
+          addRange(dest, item.index, blockEnd.get(dest)!);
+          blockEnd.delete(dest);
         } else {
           // Defined but not live after — still need an interval for it
-          extendStart(item.phi.dest, item.index);
-          extendEnd(item.phi.dest, item.index);
+          addRange(dest, item.index, item.index);
         }
       } else if (item.kind === 'instr' && item.instr?.dest) {
-        if (live.delete(item.instr.dest)) {
-          extendStart(item.instr.dest, item.index);
+        const dest = item.instr.dest;
+        if (live.delete(dest)) {
+          addRange(dest, item.index, blockEnd.get(dest)!);
+          blockEnd.delete(dest);
         } else {
-          extendStart(item.instr.dest, item.index);
-          extendEnd(item.instr.dest, item.index);
+          addRange(dest, item.index, item.index);
         }
       }
 
@@ -258,21 +259,35 @@ export function computeLiveIntervals(blocks: BasicBlock[], numbered: NumberedIns
       for (const use of uses) {
         if (!live.has(use)) {
           live.add(use);
-          extendEnd(use, item.index);
+          blockEnd.set(use, item.index);
         }
       }
     }
 
-    // Anything still in live set is liveIn — extends to block start
+    // Anything still in live set is liveIn — emit range from block start
     for (const temp of live) {
-      extendStart(temp, bStart);
+      addRange(temp, bStart, blockEnd.get(temp)!);
     }
   }
 
+  // Sort each temp's ranges by start and merge overlapping/adjacent ones
   const intervals: LiveInterval[] = [];
-  for (const [temp, start] of starts) {
-    const end = ends.get(temp) ?? start;
-    intervals.push({ temp, start, end });
+  for (const [temp, rawRanges] of ranges) {
+    rawRanges.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [rawRanges[0]];
+    for (let i = 1; i < rawRanges.length; i++) {
+      const prev = merged[merged.length - 1];
+      const [s, e] = rawRanges[i];
+      if (s <= prev[1] + 1) {
+        // Overlapping or adjacent — merge
+        prev[1] = Math.max(prev[1], e);
+      } else {
+        merged.push([s, e]);
+      }
+    }
+    for (const [start, end] of merged) {
+      intervals.push({ temp, start, end });
+    }
   }
 
   return intervals;
@@ -330,6 +345,23 @@ export function linearScan(
     // Remove expired (reverse order to preserve indices)
     for (let i = expired.length - 1; i >= 0; i--) {
       active.splice(expired[i], 1);
+    }
+
+    // Re-activation: if this temp was already allocated (previous range),
+    // reclaim the same register for consistency
+    if (allocation.has(interval.temp)) {
+      const prevReg = parseInt(allocation.get(interval.temp)!.slice(1), 10);
+      if (!freeRegs.has(prevReg)) {
+        throw new Error(
+          `Register conflict — ${interval.temp} was previously allocated r${prevReg} ` +
+          `but it is not free at instruction ${interval.start}. ` +
+          `Active: ${active.map(a => `${a.temp}=r${a.reg}`).join(', ')}`
+        );
+      }
+      freeRegs.delete(prevReg);
+      active.push({ temp: interval.temp, end: interval.end, reg: prevReg });
+      active.sort((a, b) => a.end - b.end);
+      continue;
     }
 
     // Try to honor coalescing hint

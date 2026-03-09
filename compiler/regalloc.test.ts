@@ -332,6 +332,53 @@ runSuite('Register Allocation', () => {
     }
   });
 
+  test('lifetime holes: temp captured by phi has shorter interval than merge output', () => {
+    // Models the bridge.alisp pattern: a temp defined before a branch is captured
+    // by a phi node, so its interval ends at the phi rather than spanning the
+    // entire post-branch code. With per-block sub-ranges, the temp's interval
+    // is tight to where it's actually live.
+    //
+    // entry: define %t0, define %t1, branch on %t0
+    // left:  phi %t2 = [entry: %t1, right: %t3], use %t2, define %t3, jmp right
+    // right: use %t1 directly
+    //
+    // %t1's interval should end no later than its last use, NOT span to the end
+    // of the program. The old min/max approach would extend it too far.
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 1),
+      makeInstr('const', '%t1', 42),
+    ]);
+    const left = makeBlock('left', [
+      makeInstr('move', null, '%t1'),
+      makeInstr('const', '%t3', 99),
+    ]);
+    const right = makeBlock('right', [
+      makeInstr('move', null, '%t1'),
+      makeInstr('const', '%t4', 0),
+      makeInstr('move', null, '%t4'),
+    ]);
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 0, thenBlock: left, elseBlock: right };
+    left.terminator = { op: 'jmp', target: right };
+    link(entry, left);
+    link(entry, right);
+    link(left, right);
+
+    const program = makeProgram([entry, left, right]);
+    const linearized = linearizeBlocks(program);
+    const numbered = numberInstructions(linearized);
+    const intervals = computeLiveIntervals(linearized, numbered);
+
+    const t1intervals = intervals.filter(i => i.temp === '%t1');
+    // %t1 is used in left (instr 3) and right (instr 5). It should NOT span
+    // past its last use at instruction 5 to the end of the program.
+    const lastInstrIdx = numbered[numbered.length - 1].index;
+    for (const iv of t1intervals) {
+      assert(iv.end < lastInstrIdx,
+        `%t1 interval [${iv.start},${iv.end}] should not extend to last instruction ${lastInstrIdx}`);
+    }
+  });
+
   test('diamond CFG: exclusive branch temps get non-overlapping intervals', () => {
     // Diamond: entry -> left/right -> merge
     // %t0 defined in entry (condition)
