@@ -386,6 +386,15 @@ export function linearScan(
     return varName ? `r${reg}=${varName}(${temp})` : `r${reg}=${temp}`;
   };
 
+  // Helper to format a register allocation with source location on separate line
+  const regLabelWithLocation = (reg: number, temp: string, indent: string = '  ') => {
+    const varName = program.tempNames?.get(temp);
+    const label = varName ? `${varName}(${temp})` : temp;
+    const loc = program.tempLocs?.get(temp);
+    const locStr = loc ? `${loc.file}:${loc.line}:${loc.col}` : '<unknown>';
+    return `${indent}${locStr}: ${label} into r${reg}`;
+  };
+
   // Sort by start
   const sorted = [...intervals].sort((a, b) => a.start - b.start);
 
@@ -453,10 +462,9 @@ export function linearScan(
         const failLabel = varName ? `${varName}(${interval.temp})` : interval.temp;
         const loc = program.tempLocs?.get(interval.temp);
         const prefix = loc ? `${loc.file}:${loc.line}:${loc.col}: ` : '';
+        const activeLines = active.map(a => regLabelWithLocation(a.reg, a.temp)).join('\n');
         throw new Error(
-          `${prefix}Register conflict — ${failLabel} was previously allocated r${prevReg} ` +
-          `but it is not free. ` +
-          `Active: ${active.map(a => regLabel(a.reg, a.temp)).join(', ')}`
+          `${prefix}Register conflict — ${failLabel} was previously allocated r${prevReg} but it is not free. Active:\n${activeLines}`
         );
       }
       freeRegs.delete(prevReg);
@@ -494,10 +502,9 @@ export function linearScan(
         const failLabel = varName ? `${varName}(${interval.temp})` : interval.temp;
         const loc = program.tempLocs?.get(interval.temp);
         const prefix = loc ? `${loc.file}:${loc.line}:${loc.col}: ` : '';
+        const activeLines = active.map(a => regLabelWithLocation(a.reg, a.temp)).join('\n');
         throw new Error(
-          `${prefix}Register exhaustion — all 8 registers in use. ` +
-          `Cannot allocate ${failLabel}. ` +
-          `Active: ${active.map(a => regLabel(a.reg, a.temp)).join(', ')}`
+          `${prefix}Register exhaustion — all 8 registers in use. Cannot allocate ${failLabel}. Active:\n${activeLines}`
         );
       }
       assigned = Math.min(...freeRegs);

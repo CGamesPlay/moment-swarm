@@ -117,7 +117,7 @@ function substituteParams(node: ASTNode, substitutions: Map<string, ASTNode>): A
     return {
       type: 'list',
       value: children.map(child => substituteParams(child, substitutions)),
-      line: node.line, col: node.col
+      line: node.line, col: node.col, file: node.file
     };
   }
   return node;
@@ -133,7 +133,8 @@ function freshenLabels(node: ASTNode, _labelPrefix: string): ASTNode {
     type: 'list',
     value: list.map(child => freshenLabels(child, _labelPrefix)),
     line: node.line,
-    col: node.col
+    col: node.col,
+    file: node.file
   };
 }
 
@@ -144,15 +145,15 @@ function substituteConsts(node: ASTNode, consts: Map<string, string>): ASTNode {
     const val = consts.get(node.value)!;
     const n = parseInt(val, 10);
     if (!isNaN(n) && String(n) === val) {
-      return { type: 'number', value: n, line: node.line, col: node.col };
+      return { type: 'number', value: n, line: node.line, col: node.col, file: node.file };
     }
-    return { type: 'symbol', value: val, line: node.line, col: node.col };
+    return { type: 'symbol', value: val, line: node.line, col: node.col, file: node.file };
   }
   if (node.type === 'list') {
     return {
       type: 'list',
       value: node.value.map(child => substituteConsts(child, consts)),
-      line: node.line, col: node.col
+      line: node.line, col: node.col, file: node.file
     };
   }
   return node;
@@ -206,8 +207,8 @@ function expandNode(
     } else {
       result = {
         type: 'list',
-        value: [{ type: 'symbol', value: 'begin', line: node.line, col: node.col }, ...expandedBody],
-        line: node.line, col: node.col
+        value: [{ type: 'symbol', value: 'begin', line: node.line, col: node.col, file: node.file }, ...expandedBody],
+        line: node.line, col: node.col, file: node.file
       };
     }
 
@@ -219,7 +220,7 @@ function expandNode(
   return {
     type: 'list',
     value: list.map(child => expandNode(child, macros, consts, depth)),
-    line: node.line, col: node.col
+    line: node.line, col: node.col, file: node.file
   };
 }
 
@@ -281,7 +282,7 @@ function collectDefinitions(
       }
 
       const tokens = tokenize(source);
-      const ast = parse(tokens);
+      const ast = parse(tokens, { sourceFile: resolved });
 
       // Validate all top-level forms are allowed
       for (const incForm of ast.body) {
@@ -308,8 +309,8 @@ function collectDefinitions(
         const rawVal = options.constOverrides.get(name)!;
         const isNum = rawVal !== '' && !isNaN(Number(rawVal));
         const valNode: ASTNode = isNum
-          ? { type: 'number', value: Number(rawVal), line: form.line, col: form.col }
-          : { type: 'symbol', value: rawVal, line: form.line, col: form.col };
+          ? { type: 'number', value: Number(rawVal), line: form.line, col: form.col, file: form.file }
+          : { type: 'symbol', value: rawVal, line: form.line, col: form.col, file: form.file };
         const resolved = resolveConstValue(valNode, consts);
         consts.set(name, resolved);
       } else {

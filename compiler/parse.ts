@@ -7,6 +7,7 @@
 export interface SourceLoc {
   line: number;
   col: number;
+  file: string;
 }
 
 export interface NumberNode extends SourceLoc {
@@ -175,10 +176,10 @@ export function parse(tokens: Token[], opts?: ParseOptions): Program {
       if (pos >= tokens.length) {
         // Collect this unclosed paren; return a dummy node and let the top-level loop handle reporting
         unclosedParens.push({ tok: startTok, formName });
-        return { type: 'list', value: list, line: startTok.line, col: startTok.col };
+        return { type: 'list', value: list, line: startTok.line, col: startTok.col, file: sourceFile ?? '' };
       }
       pos++;
-      return { type: 'list', value: list, line: startTok.line, col: startTok.col };
+      return { type: 'list', value: list, line: startTok.line, col: startTok.col, file: sourceFile ?? '' };
     }
     if (tok.type === 'paren' && tok.value === ')') {
       const block = formatSourceBlock(source, sourceFile, tok.line, tok.col, 'this `)` has no matching `(`');
@@ -192,9 +193,9 @@ export function parse(tokens: Token[], opts?: ParseOptions): Program {
       throw new ParseDiagnosticError(msg);
     }
     pos++;
-    if (tok.type === 'number') return { type: 'number', value: tok.value as number, line: tok.line, col: tok.col };
-    if (tok.type === 'string') return { type: 'string', value: tok.value as string, line: tok.line, col: tok.col };
-    return { type: 'symbol', value: tok.value as string, line: tok.line, col: tok.col };
+    if (tok.type === 'number') return { type: 'number', value: tok.value as number, line: tok.line, col: tok.col, file: sourceFile ?? '' };
+    if (tok.type === 'string') return { type: 'string', value: tok.value as string, line: tok.line, col: tok.col, file: sourceFile ?? '' };
+    return { type: 'symbol', value: tok.value as string, line: tok.line, col: tok.col, file: sourceFile ?? '' };
   }
 
   const program: ASTNode[] = [];
@@ -238,7 +239,7 @@ export function cloneAST(node: ASTNode): ASTNode {
     return {
       type: 'list',
       value: node.value.map(c => cloneAST(c)),
-      line: node.line, col: node.col
+      line: node.line, col: node.col, file: node.file
     };
   }
   return { ...node };

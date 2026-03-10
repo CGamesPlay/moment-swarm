@@ -142,8 +142,8 @@ export class SSALowering {
 
   private freshTemp(node?: ASTNode): string {
     const temp = `%t${this.nextTemp++}`;
-    if (node && this.sourceFile) {
-      this.tempLocs.set(temp, { file: this.sourceFile, line: node.line, col: node.col });
+    if (node && node.file) {
+      this.tempLocs.set(temp, { file: node.file, line: node.line, col: node.col });
     }
     return temp;
   }
@@ -220,7 +220,8 @@ export class SSALowering {
   // Lower an expression, returning the SSA temp holding its value (or '' for void)
   private lowerExpr(node: ASTNode): string {
     if (node.type === 'number') {
-      const temp = this.freshTemp(node);
+      // Don't record source location for numeric constants
+      const temp = this.freshTemp();
       this.emit('const', temp, node.value);
       return temp;
     }
@@ -231,7 +232,8 @@ export class SSALowering {
         return val;  // already an SSA temp
       }
       // It's a constant/direction — emit const
-      const temp = this.freshTemp(node);
+      // Don't record source location for symbol constants (they're not real expressions)
+      const temp = this.freshTemp();
       if (typeof val === 'number') {
         this.emit('const', temp, val);
       } else {
@@ -328,19 +330,24 @@ export class SSALowering {
     const savedEnv = new Map(this.env);
 
     // Evaluate all init expressions in the outer environment first
-    const evaluated: { name: string; temp: string }[] = [];
+    const evaluated: { name: string; temp: string; bindingNode: ASTNode }[] = [];
     for (const binding of bindings) {
       const pair = (binding as ListNode).value;
       const name = (pair[0] as any).value as string;
-      const initTemp = this.lowerExpr(pair[1]);
-      evaluated.push({ name, temp: initTemp });
+      const initExpr = pair[1];
+      const initTemp = this.lowerExpr(initExpr);
+      evaluated.push({ name, temp: initTemp, bindingNode: binding });
     }
 
     // Then bind all names at once
-    for (const { name, temp } of evaluated) {
+    for (const { name, temp, bindingNode } of evaluated) {
       this.env.set(name, temp);
       this.allBindings.set(name, temp);
       this.tempNames.set(temp, name);
+      // Record binding location for named variables
+      if (bindingNode.file && !this.tempLocs.has(temp)) {
+        this.tempLocs.set(temp, { file: bindingNode.file, line: bindingNode.line, col: bindingNode.col });
+      }
     }
 
     let result = '';
@@ -368,10 +375,15 @@ export class SSALowering {
     for (const binding of bindings) {
       const pair = (binding as ListNode).value;
       const name = (pair[0] as any).value as string;
-      const initTemp = this.lowerExpr(pair[1]);
+      const initExpr = pair[1];
+      const initTemp = this.lowerExpr(initExpr);
       this.env.set(name, initTemp);
       this.allBindings.set(name, initTemp);
       this.tempNames.set(initTemp, name);
+      // Record binding location for named variables
+      if (binding.file && !this.tempLocs.has(initTemp)) {
+        this.tempLocs.set(initTemp, { file: binding.file, line: binding.line, col: binding.col });
+      }
     }
 
     let result = '';
@@ -394,11 +406,16 @@ export class SSALowering {
     const name = (list[1] as any).value as string;
     const valTemp = this.lowerExpr(list[2]);
     // Create a fresh temp for the new value (SSA property)
-    const newTemp = this.freshTemp(node);
+    // Don't record location — this is SSA copy machinery, not a computation
+    const newTemp = this.freshTemp();
     this.emit('copy', newTemp, valTemp);
     this.env.set(name, newTemp);
     this.allBindings.set(name, newTemp);
     this.tempNames.set(newTemp, name);
+    // Record binding location for named variables
+    if (node.file && !this.tempLocs.has(newTemp)) {
+      this.tempLocs.set(newTemp, { file: node.file, line: node.line, col: node.col });
+    }
     return newTemp;
   }
 
@@ -657,13 +674,17 @@ export class SSALowering {
     const countVal = this.resolveOperand(pair[1]);
 
     // Initialize loop variable
-    const initTemp = this.freshTemp(node);
+    const initTemp = this.freshTemp();
     this.emit('const', initTemp, 0);
 
     const savedEnv = new Map(this.env);
     this.env.set(varName, initTemp);
     this.allBindings.set(varName, initTemp);
     this.tempNames.set(initTemp, varName);
+    // Record binding location for loop variable
+    if (node.file) {
+      this.tempLocs.set(initTemp, { file: node.file, line: node.line, col: node.col });
+    }
 
     const headerBlock = this.makeBlock('dotimes');
     const bodyBlock = this.makeBlock('dotimes_body');
@@ -688,7 +709,7 @@ export class SSALowering {
     }
 
     // Increment
-    const newI = this.freshTemp(node);
+    const newI = this.freshTemp();
     this.emit('add', newI, this.env.get(varName)!, 1);
     this.env.set(varName, newI);
 
@@ -774,7 +795,7 @@ export class SSALowering {
       }
 
       // Bind loop variable to this iteration's constant value
-      const valTemp = this.freshTemp(node);
+      const valTemp = this.freshTemp();
       this.emit('const', valTemp, i);
       this.env.set(varName, valTemp);
       this.allBindings.set(varName, valTemp);
@@ -1008,6 +1029,11 @@ export class SSALowering {
           entries: [],  // filled by jumpTo/go and fall-through
         });
         phiMap.set(varName, phiTemp);
+        // Inherit location from the current value of this variable
+        const loc = this.tempLocs.get(temp);
+        if (loc && !this.tempLocs.has(phiTemp)) {
+          this.tempLocs.set(phiTemp, loc);
+        }
       }
       phiMaps.set(tagName, phiMap);
     }
@@ -1081,7 +1107,8 @@ export class SSALowering {
     // Try constant folding
     const folded = tryEvalConst(node, this.consts);
     if (folded !== null) {
-      const temp = this.freshTemp(node);
+      // Don't record location for folded constants — they're compile-time, not runtime
+      const temp = this.freshTemp();
       this.emit('const', temp, folded);
       return temp;
     }
@@ -1118,7 +1145,9 @@ export class SSALowering {
 
     for (let i = 2; i < list.length; i++) {
       const b = this.resolveOperand(list[i]);
-      const temp = this.freshTemp(node);
+      // Only record location for the final result, not intermediate temps
+      const isLast = i === list.length - 1;
+      const temp = isLast ? this.freshTemp(node) : this.freshTemp();
       this.emit(ssaOp, temp, result, b);
       result = temp;
     }
@@ -1280,7 +1309,7 @@ export class SSALowering {
 
   private lowerZeroQ(list: ASTNode[], node: ASTNode): string {
     // (zero? x) → (= x 0)
-    return this.lowerComparison('=', [list[0], list[1], { type: 'number', value: 0, line: node.line, col: node.col }], node);
+    return this.lowerComparison('=', [list[0], list[1], { type: 'number', value: 0, line: node.line, col: node.col, file: node.file }], node);
   }
 
   // ── Condition branch generation ──
@@ -1389,6 +1418,18 @@ export class SSALowering {
         this.env.set(name, phiTemp);
         this.allBindings.set(name, phiTemp);
         this.tempNames.set(phiTemp, name);
+        // Try to inherit location from one of the incoming values
+        if (!this.tempLocs.has(phiTemp)) {
+          const loc1 = this.tempLocs.get(temp1);
+          if (loc1) {
+            this.tempLocs.set(phiTemp, loc1);
+          } else {
+            const loc2 = this.tempLocs.get(temp2);
+            if (loc2) {
+              this.tempLocs.set(phiTemp, loc2);
+            }
+          }
+        }
       }
     }
   }
@@ -1411,14 +1452,23 @@ export class SSALowering {
     for (const name of changedVars) {
       const phiTemp = this.freshTemp();
       const entries: { block: BasicBlock; value: string }[] = [];
+      let locToInherit: { file: string; line: number; col: number } | undefined;
       for (const { env, exitBlock } of branches) {
         const temp = env.get(name) ?? envBefore.get(name)!;
         entries.push({ block: exitBlock, value: temp });
+        // Inherit location from first available incoming value
+        if (!locToInherit) {
+          locToInherit = this.tempLocs.get(temp);
+        }
       }
       this.currentBlock.phis.push({ dest: phiTemp, entries });
       this.env.set(name, phiTemp);
       this.allBindings.set(name, phiTemp);
       this.tempNames.set(phiTemp, name);
+      // Record inherited location
+      if (locToInherit && !this.tempLocs.has(phiTemp)) {
+        this.tempLocs.set(phiTemp, locToInherit);
+      }
     }
   }
 
@@ -1439,6 +1489,11 @@ export class SSALowering {
       this.env.set(name, phiTemp);
       this.allBindings.set(name, phiTemp);
       this.tempNames.set(phiTemp, name);
+      // Inherit location from the incoming value
+      const loc = this.tempLocs.get(temp);
+      if (loc && !this.tempLocs.has(phiTemp)) {
+        this.tempLocs.set(phiTemp, loc);
+      }
       phiMap.set(name, phiTemp);
     }
     return phiMap;
@@ -1467,6 +1522,18 @@ export class SSALowering {
 
 export function printSSA(program: SSAProgram): string {
   const lines: string[] = [];
+
+  // Helper to format source location comment for a temp
+  const locComment = (temp: string): string => {
+    const varName = program.tempNames?.get(temp);
+    const label = varName ? `${varName} (${temp})` : temp;
+    const loc = program.tempLocs?.get(temp);
+    if (loc) {
+      return `; ${loc.file}:${loc.line}:${loc.col} [${label}]`;
+    }
+    return `; [${label}]`;
+  };
+
   for (const block of program.blocks) {
     lines.push(`${block.label}:`);
     // Preds
@@ -1476,12 +1543,12 @@ export function printSSA(program: SSAProgram): string {
     // Phis
     for (const phi of block.phis) {
       const entries = phi.entries.map(e => `[${e.block.label}: ${e.value}]`).join(', ');
-      lines.push(`  ${phi.dest} = phi ${entries}`);
+      lines.push(`  ${phi.dest} = phi ${entries}  ${locComment(phi.dest)}`);
     }
     // Instructions
     for (const instr of block.instrs) {
       if (instr.dest) {
-        lines.push(`  ${instr.dest} = ${instr.op} ${instr.args.join(' ')}`);
+        lines.push(`  ${instr.dest} = ${instr.op} ${instr.args.join(' ')}  ${locComment(instr.dest)}`);
       } else {
         lines.push(`  ${instr.op} ${instr.args.join(' ')}`);
       }
