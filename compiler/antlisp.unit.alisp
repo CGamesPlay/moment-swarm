@@ -777,6 +777,43 @@
       (assert dx 5)
       (assert dy 9))))
 
+; ─── dolist ──────────────────────────────────────────────────
+
+(test "dolist: iterates over values"
+  :run-once
+  (begin
+    (let ((sum 0))
+      (dolist (x (values 10 20 30))
+        (set! sum (+ sum x)))
+      (assert sum 60))))
+
+(test "dolist: break exits early"
+  :run-once
+  (begin
+    (let ((sum 0))
+      (dolist (x (values 1 2 3 4 5))
+        (when (= x 3) (break))
+        (set! sum (+ sum x)))
+      (assert sum 3))))  ; 1+2
+
+(test "dolist: continue skips iteration"
+  :run-once
+  (begin
+    (let ((sum 0))
+      (dolist (x (values 1 2 3 4 5))
+        (when (= x 3) (continue))
+        (set! sum (+ sum x)))
+      (assert sum 12))))  ; 1+2+4+5
+
+(test "dolist: empty values is no-op"
+  :run-once
+  (begin
+    (let ((x 42))
+      (dolist (v (values))
+        (set! x 0))
+      (assert x 42))))
+
+; ─── Phi-node cond/set! regression ──────────────────────────────
 (test "cond set! inside if: dir=2 increments dx, preserves dy"
   :run-once
   (begin

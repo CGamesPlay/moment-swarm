@@ -113,7 +113,13 @@ export class SSALowering {
   private blocks: BasicBlock[] = [];
   private currentBlock: BasicBlock;
   private env: Env;
-  private loopStack: { headerBlock: BasicBlock; exitBlock: BasicBlock }[] = [];
+  private loopStack: {
+    headerBlock: BasicBlock;
+    exitBlock: BasicBlock;
+    // For unrolled loops: phi maps for the continue target and break target
+    headerPhiMap?: Map<string, string>;
+    exitPhiMap?: Map<string, string>;
+  }[] = [];
   private tagbodyStack: {
     tags: Map<string, BasicBlock>;
     phiMaps: Map<string, Map<string, string>>;  // tag name → (var name → phi temp)
@@ -254,6 +260,7 @@ export class SSALowering {
       case 'loop': return this.lowerLoop(list);
       case 'while': return this.lowerWhile(list, node);
       case 'dotimes': return this.lowerDotimes(list, node);
+      case 'dolist': return this.lowerDolist(list, node);
       case 'break': return this.lowerBreak();
       case 'continue': return this.lowerContinue();
       case 'tagbody': return this.lowerTagbody(list);
@@ -672,10 +679,156 @@ export class SSALowering {
     return '';
   }
 
+  // ── dolist ──
+  // (dolist (var (values v1 v2 ...)) body...)
+  // All values must be compile-time constants. Fully unrolled.
+  // Each iteration block gets phi nodes for outer env vars so that
+  // break/continue (which bypass normal merge points) work correctly.
+  private lowerDolist(list: ASTNode[], node: ASTNode): string {
+    const pair = (list[1] as ListNode).value;
+    const varName = (pair[0] as any).value as string;
+    const valuesForm = (pair[1] as ListNode).value;
+    if (valuesForm[0].type !== 'symbol' || valuesForm[0].value !== 'values') {
+      throw new Error(`dolist expects (values ...) as second element at line ${node.line}:${node.col}`);
+    }
+
+    // Resolve all values as compile-time constants
+    const values: number[] = [];
+    for (let i = 1; i < valuesForm.length; i++) {
+      const v = tryEvalConst(valuesForm[i], this.consts);
+      if (v === null) {
+        throw new Error(`dolist value is not a compile-time constant at line ${valuesForm[i].line}:${valuesForm[i].col}`);
+      }
+      values.push(v);
+    }
+
+    const savedEnv = new Map(this.env);
+
+    // Empty values list — no-op
+    if (values.length === 0) {
+      return '';
+    }
+
+    const exitBlock = this.makeBlock('enddolist');
+
+    // Create all iteration blocks and the exit block up front
+    const iterBlocks: BasicBlock[] = [];
+    for (let i = 0; i < values.length; i++) {
+      iterBlocks.push(this.makeBlock(`dolist_${i}`));
+    }
+
+    // Jump into the first iteration
+    this.jumpTo(iterBlocks[0]);
+    const firstPred = this.currentBlock;
+
+    // Insert phi nodes at each iteration block (and exit) for outer env vars.
+    // This handles the case where break/continue jumps bypass normal merge points.
+    const iterPhiMaps: Map<string, string>[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const phiMap = new Map<string, string>();
+      if (i === 0) {
+        // First iteration only has one predecessor — just use env directly
+        // (phis would be trivial/identity, skip them)
+      } else {
+        // Iteration i can be reached from:
+        //   - fall-through from iteration i-1
+        //   - continue from iteration i-1
+        // Insert phis for all outer env vars
+        for (const [name, _temp] of savedEnv) {
+          const phiTemp = this.freshTemp();
+          iterBlocks[i].phis.push({
+            dest: phiTemp,
+            entries: [],  // filled when predecessors jump here
+          });
+          phiMap.set(name, phiTemp);
+        }
+      }
+      iterPhiMaps.push(phiMap);
+    }
+
+    // Also insert phis at exitBlock for outer env vars
+    const exitPhiMap = new Map<string, string>();
+    for (const [name, _temp] of savedEnv) {
+      const phiTemp = this.freshTemp();
+      exitBlock.phis.push({
+        dest: phiTemp,
+        entries: [],  // filled when predecessors jump here
+      });
+      exitPhiMap.set(name, phiTemp);
+    }
+
+    for (let i = 0; i < values.length; i++) {
+      this.sealBlock(iterBlocks[i]);
+
+      // If this is not the first iteration, update env to use phi temps
+      if (i > 0) {
+        for (const [name, phiTemp] of iterPhiMaps[i]) {
+          this.env.set(name, phiTemp);
+        }
+      }
+
+      // Bind the loop variable to this iteration's value
+      const valTemp = this.freshTemp();
+      this.emit('const', valTemp, values[i]);
+      this.env.set(varName, valTemp);
+      this.allBindings.set(varName, valTemp);
+
+      // For break/continue: break → exitBlock, continue → next iter (or exit if last)
+      const nextBlock = i + 1 < values.length ? iterBlocks[i + 1] : exitBlock;
+      const headerPhiMap = i + 1 < values.length ? iterPhiMaps[i + 1] : exitPhiMap;
+      this.loopStack.push({ headerBlock: nextBlock, exitBlock, headerPhiMap, exitPhiMap });
+
+      // Lower body
+      for (let j = 2; j < list.length; j++) {
+        this.lowerExpr(list[j]);
+      }
+
+      // Fill phi entries at the target block before jumping
+      if (!this.currentBlock.terminator) {
+        const targetPhiMap = i + 1 < values.length ? iterPhiMaps[i + 1] : exitPhiMap;
+        this.fillUnrolledPhis(targetPhiMap, nextBlock, this.env, this.currentBlock);
+        this.jumpTo(nextBlock);
+      }
+
+      this.loopStack.pop();
+    }
+
+    this.sealBlock(exitBlock);
+
+    // Restore env: use exit phi temps for outer vars
+    this.env = savedEnv;
+    for (const [name, phiTemp] of exitPhiMap) {
+      this.env.set(name, phiTemp);
+    }
+    return '';
+  }
+
+  // Fill phi entries at an unrolled iteration block or exit block
+  private fillUnrolledPhis(
+    phiMap: Map<string, string>,
+    targetBlock: BasicBlock,
+    env: Map<string, string>,
+    fromBlock: BasicBlock,
+  ): void {
+    for (const [varName, phiTemp] of phiMap) {
+      const currentTemp = env.get(varName) ?? phiTemp;
+      for (const phi of targetBlock.phis) {
+        if (phi.dest === phiTemp) {
+          phi.entries.push({ block: fromBlock, value: currentTemp });
+          break;
+        }
+      }
+    }
+  }
+
   // ── break / continue ──
   private lowerBreak(): string {
     if (!this.loopStack.length) throw new Error('break outside loop');
-    const { exitBlock } = this.loopStack[this.loopStack.length - 1];
+    const { exitBlock, exitPhiMap } = this.loopStack[this.loopStack.length - 1];
+    // Fill phi entries at exit block for unrolled loops
+    if (exitPhiMap) {
+      this.fillUnrolledPhis(exitPhiMap, exitBlock, this.env, this.currentBlock);
+    }
     this.jumpTo(exitBlock);
     // Create dead block for unreachable code
     const deadBlock = this.makeBlock('dead');
@@ -685,7 +838,11 @@ export class SSALowering {
 
   private lowerContinue(): string {
     if (!this.loopStack.length) throw new Error('continue outside loop');
-    const { headerBlock } = this.loopStack[this.loopStack.length - 1];
+    const { headerBlock, headerPhiMap } = this.loopStack[this.loopStack.length - 1];
+    // Fill phi entries at next iteration block for unrolled loops
+    if (headerPhiMap) {
+      this.fillUnrolledPhis(headerPhiMap, headerBlock, this.env, this.currentBlock);
+    }
     this.jumpTo(headerBlock);
     // Create dead block for unreachable code
     const deadBlock = this.makeBlock('dead');

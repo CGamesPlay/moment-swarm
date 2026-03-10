@@ -113,8 +113,27 @@ that wraps the main loop.
 (loop body...)                  ; infinite (use break to exit)
 (while cond body...)            ; conditional
 (dotimes (i 10) body...)        ; counted (i = 0..9)
+(dolist (x (values 1 2 3)) body...) ; iterate over constant values
 (break)                         ; exit innermost loop
 (continue)                      ; restart innermost loop
+```
+
+`dolist` iterates a variable over a list of compile-time constant values.
+All values must be literals or const-resolvable expressions. The loop body
+is fully unrolled — each iteration becomes straight-line code with no
+loop overhead. `break` and `continue` work as expected.
+
+```lisp
+;; Sum specific values
+(let ((sum 0))
+  (dolist (x (values 10 20 30))
+    (set! sum (+ sum x))))    ; sum = 60
+
+;; Skip a value with continue
+(let ((sum 0))
+  (dolist (x (values 1 2 3 4 5))
+    (when (= x 3) (continue))
+    (set! sum (+ sum x))))    ; sum = 12 (skips 3)
 ```
 
 ### Comparisons
