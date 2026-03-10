@@ -1,0 +1,277 @@
+; ═══════════════════════════════════════════════════════════════
+; 8-Direction RLE Path — Macro Library
+; ═══════════════════════════════════════════════════════════════
+;
+; Packs up to 4 path segments into a single 32-bit register.
+; Each segment is 8 bits: 3-bit direction + 5-bit run length.
+; Supports all 8 compass directions (cardinals + diagonals).
+; Diagonal movement = two cardinal moves per step.
+;
+; ── Segment format (8 bits) ─────────────────────────────────
+;   bits 7:5  = direction (0-7)
+;   bits 4:0  = run length (0-31; 0 = empty slot)
+;
+; ── Path register (32 bits) ─────────────────────────────────
+;   bits  7:0  = segment 0 (most recent, top of stack)
+;   bits 15:8  = segment 1
+;   bits 23:16 = segment 2
+;   bits 31:24 = segment 3 (oldest)
+;
+; Path == 0 means empty. A segment byte is non-zero iff its
+; run length > 0, so all-zero bytes are unambiguously empty.
+;
+; ── Direction encoding (0-7) ────────────────────────────────
+;   Cardinals:  0=N  1=E  2=S  3=W      (enc & 3 + 1 = ISA dir)
+;   Diagonals:  4=NE 5=SE 6=SW 7=NW    (enc & 4 = diagonal bit)
+;
+;   Reverse: enc XOR 2 (flips N↔S, E↔W, NE↔SW, SE↔NW)
+;
+; ── API ─────────────────────────────────────────────────────
+;   (move-forward! path dir) → 0|1
+;       Move one step in direction `dir`. If the current top
+;       segment has the same direction, extends it. If different
+;       (or path empty), pushes a new segment. For diagonals,
+;       performs two cardinal moves. Returns 0 if wall blocked
+;       movement, segment overflowed with no room, or all 4
+;       slots occupied and direction differs. Returns 1 on
+;       success. On failure, path is NOT modified.
+;
+;   (backtrack! path)
+;       Move one step in the reverse of the current heading.
+;       Decrements run length; pops segment if length reaches 0.
+;       Caller must ensure path is not empty (path != 0).
+;
+;   (current-heading! dir path)
+;       Extract the direction of the top segment.
+;
+;   (random-nonwall-heading! dir)
+;       Pick a random 8-way direction that isn't immediately
+;       blocked. For diagonals, only the first cardinal
+;       component is checked. Sets dir to -1 if completely
+;       boxed in (rare).
+;
+; ── Constants ───────────────────────────────────────────────
+
+(const DIR_N  0)
+(const DIR_E  1)
+(const DIR_S  2)
+(const DIR_W  3)
+(const DIR_NE 4)
+(const DIR_SE 5)
+(const DIR_SW 6)
+(const DIR_NW 7)
+
+(const MAX_SEG_LEN   31)     ; 5-bit max
+
+; ── Helpers: direction → cardinal components ────────────────
+;
+; Each 8-way direction maps to one or two cardinal ISA moves.
+; Cardinals: N→(N), E→(E), S→(S), W→(W)
+; Diagonals: NE→(N,E), SE→(S,E), SW→(S,W), NW→(N,W)
+;
+; ISA directions: N=1 E=2 S=3 W=4
+;
+; For cardinal dirs, move2 = 0 (meaning "no second move").
+;
+; Encoding properties:
+;   enc & 3 + 1 = ISA direction (for cardinals)
+;   enc & 4     = diagonal bit
+;   enc ^ 2     = reverse direction
+
+; Get the first ISA cardinal move for an 8-way direction.
+; Cardinals: enc & 3 + 1.
+; Diagonals (enc & 3): 0(NE)→N(1), 1(SE)→S(3), 2(SW)→S(3), 3(NW)→N(1).
+;   N/S determined by XOR of low two bits: 0→N(1), 1→S(3).
+(defmacro dir8-move1! (out dir8)
+  (if (!= (and dir8 4) 0)
+    ; Diagonal: (xor(enc, enc>>1) & 1) → 0=N(1), 1=S(3)
+    (set! out (+ 1 (* 2 (and (xor dir8 (rshift dir8 1)) 1))))
+    ; Cardinal: enc & 3 + 1
+    (set! out (+ (and dir8 3) 1))))
+
+; Get the second ISA cardinal move for an 8-way direction.
+; Returns 0 for cardinals (no second move).
+; Diagonals: 2 + (enc & 2)  →  NE,SE→E(2), SW,NW→W(4).
+(defmacro dir8-move2! (out dir8)
+  (if (!= (and dir8 4) 0)
+    ; Diagonal: bit 1 selects E(2) vs W(4)
+    (set! out (+ 2 (and dir8 2)))
+    ; Cardinal: no second move
+    (set! out 0)))
+
+; Reverse an 8-way direction: N↔S, NE↔SW, E↔W, SE↔NW.
+; Algebraically: enc XOR 2.
+(defmacro reverse-dir8! (dir)
+  (set! dir (xor dir 2)))
+
+; ── Segment accessors ───────────────────────────────────────
+
+; Extract direction from top segment (bits 7:5).
+(defmacro seg-dir! (out path)
+  (set! out (and (rshift path 5) 7)))
+
+; Extract run length from top segment (bits 4:0).
+(defmacro seg-len! (out path)
+  (set! out (and path 0x1F)))
+
+; ── current-heading! ────────────────────────────────────────
+
+(defmacro current-heading! (dir path)
+  (seg-dir! dir path))
+
+; ── move-forward! ───────────────────────────────────────────
+;
+; Move one step in direction `dir`.
+;
+; If path is empty, creates a new segment with dir and length 1.
+; If the top segment has the same direction, increments its length.
+; If the direction differs, pushes a new segment (if room).
+; For diagonals, does two cardinal moves with wall checking.
+; Returns 1 on success, 0 on wall, overflow, or no room.
+;
+; On failure, path is NOT modified.
+
+(defmacro move-forward! (path dir)
+  ; Compute cardinal move directions from the requested direction.
+  (let ((m1 0) (m2 0))
+    (dir8-move1! m1 dir)
+    (dir8-move2! m2 dir)
+    ; Check first cardinal direction for wall
+    (if (= (probe m1) 1)
+      0
+      ; Check second direction (if diagonal) for wall
+      (if (and (!= m2 0) (= (probe m2) 1))
+        0
+        ; Walls clear — figure out how to update the path
+        (if (= path 0)
+          ; Empty path: create first segment with length 1
+          (begin
+            (set! path (or (lshift dir 5) 1))
+            (move m1)
+            (when (!= m2 0) (move m2))
+            1)
+          ; Non-empty path
+          (let ((cur-dir 0))
+            (seg-dir! cur-dir path)
+            (if (= cur-dir dir)
+              ; Same direction — extend current segment
+              (let ((cur-len 0))
+                (seg-len! cur-len path)
+                (if (>= cur-len MAX_SEG_LEN)
+                  ; Segment full, try to push continuation
+                  (if (!= (and path 0xFF000000) 0)
+                    0
+                    (begin
+                      (set! path (lshift path 8))
+                      (set! path (or path (or (lshift dir 5) 1)))
+                      (move m1)
+                      (when (!= m2 0) (move m2))
+                      1))
+                  ; Normal case: increment length in low 5 bits
+                  (begin
+                    (set! path (and path 0xFFFFFFE0))
+                    (set! path (or path (+ cur-len 1)))
+                    (move m1)
+                    (when (!= m2 0) (move m2))
+                    1)))
+              ; Different direction — push new segment
+              (if (!= (and path 0xFF000000) 0)
+                ; All 4 slots occupied, can't turn
+                0
+                (begin
+                  (set! path (lshift path 8))
+                  (set! path (or path (or (lshift dir 5) 1)))
+                  (move m1)
+                  (when (!= m2 0) (move m2))
+                  1)))))))))
+
+; ── backtrack! ──────────────────────────────────────────────
+;
+; Move one step in the reverse of the current heading.
+; Decrements run length; pops segment if length reaches 0.
+; Caller MUST ensure path != 0 (i.e. not already at nest).
+
+(defmacro backtrack! (path after-move)
+  (let ((cur-dir 0) (cur-len 0) (m1 0) (m2 0))
+    (seg-dir! cur-dir path)
+    (seg-len! cur-len path)
+    ; Get reverse direction and its cardinal moves
+    (set! cur-dir (xor cur-dir 2))
+    ; For diagonals, backtrack does move2 first then move1
+    ; (reverse order of the forward movement).
+    (dir8-move1! m1 cur-dir)
+    (dir8-move2! m2 cur-dir)
+    (when (!= m2 0)
+      (move m2)
+      ; after-move: runs on the intermediate cell of diagonal steps
+      ; (between the two cardinal moves).  Pass (begin) for no-op.
+      after-move)
+    (move m1)
+    ; Update path: decrement length or pop segment
+    (if (<= cur-len 1)
+      ; Last step: pop segment
+      (begin
+        (set! path (rshift path 8))
+        (set! path (and path 0x00FFFFFF))) ; clear sign extension
+      ; More steps remain: just decrement length
+      (begin
+        (set! path (and path 0xFFFFFFE0))
+        (set! path (or path (- cur-len 1)))))))
+
+; ── dir8-probe-isa! ─────────────────────────────────────────
+;
+; Map an 8-way direction to the ISA probe direction for its
+; first cardinal component. Same as dir8-move1! — provided as
+; a semantic alias for wall-checking contexts.
+;
+;   enc:  0(N) 1(E) 2(S) 3(W) 4(NE) 5(SE) 6(SW) 7(NW)
+;   ISA:  1(N) 2(E) 3(S) 4(W) 1(N)  3(S)  3(S)  1(N)
+
+(defmacro dir8-probe-isa! (out dir8)
+  (dir8-move1! out dir8))
+
+; ── random-nonwall-heading! ─────────────────────────────────
+;
+; Pick a random 8-way direction (0-7) that isn't a wall and
+; isn't the reverse of `dir`. For diagonals, only the first
+; cardinal component is probed for walls.
+; Falls back to reverse if everything else is blocked.
+;
+; Uses 2 scratch registers (rev, isa). dir is input (current
+; heading) and output (new heading).
+; Total = 3 including dir.
+(defmacro random-nonwall-heading! (dir)
+  (let ((rev 0) (isa 0))
+    ; Compute reverse and pick a random non-reverse candidate.
+    ; offset 1..7 from reverse covers all 7 non-reverse dirs.
+    (set! rev (xor dir 2))
+    (set! dir (mod (+ rev 1 (random 7)) 8))
+    ; Try up to 7 non-reverse candidates, stepping +1 and
+    ; skipping reverse.  Initial pick is candidate 1, then
+    ; up to 6 retries (candidates 2-7), then fall back to
+    ; reverse.
+    (dir8-probe-isa! isa dir)
+    (when (= (probe isa) 1)
+      (set! dir (mod (+ dir 1) 8))
+      (when (= dir rev) (set! dir (mod (+ dir 1) 8)))
+      (dir8-probe-isa! isa dir)
+      (when (= (probe isa) 1)
+        (set! dir (mod (+ dir 1) 8))
+        (when (= dir rev) (set! dir (mod (+ dir 1) 8)))
+        (dir8-probe-isa! isa dir)
+        (when (= (probe isa) 1)
+          (set! dir (mod (+ dir 1) 8))
+          (when (= dir rev) (set! dir (mod (+ dir 1) 8)))
+          (dir8-probe-isa! isa dir)
+          (when (= (probe isa) 1)
+            (set! dir (mod (+ dir 1) 8))
+            (when (= dir rev) (set! dir (mod (+ dir 1) 8)))
+            (dir8-probe-isa! isa dir)
+            (when (= (probe isa) 1)
+              (set! dir (mod (+ dir 1) 8))
+              (when (= dir rev) (set! dir (mod (+ dir 1) 8)))
+              (dir8-probe-isa! isa dir)
+              (when (= (probe isa) 1)
+                ; Last non-reverse candidate — use reverse
+                (set! dir rev)))))))))
+

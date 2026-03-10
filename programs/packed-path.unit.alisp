@@ -1,0 +1,570 @@
+; ═══════════════════════════════════════════════════════════════
+; 8-Direction RLE Path — Unit Tests
+; ═══════════════════════════════════════════════════════════════
+;
+; Run with: argc unit programs/packed-path.unit.alisp
+; ═══════════════════════════════════════════════════════════════
+
+(include "./packed-path.inc.alisp")
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 1 — Direction helpers
+; ─────────────────────────────────────────────────────────────
+
+(test "dir8-move1: N → ISA N(1)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move1! out DIR_N)
+      (assert! (= out 1) 1))))
+
+(test "dir8-move1: E → ISA E(2)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move1! out DIR_E)
+      (assert! (= out 2) 1))))
+
+(test "dir8-move1: S → ISA S(3)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move1! out DIR_S)
+      (assert! (= out 3) 1))))
+
+(test "dir8-move1: W → ISA W(4)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move1! out DIR_W)
+      (assert! (= out 4) 1))))
+
+(test "dir8-move1: NE → ISA N(1)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move1! out DIR_NE)
+      (assert! (= out 1) 1))))
+
+(test "dir8-move2: NE → ISA E(2)"
+  :run-once
+  (begin
+    (let ((out 0))
+      (dir8-move2! out DIR_NE)
+      (assert! (= out 2) 1))))
+
+(test "dir8-move2: N → 0 (cardinal, no second move)"
+  :run-once
+  (begin
+    (let ((out 99))
+      (dir8-move2! out DIR_N)
+      (assert! (= out 0) 1))))
+
+(test "dir8-move1: SE → ISA S(3), move2: SE → ISA E(2)"
+  :run-once
+  (begin
+    (let ((m1 0) (m2 0))
+      (dir8-move1! m1 DIR_SE)
+      (dir8-move2! m2 DIR_SE)
+      (assert! (= m1 3) 1)
+      (assert! (= m2 2) 2))))
+
+(test "dir8-move1: SW → ISA S(3), move2: SW → ISA W(4)"
+  :run-once
+  (begin
+    (let ((m1 0) (m2 0))
+      (dir8-move1! m1 DIR_SW)
+      (dir8-move2! m2 DIR_SW)
+      (assert! (= m1 3) 1)
+      (assert! (= m2 4) 2))))
+
+(test "dir8-move1: NW → ISA N(1), move2: NW → ISA W(4)"
+  :run-once
+  (begin
+    (let ((m1 0) (m2 0))
+      (dir8-move1! m1 DIR_NW)
+      (dir8-move2! m2 DIR_NW)
+      (assert! (= m1 1) 1)
+      (assert! (= m2 4) 2))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 2 — reverse-dir8!
+; ─────────────────────────────────────────────────────────────
+
+(test "reverse N → S"
+  :run-once
+  (begin
+    (let ((d DIR_N))
+      (reverse-dir8! d)
+      (assert! (= d DIR_S) 1))))
+
+(test "reverse NE → SW"
+  :run-once
+  (begin
+    (let ((d DIR_NE))
+      (reverse-dir8! d)
+      (assert! (= d DIR_SW) 1))))
+
+(test "reverse E → W"
+  :run-once
+  (begin
+    (let ((d DIR_E))
+      (reverse-dir8! d)
+      (assert! (= d DIR_W) 1))))
+
+(test "reverse SE → NW"
+  :run-once
+  (begin
+    (let ((d DIR_SE))
+      (reverse-dir8! d)
+      (assert! (= d DIR_NW) 1))))
+
+(test "reverse S → N"
+  :run-once
+  (begin
+    (let ((d DIR_S))
+      (reverse-dir8! d)
+      (assert! (= d DIR_N) 1))))
+
+(test "reverse SW → NE"
+  :run-once
+  (begin
+    (let ((d DIR_SW))
+      (reverse-dir8! d)
+      (assert! (= d DIR_NE) 1))))
+
+(test "reverse W → E"
+  :run-once
+  (begin
+    (let ((d DIR_W))
+      (reverse-dir8! d)
+      (assert! (= d DIR_E) 1))))
+
+(test "reverse NW → SE"
+  :run-once
+  (begin
+    (let ((d DIR_NW))
+      (reverse-dir8! d)
+      (assert! (= d DIR_SE) 1))))
+
+(test "double reverse is identity"
+  :run-once
+  (begin
+    (let ((d DIR_NE))
+      (reverse-dir8! d)
+      (reverse-dir8! d)
+      (assert! (= d DIR_NE) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 3 — Segment accessors
+; ─────────────────────────────────────────────────────────────
+
+(test "seg-dir! extracts direction from segment"
+  :run-once
+  (begin
+    (let ((path 0) (d 0))
+      ; Segment with dir=S(2), len=5: (2 << 5) | 5 = 69
+      (set! path 69)
+      (seg-dir! d path)
+      (assert! (= d 2) 1))))
+
+(test "seg-len! extracts length from segment"
+  :run-once
+  (begin
+    (let ((path 0) (l 0))
+      ; Segment with dir=S(2), len=5: (2 << 5) | 5 = 69
+      (set! path 69)
+      (seg-len! l path)
+      (assert! (= l 5) 1))))
+
+(test "seg-dir! with direction 7 (NW)"
+  :run-once
+  (begin
+    (let ((path 0) (d 0))
+      ; dir=NW(7), len=1: (7 << 5) | 1 = 225
+      (set! path 225)
+      (seg-dir! d path)
+      (assert! (= d 7) 1))))
+
+(test "seg-len! max length 31"
+  :run-once
+  (begin
+    (let ((path 0) (l 0))
+      ; dir=N(0), len=31: (0 << 5) | 31 = 31
+      (set! path 31)
+      (seg-len! l path)
+      (assert! (= l 31) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 4 — move-forward! (creates segments on the fly)
+; ─────────────────────────────────────────────────────────────
+
+(test "move-forward on empty path: creates first segment with len=1"
+  :ticks 2
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0) (d 0))
+      (move-forward! path DIR_E)
+      (seg-dir! d path)
+      (seg-len! l path)
+      (assert! (= d DIR_E) 1)
+      (assert! (= l 1) 2)
+      (assert! (!= path 0) 3))))
+
+(test "move-forward same dir twice: length increments to 2"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0))
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (seg-len! l path)
+      (assert! (= l 2) 1))))
+
+(test "move-forward different dir: pushes new segment"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (seg-dir! d path)
+      (assert! (= d DIR_E) 1))))
+
+(test "move-forward fills 4 segments (different dirs)"
+  :ticks 5
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_W)
+      ; All 4 slots occupied
+      (assert! (!= (and path 0xFF000000) 0) 1))))
+
+(test "move-forward 5th different dir on full path: fails"
+  :ticks 5
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (res 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_W)
+      (set! res (move-forward! path DIR_NE))
+      (assert! (= res 0) 1))))
+
+(test "move-forward same dir on full path: extends top segment"
+  :ticks 6
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (res 0) (l 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_W)
+      (set! res (move-forward! path DIR_W))
+      (assert! (= res 1) 1)
+      (seg-len! l path)
+      (assert! (= l 2) 2))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 5 — move-forward! (cardinal wall checks)
+; ─────────────────────────────────────────────────────────────
+
+(test "move-forward N: ant moves north, length increments"
+  :ticks 2
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0))
+      (move-forward! path DIR_N)
+      (seg-len! l path)
+      (assert! (= l 1) 1))))
+
+(test "move-forward E: ant moves east"
+  :ticks 2
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_E))))
+
+(test "move-forward twice same dir: length increments to 2"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0))
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (seg-len! l path)
+      (assert! (= l 2) 1))))
+
+(test "move-forward into wall: returns 0, path unchanged"
+  :ticks 1
+  :run-once
+  :ant-x 1 :ant-y 16
+  (begin
+    (let ((path 0) (res 0))
+      (set! res (move-forward! path DIR_W))
+      (assert! (= res 0) 1)
+      (assert! (= path 0) 2))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 6 — move-forward! (diagonal)
+; ─────────────────────────────────────────────────────────────
+
+(test "move-forward NE: two cardinal moves (N then E)"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0))
+      (move-forward! path DIR_NE)
+      (seg-len! l path)
+      (assert! (= l 1) 1))))
+
+(test "move-forward SE: two cardinal moves (S then E)"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_SE)
+      (current-heading! d path)
+      (assert! (= d DIR_SE) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 7 — backtrack! (cardinal)
+; ─────────────────────────────────────────────────────────────
+
+(test "backtrack single step N: pops segment, path becomes 0"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_N)
+      (backtrack! path (begin))
+      (assert! (= path 0) 1))))
+
+(test "backtrack 2 steps E: first backtrack decrements, second pops"
+  :ticks 5
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (l 0))
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_E)
+      (backtrack! path (begin))
+      (seg-len! l path)
+      (assert! (= l 1) 1)
+      (assert! (!= path 0) 2)
+      (backtrack! path (begin))
+      (assert! (= path 0) 3))))
+
+(test "backtrack across segments: N then E, backtrack E then N"
+  :ticks 5
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (backtrack! path (begin))
+      (assert! (!= path 0) 1)
+      (current-heading! d path)
+      (assert! (= d DIR_N) 2)
+      (backtrack! path (begin))
+      (assert! (= path 0) 3))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 8 — backtrack! (diagonal)
+; ─────────────────────────────────────────────────────────────
+
+(test "backtrack single step NE: reverses to SW, pops segment"
+  :ticks 5
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_NE)
+      (backtrack! path (begin))
+      (assert! (= path 0) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 9 — current-heading!
+; ─────────────────────────────────────────────────────────────
+
+(test "current-heading after move-forward N"
+  :ticks 2
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_N)
+      (current-heading! d path)
+      (assert! (= d DIR_N) 1))))
+
+(test "current-heading after two different dirs returns latest"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_SE)
+      (current-heading! d path)
+      (assert! (= d DIR_SE) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 10 — random-nonwall-heading!
+; ─────────────────────────────────────────────────────────────
+
+(test "random-nonwall-heading in open space: returns valid 8-way direction"
+  :run-once
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((dir DIR_N))
+      (random-nonwall-heading! dir)
+      (assert! (!= dir -1) 1))))
+
+(test "random-nonwall-heading at west wall: doesn't return W"
+  :ticks 1
+  :run-once
+  :ant-x 1 :ant-y 16
+  (begin
+    (let ((dir DIR_E))
+      (random-nonwall-heading! dir)
+      (assert! (!= dir DIR_W) 1))))
+
+(test "random-nonwall-heading avoids reverse of current direction"
+  :ticks 10
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((dir DIR_N) (i 0))
+      ; Run many times — should never return S (reverse of N)
+      ; in open space where other options exist
+      (while (< i 10)
+        (set! dir DIR_N)
+        (random-nonwall-heading! dir)
+        (assert! (!= dir DIR_S) 1)
+        (set! i (+ i 1))))))
+
+(test "random-nonwall-heading can generate diagonal directions"
+  :ticks 100
+  :ant-x 16 :ant-y 16
+  (begin
+    ; Run many times and track whether we ever see a diagonal (enc >= 4).
+    ; With 7 equally-likely candidates, odds of never seeing a diagonal
+    ; in 100 tries is negligible.
+    (let ((dir DIR_N) (saw-diag 0) (i 0))
+      (while (< i 100)
+        (set! dir DIR_N)
+        (random-nonwall-heading! dir)
+        (when (!= (and dir 4) 0)
+          (set! saw-diag 1))
+        (set! i (+ i 1)))
+      (assert! (= saw-diag 1) 1))))
+
+(test "random-nonwall-heading at NW corner: avoids walled directions"
+  :run-once
+  :ant-x 1 :ant-y 1
+  (begin
+    (let ((dir DIR_SE))
+      (random-nonwall-heading! dir)
+      ; Should not pick N(0), W(6), NW(7) — all walled at (1,1)
+      ; N is walled, W is walled, and NW first component is N which is walled
+      (assert! (!= dir DIR_N) 1)
+      (assert! (!= dir DIR_W) 2)
+      (assert! (!= dir DIR_NW) 3))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 11 — Integration: explore then backtrack to start
+; ─────────────────────────────────────────────────────────────
+
+(test "move E×3 then backtrack ×3: returns to origin"
+  :ticks 10
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_E)
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (assert! (= path 0) 1))))
+
+(test "move N×2, E×2: backtrack all returns to origin"
+  :ticks 10
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (move-forward! path DIR_E)
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (assert! (= path 0) 1))))
+
+(test "mixed cardinal and diagonal: NE×1, S×2, backtrack all"
+  :ticks 12
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_NE)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (backtrack! path (begin))
+      (backtrack! path (begin))
+      (assert! (!= path 0) 1)
+      (backtrack! path (begin))
+      (assert! (= path 0) 2))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 12 — Multiple forward moves
+; ─────────────────────────────────────────────────────────────
+
+(test "5 forward moves same dir: length is 5"
+  :ticks 8
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (move-forward! path DIR_S)
+      (assert! (= (and path 0x1F) 5) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 13 — Direction N (0) works correctly
+; ─────────────────────────────────────────────────────────────
+; Regression: direction 0 must not be confused with empty slot.
+
+(test "move-forward N on empty path: path is non-zero"
+  :ticks 2
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0) (l 0))
+      (move-forward! path DIR_N)
+      (assert! (!= path 0) 1)
+      (seg-dir! d path)
+      (assert! (= d DIR_N) 2)
+      (seg-len! l path)
+      (assert! (= l 1) 3))))
+
+(test "move-forward N×2 then different dir: pushes new segment"
+  :ticks 4
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0) (d 0))
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_N)
+      (move-forward! path DIR_E)
+      (seg-dir! d path)
+      (assert! (= d DIR_E) 1))))
+
+(test "backtrack N: returns to origin"
+  :ticks 3
+  :ant-x 16 :ant-y 16
+  (begin
+    (let ((path 0))
+      (move-forward! path DIR_N)
+      (backtrack! path (begin))
+      (assert! (= path 0) 1))))
