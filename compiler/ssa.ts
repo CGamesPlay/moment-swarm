@@ -6,6 +6,15 @@ import { ASTNode, ListNode } from './parse';
 import { TagDef } from './metadata';
 import { tryEvalConst } from './expand';
 
+// ─── Helpers ────────────────────────────────────────────────
+
+function formatNode(node: ASTNode): string {
+  if (node.type === 'number' || node.type === 'symbol') return String(node.value);
+  if (node.type === 'string') return `"${node.value}"`;
+  if (node.type === 'list') return `(${node.value.map(formatNode).join(' ')})`;
+  return JSON.stringify(node);
+}
+
 // ─── SSA IR Types ───────────────────────────────────────────
 
 export interface PhiNode {
@@ -189,7 +198,8 @@ export class SSALowering {
       // Try to resolve as a known constant/direction/channel
       return resolveAssemblyAtom(name, this.consts, this.tags);
     }
-    throw new Error(`Cannot resolve atom: ${JSON.stringify(node)}`);
+    const loc = node.file ? `${node.file}:${node.line}:${node.col}: ` : `line ${node.line}:${node.col}: `;
+    throw new Error(`${loc}expected a simple value (number or variable), got expression: ${formatNode(node)}`);
   }
 
   // Resolve operand, compiling compound expressions into temps
@@ -1280,7 +1290,7 @@ export class SSALowering {
 
   // ── Sensing ──
   private lowerSenseOp(ssaOp: string, list: ASTNode[], node: ASTNode): string {
-    const target = this.resolveAtom(list[1]);
+    const target = this.resolveOperand(list[1]);
     const temp = this.freshTemp(node);
     this.emit(ssaOp, temp, target);
     return temp;
