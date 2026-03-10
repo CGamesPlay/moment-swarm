@@ -102,6 +102,20 @@ selftest() {
 		fi
 		[[ $rc -eq 0 ]] || exit $rc
 	done
+
+	echo "═══ Program unit tests ═══"
+	for f in programs/*.unit.alisp; do
+		[[ -f "$f" ]] || continue
+		echo "── $f ──"
+		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
+			${debug_flags+"${debug_flags[@]}"} "$f" 2>&1)" || rc=$?
+		if [[ ${argc_verbose+1} ]]; then
+			echo "$output"
+		else
+			echo "$output" | grep -v '^  ✓'
+		fi
+		[[ $rc -eq 0 ]] || exit $rc
+	done
 }
 
 if ! command -v argc >/dev/null; then

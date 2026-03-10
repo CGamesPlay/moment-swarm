@@ -27,7 +27,7 @@
 ; ── High-level macros ───────────────────────────────────────
 ;   (move-track-unsafe dir packed)  move without wall check; updates packed
 ;   (move-track dir packed)         wall-checked move; updates packed in-place
-;   (home-dir-packed dir packed)    sets dir toward nest from packed dx/dy
+;   (home-dir dir packed)           sets dir toward nest from packed dx/dy
 ;
 ; ═══════════════════════════════════════════════════════════════
 
@@ -119,7 +119,7 @@
   (if (= (probe dir) 1) 0 (move-track-unsafe dir packed)))
 
 ; Set dir toward nest based on homepos dx/dy.
-(defmacro home-dir-packed (dir packed)
+(defmacro home-dir (dir packed)
   (let ((dx 0)
         (dy 0)
         (abs-dx 0))

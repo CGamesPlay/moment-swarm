@@ -6,9 +6,8 @@
 ; unpack, increment, and decrement signed 8-bit values stored in
 ; the low 16 bits of a 32-bit register.
 ;
-; Tests use inline (assert expr expected) forms to check values
-; computed by the macros. These compile to ASSERTEQ opcodes that
-; are checked at runtime.
+; Tests use inline (assert! (= expr expected) code) macros to verify
+; values computed by the macros.
 ;
 ; Run with: argc unit programs/packed-dr.unit.alisp
 ; ═══════════════════════════════════════════════════════════════
@@ -28,8 +27,8 @@
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 0)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 0) 2)))
   )
 
 (test "round-trip dx=1 dy=0"
@@ -41,8 +40,8 @@
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 1)
-      (assert yout 0)))
+      (assert! (= xout 1) 1)
+      (assert! (= yout 0) 2)))
   )
 
 (test "round-trip dx=0 dy=1"
@@ -54,8 +53,8 @@
       (pack-dy! packed 1)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 1)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 1) 2)))
   )
 
 (test "round-trip dx=-1 dy=0"
@@ -67,8 +66,8 @@
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout -1)
-      (assert yout 0)))
+      (assert! (= xout -1) 1)
+      (assert! (= yout 0) 2)))
   )
 
 (test "round-trip dx=0 dy=-1"
@@ -80,8 +79,8 @@
       (pack-dy! packed -1)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout -1)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout -1) 2)))
   )
 
 (test "round-trip dx=127 dy=0 (positive max)"
@@ -93,8 +92,8 @@
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 127)
-      (assert yout 0)))
+      (assert! (= xout 127) 1)
+      (assert! (= yout 0) 2)))
   )
 
 (test "round-trip dx=0 dy=127 (positive max)"
@@ -106,8 +105,8 @@
       (pack-dy! packed 127)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 127)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 127) 2)))
   )
 
 (test "round-trip dx=-128 dy=0 (negative max)"
@@ -119,8 +118,8 @@
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout -128)
-      (assert yout 0)))
+      (assert! (= xout -128) 1)
+      (assert! (= yout 0) 2)))
   )
 
 (test "round-trip dx=0 dy=-128 (negative max)"
@@ -132,8 +131,8 @@
       (pack-dy! packed -128)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout -128)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout -128) 2)))
   )
 
 (test "round-trip dx=42 dy=-99 (mixed signs)"
@@ -145,8 +144,8 @@
       (pack-dy! packed -99)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 42)
-      (assert yout -99)))
+      (assert! (= xout 42) 1)
+      (assert! (= yout -99) 2)))
   )
 
 (test "round-trip dx=-99 dy=42 (mixed signs, swapped)"
@@ -158,8 +157,8 @@
       (pack-dy! packed 42)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout -99)
-      (assert yout 42)))
+      (assert! (= xout -99) 1)
+      (assert! (= yout 42) 2)))
   )
 
 (test "round-trip dx=127 dy=-128 (both extremes)"
@@ -171,8 +170,8 @@
       (pack-dy! packed -128)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 127)
-      (assert yout -128)))
+      (assert! (= xout 127) 1)
+      (assert! (= yout -128) 2)))
   )
 
 (test "round-trip dx=-128 dy=127 (both extremes, swapped)"
@@ -184,8 +183,8 @@
       (pack-dy! packed 127)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout -128)
-      (assert yout 127)))
+      (assert! (= xout -128) 1)
+      (assert! (= yout 127) 2)))
   )
 
 ; ─────────────────────────────────────────────────────────────
@@ -200,7 +199,7 @@
       (pack-dy! packed 55)
       (pack-dx! packed 33)
       (unpack-dy! yout packed)
-      (assert yout 55)))
+      (assert! (= yout 55) 1)))
   )
 
 (test "pack-dy does not disturb dx field"
@@ -211,7 +210,7 @@
       (pack-dx! packed 33)
       (pack-dy! packed 55)
       (unpack-dx! xout packed)
-      (assert xout 33)))
+      (assert! (= xout 33) 1)))
   )
 
 (test "overwriting dx leaves dy intact"
@@ -224,8 +223,8 @@
       (pack-dx! packed 20)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 20)
-      (assert yout -10)))
+      (assert! (= xout 20) 1)
+      (assert! (= yout -10) 2)))
   )
 
 (test "overwriting dy leaves dx intact"
@@ -238,8 +237,8 @@
       (pack-dy! packed -20)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 10)
-      (assert yout -20)))
+      (assert! (= xout 10) 1)
+      (assert! (= yout -20) 2)))
   )
 
 (test "high bits (above 15) stay zero after pack"
@@ -250,7 +249,7 @@
       (pack-dx! packed 127)
       (pack-dy! packed 127)
       (set! hi (rshift packed 16))
-      (assert hi 0)))
+      (assert! (= hi 0) 1)))
   )
 
 ; ─────────────────────────────────────────────────────────────
@@ -265,7 +264,7 @@
       (pack-dx! packed 0)
       (inc-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout 1)))
+      (assert! (= xout 1) 1)))
   )
 
 (test "inc-dx: -1 → 0 (crosses zero)"
@@ -276,7 +275,7 @@
       (pack-dx! packed -1)
       (inc-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout 0)))
+      (assert! (= xout 0) 1)))
   )
 
 (test "inc-dx: 126 → 127 (approach positive max)"
@@ -287,7 +286,7 @@
       (pack-dx! packed 126)
       (inc-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout 127)))
+      (assert! (= xout 127) 1)))
   )
 
 (test "dec-dx: 0 → -1 (crosses zero)"
@@ -298,7 +297,7 @@
       (pack-dx! packed 0)
       (dec-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout -1)))
+      (assert! (= xout -1) 1)))
   )
 
 (test "dec-dx: 1 → 0"
@@ -309,7 +308,7 @@
       (pack-dx! packed 1)
       (dec-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout 0)))
+      (assert! (= xout 0) 1)))
   )
 
 (test "dec-dx: -127 → -128 (approach negative max)"
@@ -320,7 +319,7 @@
       (pack-dx! packed -127)
       (dec-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout -128)))
+      (assert! (= xout -128) 1)))
   )
 
 (test "inc-dy: 0 → 1"
@@ -331,7 +330,7 @@
       (pack-dy! packed 0)
       (inc-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout 1)))
+      (assert! (= yout 1) 1)))
   )
 
 (test "inc-dy: -1 → 0 (crosses zero)"
@@ -342,7 +341,7 @@
       (pack-dy! packed -1)
       (inc-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout 0)))
+      (assert! (= yout 0) 1)))
   )
 
 (test "inc-dy: 126 → 127 (approach positive max)"
@@ -353,7 +352,7 @@
       (pack-dy! packed 126)
       (inc-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout 127)))
+      (assert! (= yout 127) 1)))
   )
 
 (test "dec-dy: 0 → -1 (crosses zero)"
@@ -364,7 +363,7 @@
       (pack-dy! packed 0)
       (dec-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout -1)))
+      (assert! (= yout -1) 1)))
   )
 
 (test "dec-dy: 1 → 0"
@@ -375,7 +374,7 @@
       (pack-dy! packed 1)
       (dec-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout 0)))
+      (assert! (= yout 0) 1)))
   )
 
 (test "dec-dy: -127 → -128 (approach negative max)"
@@ -386,7 +385,7 @@
       (pack-dy! packed -127)
       (dec-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout -128)))
+      (assert! (= yout -128) 1)))
   )
 
 ; ─────────────────────────────────────────────────────────────
@@ -402,7 +401,7 @@
       (pack-dy! packed 50)
       (inc-dx! packed)
       (unpack-dy! yout packed)
-      (assert yout 50)))
+      (assert! (= yout 50) 1)))
   )
 
 (test "dec-dx does not disturb dy field"
@@ -414,7 +413,7 @@
       (pack-dy! packed 50)
       (dec-dx! packed)
       (unpack-dy! yout packed)
-      (assert yout 50)))
+      (assert! (= yout 50) 1)))
   )
 
 (test "inc-dy does not disturb dx field"
@@ -426,7 +425,7 @@
       (pack-dy! packed 0)
       (inc-dy! packed)
       (unpack-dx! xout packed)
-      (assert xout 50)))
+      (assert! (= xout 50) 1)))
   )
 
 (test "dec-dy does not disturb dx field"
@@ -438,7 +437,7 @@
       (pack-dy! packed 0)
       (dec-dy! packed)
       (unpack-dx! xout packed)
-      (assert xout 50)))
+      (assert! (= xout 50) 1)))
   )
 
 ; ─────────────────────────────────────────────────────────────
@@ -456,7 +455,7 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout 5)))
+      (assert! (= xout 5) 1)))
   )
 
 (test "dec-dx 5 times from 0 → -5"
@@ -470,7 +469,7 @@
       (dec-dx! packed)
       (dec-dx! packed)
       (unpack-dx! xout packed)
-      (assert xout -5)))
+      (assert! (= xout -5) 1)))
   )
 
 (test "inc-dy 5 times from 0 → 5"
@@ -484,7 +483,7 @@
       (inc-dy! packed)
       (inc-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout 5)))
+      (assert! (= yout 5) 1)))
   )
 
 (test "dec-dy 5 times from 0 → -5"
@@ -498,7 +497,7 @@
       (dec-dy! packed)
       (dec-dy! packed)
       (unpack-dy! yout packed)
-      (assert yout -5)))
+      (assert! (= yout -5) 1)))
   )
 
 (test "inc-dx and inc-dy independently: dx=12 dy=-8"
@@ -514,8 +513,8 @@
       (inc-dy! packed)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 12)
-      (assert yout -8)))
+      (assert! (= xout 12) 1)
+      (assert! (= yout -8) 2)))
   )
 
 (test "opposing inc/dec cancel to zero"
@@ -533,8 +532,8 @@
       (dec-dy! packed)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 0)))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 0) 2)))
   )
 
 ; ─────────────────────────────────────────────────────────────
@@ -551,8 +550,8 @@
           (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
-        (assert xout 0)
-        (assert yout -1)
+        (assert! (= xout 0) 1)
+        (assert! (= yout -1) 2)
         (break))
       (move 3)))
   )
@@ -567,8 +566,8 @@
           (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
-        (assert xout 1)
-        (assert yout 0)
+        (assert! (= xout 1) 1)
+        (assert! (= yout 0) 2)
         (break))
       (move 3)))
   )
@@ -583,8 +582,8 @@
           (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
-        (assert xout 0)
-        (assert yout 1)
+        (assert! (= xout 0) 1)
+        (assert! (= yout 1) 2)
         (break))
       (move 3)))
   )
@@ -599,8 +598,8 @@
           (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
-        (assert xout -1)
-        (assert yout 0)
+        (assert! (= xout -1) 1)
+        (assert! (= yout 0) 2)
         (break))
       (move 3)))
   )
@@ -615,9 +614,11 @@
       (move-track dir packed)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 0)))
-  (assert-at 1 16))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 0) 2)
+      (assert! (= (reg rD_PX) 1) 3)
+      (assert! (= (reg rD_PY) 16) 4)))
+  )
 
 (test "move-track wall blocks move north: packed stays 0, ant stays put"
   :ticks 1
@@ -629,12 +630,14 @@
       (move-track dir packed)
       (unpack-dx! xout packed)
       (unpack-dy! yout packed)
-      (assert xout 0)
-      (assert yout 0)))
-  (assert-at 16 1))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 0) 2)
+      (assert! (= (reg rD_PX) 16) 3)
+      (assert! (= (reg rD_PY) 1) 4)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
-; SECTION 7 — home-dir-packed
+; SECTION 7 — home-dir
 ;
 ; Logic: if |dy| > |dx|: N if dy>0, S if dy<0
 ;        else:           W if dx>0, E if dx<0
@@ -647,8 +650,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed 0)
-      (home-dir-packed dir packed)
-      (assert dir 4)))
+      (home-dir dir packed)
+      (assert! (= dir 4) 1)))
   )
 
 (test "home-dir: pure west (dx=-3) → E"
@@ -658,8 +661,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -3)
       (pack-dy! packed 0)
-      (home-dir-packed dir packed)
-      (assert dir 2)))
+      (home-dir dir packed)
+      (assert! (= dir 2) 1)))
   )
 
 (test "home-dir: pure south (dy=3) → N"
@@ -669,8 +672,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 0)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)
-      (assert dir 1)))
+      (home-dir dir packed)
+      (assert! (= dir 1) 1)))
   )
 
 (test "home-dir: pure north (dy=-3) → S"
@@ -680,8 +683,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 0)
       (pack-dy! packed -3)
-      (home-dir-packed dir packed)
-      (assert dir 3)))
+      (home-dir dir packed)
+      (assert! (= dir 3) 1)))
   )
 
 (test "home-dir: |dx| dominates (dx=5 dy=3) → W"
@@ -691,8 +694,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 5)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)
-      (assert dir 4)))
+      (home-dir dir packed)
+      (assert! (= dir 4) 1)))
   )
 
 (test "home-dir: |dy| dominates (dx=3 dy=5) → N"
@@ -702,8 +705,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed 5)
-      (home-dir-packed dir packed)
-      (assert dir 1)))
+      (home-dir dir packed)
+      (assert! (= dir 1) 1)))
   )
 
 (test "home-dir: |dx| dominates, dx negative (dx=-5 dy=3) → E"
@@ -713,8 +716,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -5)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)
-      (assert dir 2)))
+      (home-dir dir packed)
+      (assert! (= dir 2) 1)))
   )
 
 (test "home-dir: |dy| dominates, dy negative (dx=3 dy=-5) → S"
@@ -724,8 +727,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed -5)
-      (home-dir-packed dir packed)
-      (assert dir 3)))
+      (home-dir dir packed)
+      (assert! (= dir 3) 1)))
   )
 
 (test "home-dir: large magnitudes (dx=100 dy=20) → W"
@@ -735,8 +738,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 100)
       (pack-dy! packed 20)
-      (home-dir-packed dir packed)
-      (assert dir 4)))
+      (home-dir dir packed)
+      (assert! (= dir 4) 1)))
   )
 
 (test "home-dir: large negative (dx=-100 dy=-20) → E"
@@ -746,8 +749,8 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -100)
       (pack-dy! packed -20)
-      (home-dir-packed dir packed)
-      (assert dir 2)))
+      (home-dir dir packed)
+      (assert! (= dir 2) 1)))
   )
 
 (test "walk east 4, home-dir → W"
@@ -759,8 +762,8 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)
-      (assert dir 4)))
+      (home-dir dir packed)
+      (assert! (= dir 4) 1)))
   )
 
 (test "walk north 4, home-dir → S"
@@ -772,8 +775,8 @@
       (dec-dy! packed)
       (dec-dy! packed)
       (dec-dy! packed)
-      (home-dir-packed dir packed)
-      (assert dir 3)))
+      (home-dir dir packed)
+      (assert! (= dir 3) 1)))
   )
 
 (test "walk S×3 then E×5: |dx| dominates, home-dir → W"
@@ -789,8 +792,8 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)
-      (assert dir 4)))
+      (home-dir dir packed)
+      (assert! (= dir 4) 1)))
   )
 
 (test "walk N×5 then E×3: |dy| dominates, home-dir → S"
@@ -806,6 +809,6 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)
-      (assert dir 3)))
+      (home-dir dir packed)
+      (assert! (= dir 3) 1)))
   )

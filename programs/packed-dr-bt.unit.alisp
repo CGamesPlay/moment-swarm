@@ -156,8 +156,8 @@
     (let ((path 0) (dir 0))
       (push-path! path 1)
       (pop-path-dir! dir path)
-      (assert dir 1)
-      (assert path 0))))
+      (assert! (= dir 1) 1)
+      (assert! (= path 0) 2))))
 
 (test "push E, pop → E"
   :run-once
@@ -165,8 +165,8 @@
     (let ((path 0) (dir 0))
       (push-path! path 2)
       (pop-path-dir! dir path)
-      (assert dir 2)
-      (assert path 0))))
+      (assert! (= dir 2) 1)
+      (assert! (= path 0) 2))))
 
 (test "push S, pop → S"
   :run-once
@@ -174,8 +174,8 @@
     (let ((path 0) (dir 0))
       (push-path! path 3)
       (pop-path-dir! dir path)
-      (assert dir 3)
-      (assert path 0))))
+      (assert! (= dir 3) 1)
+      (assert! (= path 0) 2))))
 
 (test "push W, pop → W"
   :run-once
@@ -183,8 +183,8 @@
     (let ((path 0) (dir 0))
       (push-path! path 4)
       (pop-path-dir! dir path)
-      (assert dir 4)
-      (assert path 0))))
+      (assert! (= dir 4) 1)
+      (assert! (= path 0) 2))))
 
 (test "push N,E pop → E then N (LIFO)"
   :run-once
@@ -194,9 +194,9 @@
       (push-path! path 2)
       (pop-path-dir! d1 path)
       (pop-path-dir! d2 path)
-      (assert d1 2)
-      (assert d2 1)
-      (assert path 0))))
+      (assert! (= d1 2) 1)
+      (assert! (= d2 1) 2)
+      (assert! (= path 0) 3))))
 
 (test "push N,E,S,W pop → W,S,E,N"
   :run-once
@@ -210,11 +210,11 @@
       (pop-path-dir! d2 path)
       (pop-path-dir! d3 path)
       (pop-path-dir! d4 path)
-      (assert d1 4)
-      (assert d2 3)
-      (assert d3 2)
-      (assert d4 1)
-      (assert path 0))))
+      (assert! (= d1 4) 1)
+      (assert! (= d2 3) 2)
+      (assert! (= d3 2) 3)
+      (assert! (= d4 1) 4)
+      (assert! (= path 0) 5))))
 
 (test "push 16 directions, pop all back (capacity test)"
   :run-once
@@ -242,8 +242,8 @@
       (pop-path-dir! dir path) (when (!= dir 3) (set! ok 0))
       (pop-path-dir! dir path) (when (!= dir 2) (set! ok 0))
       (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
-      (assert ok 1)
-      (assert path 0))))
+      (assert! (= ok 1) 1)
+      (assert! (= path 0) 2))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 2 — peek-path-dir!
@@ -257,8 +257,8 @@
       (push-path! path 1)
       ; path = (S=2 << 2) | (N=0) = 8
       (peek-path-dir! dir path)
-      (assert dir 1)
-      (assert path 8))))
+      (assert! (= dir 1) 1)
+      (assert! (= path 8) 2))))
 
 (test "peek then pop gives same direction"
   :run-once
@@ -268,8 +268,8 @@
       (push-path! path 4)
       (peek-path-dir! peeked path)
       (pop-path-dir! popped path)
-      (assert peeked 4)
-      (assert popped 4))))
+      (assert! (= peeked 4) 1)
+      (assert! (= popped 4) 2))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 3 — reverse-dir!
@@ -280,28 +280,28 @@
   (begin
     (let ((dir 1))
       (reverse-dir! dir)
-      (assert dir 3))))
+      (assert! (= dir 3) 1))))
 
 (test "reverse E → W"
   :run-once
   (begin
     (let ((dir 2))
       (reverse-dir! dir)
-      (assert dir 4))))
+      (assert! (= dir 4) 1))))
 
 (test "reverse S → N"
   :run-once
   (begin
     (let ((dir 3))
       (reverse-dir! dir)
-      (assert dir 1))))
+      (assert! (= dir 1) 1))))
 
 (test "reverse W → E"
   :run-once
   (begin
     (let ((dir 4))
       (reverse-dir! dir)
-      (assert dir 2))))
+      (assert! (= dir 2) 1))))
 
 (test "reverse is involution (double reverse)"
   :run-once
@@ -309,7 +309,7 @@
     (let ((dir 1))
       (reverse-dir! dir)
       (reverse-dir! dir)
-      (assert dir 1))))
+      (assert! (= dir 1) 1))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 4 — move-with-tracking-bt (move + dx/dy + path)
@@ -328,9 +328,9 @@
         (peek-path-dir! pdir path)
         (break))
       (move random)
-      (assert xout 0)
-      (assert yout -1)
-      (assert pdir 1))))
+      (assert! (= xout 0) 1)
+      (assert! (= yout -1) 2)
+      (assert! (= pdir 1) 3))))
 
 (test "bt move E: dx increments, path records E"
   :ticks 2
@@ -345,9 +345,9 @@
         (peek-path-dir! pdir path)
         (break))
       (move random)
-      (assert xout 1)
-      (assert yout 0)
-      (assert pdir 2))))
+      (assert! (= xout 1) 1)
+      (assert! (= yout 0) 2)
+      (assert! (= pdir 2) 3))))
 
 (test "bt move S: dy increments, path records S"
   :ticks 2
@@ -362,9 +362,9 @@
         (peek-path-dir! pdir path)
         (break))
       (move random)
-      (assert xout 0)
-      (assert yout 1)
-      (assert pdir 3))))
+      (assert! (= xout 0) 1)
+      (assert! (= yout 1) 2)
+      (assert! (= pdir 3) 3))))
 
 (test "bt move W: dx decrements, path records W"
   :ticks 2
@@ -379,9 +379,9 @@
         (peek-path-dir! pdir path)
         (break))
       (move random)
-      (assert xout -1)
-      (assert yout 0)
-      (assert pdir 4))))
+      (assert! (= xout -1) 1)
+      (assert! (= yout 0) 2)
+      (assert! (= pdir 4) 3))))
 
 (test "bt wall blocks: packed and path unchanged"
   :run-once
@@ -390,9 +390,11 @@
   (begin
     (let ((dir 4) (packed 0) (path 0))
       (move-with-tracking-bt dir packed path)
-      (assert packed 0)
-      (assert path 0)))
-  (assert-at 1 16))
+      (assert! (= packed 0) 1)
+      (assert! (= path 0) 2)
+      (assert! (= (reg rD_PX) 1) 3)
+      (assert! (= (reg rD_PY) 16) 4)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 5 — pop-path for backtracking (reverse direction)
@@ -405,7 +407,7 @@
       (push-path! path 2)
       (pop-path-dir! dir path)
       (reverse-dir! dir)
-      (assert dir 4))))
+      (assert! (= dir 4) 1))))
 
 (test "push N,E,S: pop+reverse → N,W,S (backtrack order)"
   :run-once
@@ -423,10 +425,10 @@
       ; Pop N → reverse → S
       (pop-path-dir! d3 path)
       (reverse-dir! d3)
-      (assert d1 1)
-      (assert d2 4)
-      (assert d3 3)
-      (assert path 0))))
+      (assert! (= d1 1) 1)
+      (assert! (= d2 4) 2)
+      (assert! (= d3 3) 3)
+      (assert! (= path 0) 4))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 6 — sign bit stress (RSHIFT is arithmetic)
@@ -447,9 +449,9 @@
       (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)
       (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path) (pop-path-dir! dir path)
       ; Last popped should be W
-      (assert dir 4)
+      (assert! (= dir 4) 1)
       ; Path should be 0 after all pops
-      (assert path 0))))
+      (assert! (= path 0) 2))))
 
 (test "alternating N/W: high bit stress with correct pop order"
   :run-once
@@ -481,5 +483,5 @@
       (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
       (pop-path-dir! dir path) (when (!= dir 4) (set! ok 0))
       (pop-path-dir! dir path) (when (!= dir 1) (set! ok 0))
-      (assert ok 1)
-      (assert path 0))))
+      (assert! (= ok 1) 1)
+      (assert! (= path 0) 2))))

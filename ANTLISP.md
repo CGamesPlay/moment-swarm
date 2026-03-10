@@ -385,6 +385,53 @@ $ argc test my_program.alisp --no-debug
 Assembly error: Line 5: ABORT opcode is not allowed (run with --allow-abort for debug builds)
 ```
 
+### Unit Tests
+
+AntLisp includes a built-in unit test framework for verifying code behavior at compile-time and runtime.
+
+#### Running unit tests
+
+```bash
+argc unit program.unit.alisp             # run tests from a .unit.alisp file
+argc unit program.unit.alisp -v          # verbose: show each test name
+argc unit program.unit.alisp -D FOO=1    # override consts during test
+```
+
+#### Test syntax
+
+```lisp
+(test "test name" [:option value | :flag]* (begin ...))
+```
+
+Each test compiles independently, runs in an isolated world (single ant on a blank map), and uses `(assert! cond code)` for inline assertions. If the assertion fails, the test aborts with the given code.
+
+```lisp
+(test "set! updates register"
+  :run-once
+  (begin
+    (let ((x 0))
+      (set! x 42)
+      (assert! (= x 42) 1))))   ; passes: x is 42
+```
+
+#### Assertion macro
+
+The test harness provides `(assert! cond code)` — abort with code if cond is false:
+
+```lisp
+(assert! (= x 5) 1)             ; assert x equals 5, abort with code 1 on failure
+(assert! (> x 0) 2)             ; assert x is positive, abort with code 2 on failure
+```
+
+#### Test options
+
+- `:run-once` — run the test exactly once (stop at PC wrap); implies `:ticks 1`
+- `:ticks n` — number of world ticks to run (default 10)
+- `:max-ops n` — explicit maxOpsPerTick budget
+- `:ants n` — number of ants (default 1)
+- `:ant-x x` `:ant-y y` — starting position (default 16,16)
+- `:place-food x y` — place food at a location
+
 ### Low-Level Control Flow
 
 ```lisp

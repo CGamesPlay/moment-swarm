@@ -13,8 +13,8 @@
 //
 // The (begin ...) is the program body.  Inline (abort! code) forms
 // compile to ABORT opcodes — if triggered, the test fails.  Use the
-// (check expr expected code) and (assert-at ...) macros defined in the
-// test preamble for structured assertions.
+// (assert! cond code) macro defined in the test preamble for
+// structured assertions.
 // :run-once implies :ticks 1 when :ticks is not also given.
 //
 // Options:
@@ -87,7 +87,7 @@ function parseUnitFile(source) {
   const ast = parse(tokens);
 
   const preamble = [];   // shared top-level forms (outside any test)
-  const tests = [];      // { name, opts, body, assertions, line }
+  const tests = [];      // { name, opts, body, line }
 
   for (const node of ast.body) {
     if (node.type !== "list" || node.value.length === 0) continue;
@@ -132,20 +132,11 @@ function parseUnitFile(source) {
         }
       }
 
-      // Next form is the program body (must not be an assertion)
+      // Next form is the program body (the only form after options)
       if (i >= list.length) throw new Error(`test "${name}" has no body form`);
       const bodyForm = list[i++];
-      if (isAssertionForm(bodyForm))
-        throw new Error(`test "${name}": expected program body before assertions, got ${bodyForm.value[0].value}`);
-
-      // All remaining forms must be assertions
-      const assertions = [];
-      while (i < list.length) {
-        const form = list[i++];
-        if (!isAssertionForm(form))
-          throw new Error(`test "${name}": expected (assert-*) after body, got (${form.value?.[0]?.value ?? "?"})`);
-        assertions.push(form);
-      }
+      if (i < list.length)
+        throw new Error(`test "${name}": unexpected form after body: (${list[i].value?.[0]?.value ?? "?"})`);
 
       // :run-once implies :ticks 1 unless explicitly overridden
       if (opts["run-once"] && opts["ticks"] === undefined) opts["ticks"] = 1;
@@ -153,7 +144,7 @@ function parseUnitFile(source) {
       // body is the list of forms inside (begin ...), or the single form itself
       const body = unwrapBegin(bodyForm);
 
-      tests.push({ name, opts, body, assertions, line: node.line });
+      tests.push({ name, opts, body, line: node.line });
     } else {
       preamble.push(node);
     }
@@ -169,12 +160,6 @@ function unwrapBegin(node) {
     return node.value.slice(1);
   }
   return [node];
-}
-
-function isAssertionForm(node) {
-  if (node.type !== "list" || node.value.length === 0) return false;
-  const head = node.value[0];
-  return head.type === "symbol" && head.value.startsWith("assert-");
 }
 
 // ─── AST → source text ───────────────────────────────────────
@@ -228,10 +213,20 @@ function runProgramOnce(world) {
   world.rngState = rng.state;
 }
 
+// ─── Built-in preamble ───────────────────────────────────────
+
+function loadBuiltinPreamble() {
+  const preamblePath = path.join(__dirname, "unit-preamble.alisp");
+  const source = fs.readFileSync(preamblePath, "utf8");
+  const tokens = tokenize(source);
+  const ast = parse(tokens);
+  return ast.body;
+}
+
 // ─── Build and run a single test ─────────────────────────────
 
 function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {}) {
-  const { name, opts, body, assertions } = testDef;
+  const { name, opts, body } = testDef;
 
   const ticks    = Number(opts["ticks"]    ?? 10);
   const antCount = Number(opts["ants"]     ?? 1);
@@ -243,14 +238,16 @@ function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {
                    : DEFAULT_CONFIG.maxOpsPerTick;
 
   // ── Compile ──────────────────────────────────────────────
-  const source = [...preamble, ...body].map(astToSource).join("\n");
+  const builtinPreamble = loadBuiltinPreamble();
+  const source = [...builtinPreamble, ...preamble, ...body].map(astToSource).join("\n");
 
   let asm;
   try {
     ({ asm } = compileAntLispDebug(source, { constOverrides, sourceFile }));
   } catch (e) {
     return { name, passed: false, error: `Compile error: ${e.message}`,
-             asmSource: null, failedAssertions: [] };
+             asmSource: null, failedAssertions: [], regState: '', worldTick: 0, foodCollected: 0,
+             ant: { x: 0, y: 0, carrying: false, pc: 0 } };
   }
 
   if (verbose) {
@@ -272,7 +269,8 @@ function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {
     program = parseAssembly(asm, { allowAbort: true });
   } catch (e) {
     return { name, passed: false, error: `Assembly error: ${e.message}`,
-             asmSource: asm, failedAssertions: [] };
+             asmSource: asm, failedAssertions: [], regState: '', worldTick: 0, foodCollected: 0,
+             ant: { x: 0, y: 0, carrying: false, pc: 0 } };
   }
 
   // ── Build world ──────────────────────────────────────────
@@ -309,26 +307,11 @@ function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {
     for (let t = 0; t < ticks; t++) runTick(world, config);
   }
 
-  // ── Evaluate assertions ───────────────────────────────────
-  const failedAssertions = [];
+  // ── Check results ───────────────────────────────────────────
   const ant0 = world.ants[0];
+  const failedAssertions = [];
 
-  for (const assertNode of assertions) {
-    const list = assertNode.value;
-    const kind = list[0].value;
-
-    try {
-      switch (kind) {
-
-        default:
-          throw new Error(`Unknown assertion: ${kind}`);
-      }
-    } catch (e) {
-      failedAssertions.push(`${kind}: ERROR — ${e.message}`);
-    }
-  }
-
-  // Check VM-level ABORT
+  // VM-level ABORT indicates test failure
   if (ant0._aborted !== undefined) {
     failedAssertions.push(`aborted with code ${ant0._aborted}`);
   }

@@ -1,0 +1,10 @@
+; ═══════════════════════════════════════════════════════════════
+; Unit Test Preamble
+; ═══════════════════════════════════════════════════════════════
+;
+; Built-in assertions and utilities for the unit test harness.
+; This preamble is automatically included in every test.
+
+; (assert! cond code) — abort with code if cond is false
+(defmacro assert! (cond code)
+  (when (not cond) (abort! code)))

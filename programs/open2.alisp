@@ -238,7 +238,7 @@
           (go returning))))
 
     ; Fallback: dead-reckon toward nest
-    (home-dir-packed dir homepos)
+    (home-dir dir homepos)
     (when (= (probe dir) 1)
       ; Dead-reckon blocked too — pick random non-wall
       (pick-random-nonwall dir))
