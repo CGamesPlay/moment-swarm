@@ -380,6 +380,12 @@ export function linearScan(
   program: SSAProgram,
   intervals: LiveInterval[],
 ): AllocationResult {
+  // Helper to format a register allocation with variable name if available
+  const regLabel = (reg: number, temp: string) => {
+    const varName = program.tempNames?.get(temp);
+    return varName ? `r${reg}=${varName}(${temp})` : `r${reg}=${temp}`;
+  };
+
   // Sort by start
   const sorted = [...intervals].sort((a, b) => a.start - b.start);
 
@@ -443,10 +449,14 @@ export function linearScan(
     if (allocation.has(interval.temp)) {
       const prevReg = parseInt(allocation.get(interval.temp)!.slice(1), 10);
       if (!freeRegs.has(prevReg)) {
+        const varName = program.tempNames?.get(interval.temp);
+        const failLabel = varName ? `${varName}(${interval.temp})` : interval.temp;
+        const loc = program.tempLocs?.get(interval.temp);
+        const prefix = loc ? `${loc.file}:${loc.line}:${loc.col}: ` : '';
         throw new Error(
-          `Register conflict — ${interval.temp} was previously allocated r${prevReg} ` +
-          `but it is not free at instruction ${interval.start}. ` +
-          `Active: ${active.map(a => `${a.temp}=r${a.reg}`).join(', ')}`
+          `${prefix}Register conflict — ${failLabel} was previously allocated r${prevReg} ` +
+          `but it is not free. ` +
+          `Active: ${active.map(a => regLabel(a.reg, a.temp)).join(', ')}`
         );
       }
       freeRegs.delete(prevReg);
@@ -480,10 +490,14 @@ export function linearScan(
     if (assigned === -1) {
       // Assign lowest free register
       if (freeRegs.size === 0) {
+        const varName = program.tempNames?.get(interval.temp);
+        const failLabel = varName ? `${varName}(${interval.temp})` : interval.temp;
+        const loc = program.tempLocs?.get(interval.temp);
+        const prefix = loc ? `${loc.file}:${loc.line}:${loc.col}: ` : '';
         throw new Error(
-          `Register exhaustion — all 8 registers in use. ` +
-          `Cannot allocate ${interval.temp} (live from ${interval.start} to ${interval.end}). ` +
-          `Active: ${active.map(a => `${a.temp}=r${a.reg}`).join(', ')}`
+          `${prefix}Register exhaustion — all 8 registers in use. ` +
+          `Cannot allocate ${failLabel}. ` +
+          `Active: ${active.map(a => regLabel(a.reg, a.temp)).join(', ')}`
         );
       }
       assigned = Math.min(...freeRegs);

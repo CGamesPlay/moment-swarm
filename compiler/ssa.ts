@@ -53,6 +53,8 @@ export interface SSAProgram {
   nextTemp: number;
   tags: TagDef[];
   allBindings: Map<string, string>;  // var name → last SSA temp (for debug)
+  tempNames: Map<string, string>;    // temp → var name (for debug)
+  tempLocs: Map<string, { file: string; line: number; col: number }>;  // temp → source location
 }
 
 // ─── Side-effect classification ─────────────────────────────
@@ -125,17 +127,25 @@ export class SSALowering {
   }[] = [];
   private tags: TagDef[];
   private consts: Map<string, string>;
+  private sourceFile: string;
   allBindings = new Map<string, string>();  // for debug: var name → last temp
+  tempNames = new Map<string, string>();    // for debug: temp → var name
+  tempLocs = new Map<string, { file: string; line: number; col: number }>();  // temp → source location
 
-  constructor(tags: TagDef[], consts: Map<string, string>) {
+  constructor(tags: TagDef[], consts: Map<string, string>, sourceFile = '') {
     this.tags = tags;
     this.consts = consts;
+    this.sourceFile = sourceFile;
     this.env = new Map();
     this.currentBlock = this.makeBlock('entry');
   }
 
-  private freshTemp(): string {
-    return `%t${this.nextTemp++}`;
+  private freshTemp(node?: ASTNode): string {
+    const temp = `%t${this.nextTemp++}`;
+    if (node && this.sourceFile) {
+      this.tempLocs.set(temp, { file: this.sourceFile, line: node.line, col: node.col });
+    }
+    return temp;
   }
 
   private makeBlock(hint: string): BasicBlock {
@@ -202,13 +212,15 @@ export class SSALowering {
       nextTemp: this.nextTemp,
       tags: this.tags,
       allBindings: this.allBindings,
+      tempNames: this.tempNames,
+      tempLocs: this.tempLocs,
     };
   }
 
   // Lower an expression, returning the SSA temp holding its value (or '' for void)
   private lowerExpr(node: ASTNode): string {
     if (node.type === 'number') {
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(node);
       this.emit('const', temp, node.value);
       return temp;
     }
@@ -219,7 +231,7 @@ export class SSALowering {
         return val;  // already an SSA temp
       }
       // It's a constant/direction — emit const
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(node);
       if (typeof val === 'number') {
         this.emit('const', temp, val);
       } else {
@@ -247,7 +259,7 @@ export class SSALowering {
       case 'begin': return this.lowerBegin(list);
       case 'let': return this.lowerLet(list);
       case 'let*': return this.lowerLetStar(list);
-      case 'set!': return this.lowerSet(list);
+      case 'set!': return this.lowerSet(list, node);
       case 'if': return this.lowerIf(list, node);
       case 'when': return this.lowerWhen(list, node);
       case 'unless': return this.lowerUnless(list, node);
@@ -267,15 +279,15 @@ export class SSALowering {
       case 'lshift': case 'rshift':
         return this.lowerArith(op, list, node);
       case 'random':
-        return this.lowerRandom(list);
+        return this.lowerRandom(list, node);
 
       // Sensing
-      case 'sense': return this.lowerSenseOp('sense', list);
-      case 'smell': return this.lowerSenseOp('smell', list);
-      case 'probe': return this.lowerSenseOp('probe', list);
-      case 'sniff': return this.lowerSniff(list);
-      case 'carrying?': return this.lowerNullaryOp('carrying');
-      case 'id': return this.lowerNullaryOp('id');
+      case 'sense': return this.lowerSenseOp('sense', list, node);
+      case 'smell': return this.lowerSenseOp('smell', list, node);
+      case 'probe': return this.lowerSenseOp('probe', list, node);
+      case 'sniff': return this.lowerSniff(list, node);
+      case 'carrying?': return this.lowerNullaryOp('carrying', node);
+      case 'id': return this.lowerNullaryOp('id', node);
 
       // Actions
       case 'move': return this.lowerMove(list);
@@ -328,6 +340,7 @@ export class SSALowering {
     for (const { name, temp } of evaluated) {
       this.env.set(name, temp);
       this.allBindings.set(name, temp);
+      this.tempNames.set(temp, name);
     }
 
     let result = '';
@@ -358,6 +371,7 @@ export class SSALowering {
       const initTemp = this.lowerExpr(pair[1]);
       this.env.set(name, initTemp);
       this.allBindings.set(name, initTemp);
+      this.tempNames.set(initTemp, name);
     }
 
     let result = '';
@@ -376,14 +390,15 @@ export class SSALowering {
   }
 
   // ── set! ──
-  private lowerSet(list: ASTNode[]): string {
+  private lowerSet(list: ASTNode[], node: ASTNode): string {
     const name = (list[1] as any).value as string;
     const valTemp = this.lowerExpr(list[2]);
     // Create a fresh temp for the new value (SSA property)
-    const newTemp = this.freshTemp();
+    const newTemp = this.freshTemp(node);
     this.emit('copy', newTemp, valTemp);
     this.env.set(name, newTemp);
     this.allBindings.set(name, newTemp);
+    this.tempNames.set(newTemp, name);
     return newTemp;
   }
 
@@ -440,7 +455,7 @@ export class SSALowering {
     // to select the if-expression's value.  Without this, only thenResult is
     // returned, which is undefined on the else path.
     if (elseBody && thenResult !== elseResult) {
-      const resultPhi = this.freshTemp();
+      const resultPhi = this.freshTemp(node);
       this.currentBlock.phis.push({
         dest: resultPhi,
         entries: [
@@ -636,18 +651,19 @@ export class SSALowering {
     // Try to unroll when count is a compile-time constant
     const constCount = tryEvalConst(pair[1], this.consts);
     if (constCount !== null) {
-      return this.lowerDotimesUnrolled(varName, constCount, list);
+      return this.lowerDotimesUnrolled(varName, constCount, list, node);
     }
 
     const countVal = this.resolveOperand(pair[1]);
 
     // Initialize loop variable
-    const initTemp = this.freshTemp();
+    const initTemp = this.freshTemp(node);
     this.emit('const', initTemp, 0);
 
     const savedEnv = new Map(this.env);
     this.env.set(varName, initTemp);
     this.allBindings.set(varName, initTemp);
+    this.tempNames.set(initTemp, varName);
 
     const headerBlock = this.makeBlock('dotimes');
     const bodyBlock = this.makeBlock('dotimes_body');
@@ -672,7 +688,7 @@ export class SSALowering {
     }
 
     // Increment
-    const newI = this.freshTemp();
+    const newI = this.freshTemp(node);
     this.emit('add', newI, this.env.get(varName)!, 1);
     this.env.set(varName, newI);
 
@@ -697,7 +713,7 @@ export class SSALowering {
 
   // Unrolled dotimes: each iteration gets its own block with phi nodes
   // for outer env vars so break/continue work correctly.
-  private lowerDotimesUnrolled(varName: string, count: number, list: ASTNode[]): string {
+  private lowerDotimesUnrolled(varName: string, count: number, list: ASTNode[], node: ASTNode): string {
     const savedEnv = new Map(this.env);
 
     // Zero iterations — no-op
@@ -758,10 +774,11 @@ export class SSALowering {
       }
 
       // Bind loop variable to this iteration's constant value
-      const valTemp = this.freshTemp();
+      const valTemp = this.freshTemp(node);
       this.emit('const', valTemp, i);
       this.env.set(varName, valTemp);
       this.allBindings.set(varName, valTemp);
+      this.tempNames.set(valTemp, varName);
 
       // break → exitBlock, continue → next iter (or exit if last)
       const nextBlock = i + 1 < count ? iterBlocks[i + 1] : exitBlock;
@@ -882,10 +899,11 @@ export class SSALowering {
       }
 
       // Bind the loop variable to this iteration's value
-      const valTemp = this.freshTemp();
+      const valTemp = this.freshTemp(node);
       this.emit('const', valTemp, values[i]);
       this.env.set(varName, valTemp);
       this.allBindings.set(varName, valTemp);
+      this.tempNames.set(valTemp, varName);
 
       // For break/continue: break → exitBlock, continue → next iter (or exit if last)
       const nextBlock = i + 1 < values.length ? iterBlocks[i + 1] : exitBlock;
@@ -1063,7 +1081,7 @@ export class SSALowering {
     // Try constant folding
     const folded = tryEvalConst(node, this.consts);
     if (folded !== null) {
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(node);
       this.emit('const', temp, folded);
       return temp;
     }
@@ -1078,8 +1096,8 @@ export class SSALowering {
     // Unary negation: (- x) → sub 0 x
     if (list.length === 2 && op === '-') {
       const a = this.resolveOperand(list[1]);
-      const temp = this.freshTemp();
-      const zero = this.freshTemp();
+      const temp = this.freshTemp(node);
+      const zero = this.freshTemp(node);
       this.emit('const', zero, 0);
       this.emit('sub', temp, zero, a);
       return temp;
@@ -1089,7 +1107,7 @@ export class SSALowering {
     let result = this.resolveOperand(list[1]);
     // Ensure result is in a temp (might be a constant)
     if (typeof result === 'number' || !result.startsWith('%t')) {
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(node);
       if (typeof result === 'number') {
         this.emit('const', temp, result);
       } else {
@@ -1100,7 +1118,7 @@ export class SSALowering {
 
     for (let i = 2; i < list.length; i++) {
       const b = this.resolveOperand(list[i]);
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(node);
       this.emit(ssaOp, temp, result, b);
       result = temp;
     }
@@ -1109,31 +1127,31 @@ export class SSALowering {
   }
 
   // ── random ──
-  private lowerRandom(list: ASTNode[]): string {
+  private lowerRandom(list: ASTNode[], node: ASTNode): string {
     const a = this.resolveOperand(list[1]);
-    const temp = this.freshTemp();
+    const temp = this.freshTemp(node);
     this.emit('random', temp, a);
     return temp;
   }
 
   // ── Sensing ──
-  private lowerSenseOp(ssaOp: string, list: ASTNode[]): string {
+  private lowerSenseOp(ssaOp: string, list: ASTNode[], node: ASTNode): string {
     const target = this.resolveAtom(list[1]);
-    const temp = this.freshTemp();
+    const temp = this.freshTemp(node);
     this.emit(ssaOp, temp, target);
     return temp;
   }
 
-  private lowerSniff(list: ASTNode[]): string {
+  private lowerSniff(list: ASTNode[], node: ASTNode): string {
     const ch = this.resolveAtom(list[1]);
     const dir = this.resolveOperand(list[2]);
-    const temp = this.freshTemp();
+    const temp = this.freshTemp(node);
     this.emit('sniff', temp, ch, dir);
     return temp;
   }
 
-  private lowerNullaryOp(ssaOp: string): string {
-    const temp = this.freshTemp();
+  private lowerNullaryOp(ssaOp: string, node: ASTNode): string {
+    const temp = this.freshTemp(node);
     this.emit(ssaOp, temp);
     return temp;
   }
@@ -1178,7 +1196,7 @@ export class SSALowering {
       const valid = Object.keys(SSALowering.MAGIC_REG_MAP).join(', ');
       throw new Error(`Unknown magic register "${name}" at line ${node.line}:${node.col}. Valid: ${valid}`);
     }
-    const temp = this.freshTemp();
+    const temp = this.freshTemp(node);
     this.emit('reg', temp, idx);
     return temp;
   }
@@ -1202,19 +1220,19 @@ export class SSALowering {
     this.branchTo(cmpOp, a, b, thenBlock, elseBlock);
 
     this.sealBlock(thenBlock);
-    const trueTemp = this.freshTemp();
+    const trueTemp = this.freshTemp(node);
     this.emit('const', trueTemp, 1);
     this.jumpTo(mergeBlock);
     const thenExit = this.currentBlock;
 
     this.sealBlock(elseBlock);
-    const falseTemp = this.freshTemp();
+    const falseTemp = this.freshTemp(node);
     this.emit('const', falseTemp, 0);
     this.jumpTo(mergeBlock);
     const elseExit = this.currentBlock;
 
     this.sealBlock(mergeBlock);
-    const resultTemp = this.freshTemp();
+    const resultTemp = this.freshTemp(node);
     mergeBlock.phis.push({
       dest: resultTemp,
       entries: [
@@ -1236,19 +1254,19 @@ export class SSALowering {
     this.branchTo('eq', inner, 0, thenBlock, elseBlock);
 
     this.sealBlock(thenBlock);
-    const trueTemp = this.freshTemp();
+    const trueTemp = this.freshTemp(node);
     this.emit('const', trueTemp, 1);
     this.jumpTo(mergeBlock);
     const thenExit = this.currentBlock;
 
     this.sealBlock(elseBlock);
-    const falseTemp = this.freshTemp();
+    const falseTemp = this.freshTemp(node);
     this.emit('const', falseTemp, 0);
     this.jumpTo(mergeBlock);
     const elseExit = this.currentBlock;
 
     this.sealBlock(mergeBlock);
-    const resultTemp = this.freshTemp();
+    const resultTemp = this.freshTemp(node);
     mergeBlock.phis.push({
       dest: resultTemp,
       entries: [
@@ -1274,10 +1292,10 @@ export class SSALowering {
       // Ensure val is in a temp
       let temp: string;
       if (typeof val === 'number') {
-        temp = this.freshTemp();
+        temp = this.freshTemp(cond);
         this.emit('const', temp, val);
       } else if (!val.startsWith('%t')) {
-        temp = this.freshTemp();
+        temp = this.freshTemp(cond);
         this.emit('const', temp, val);
       } else {
         temp = val;
@@ -1336,7 +1354,7 @@ export class SSALowering {
     }
 
     if (op === 'carrying?') {
-      const temp = this.freshTemp();
+      const temp = this.freshTemp(cond);
       this.emit('carrying', temp);
       this.branchTo('ne', temp, 0, thenBlock, elseBlock);
       return;
@@ -1370,6 +1388,7 @@ export class SSALowering {
         });
         this.env.set(name, phiTemp);
         this.allBindings.set(name, phiTemp);
+        this.tempNames.set(phiTemp, name);
       }
     }
   }
@@ -1399,6 +1418,7 @@ export class SSALowering {
       this.currentBlock.phis.push({ dest: phiTemp, entries });
       this.env.set(name, phiTemp);
       this.allBindings.set(name, phiTemp);
+      this.tempNames.set(phiTemp, name);
     }
   }
 
@@ -1418,6 +1438,7 @@ export class SSALowering {
       });
       this.env.set(name, phiTemp);
       this.allBindings.set(name, phiTemp);
+      this.tempNames.set(phiTemp, name);
       phiMap.set(name, phiTemp);
     }
     return phiMap;
@@ -1485,7 +1506,8 @@ export function lowerToSSA(
   forms: ASTNode[],
   tags: TagDef[],
   consts: Map<string, string>,
+  sourceFile = '',
 ): SSAProgram {
-  const lowering = new SSALowering(tags, consts);
+  const lowering = new SSALowering(tags, consts, sourceFile);
   return lowering.lower(forms);
 }

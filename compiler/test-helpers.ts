@@ -165,6 +165,8 @@ export function makeProgram(blocks: BasicBlock[]): SSAProgram {
     nextTemp: 100,
     tags: [],
     allBindings: new Map(),
+    tempNames: new Map(),
+    tempLocs: new Map(),
   };
 }
 
