@@ -6,10 +6,28 @@
 ; Or:       argc unit compiler/antlisp.unit.alisp
 ;
 ; Syntax:
-;   (test "name" [:opt val | :flag]* (begin ...) (assert-*) ...)
+;   (test "name" [:opt val | :flag]* (begin ...) ...)
 ;
-; The (begin ...) is the program body.  All (assert-*) forms follow
-; it.  :run-once implies :ticks 1.
+; The (begin ...) is the program body.  Use (check expr expected code)
+; for inline assertions — triggers (abort! code) if expr != expected.
+; :run-once implies :ticks 1.
+
+; ─── Assertion helpers ────────────────────────────────────────
+
+; (check expr expected code) — abort with code if expr != expected
+(defmacro check (expr expected code)
+  (when (!= expr expected) (abort! code)))
+
+; Harness-replacement macros using magic registers
+(defmacro assert-at (ex ey code-x code-y)
+  (when (!= (reg rD_PX) ex) (abort! code-x))
+  (when (!= (reg rD_PY) ey) (abort! code-y)))
+
+(defmacro assert-tick (expected code)
+  (when (!= (reg rD_CL) expected) (abort! code)))
+
+(defmacro assert-pc (expected code)
+  (when (!= (reg rD_PC) expected) (abort! code)))
 
 ; ─── Basic register operations ───────────────────────────────
 
@@ -18,41 +36,41 @@
   (begin
     (let ((x 0))
       (set! x 1)
-      (assert x 1))))
+      (check x 1 1))))
 
 (test "user example: let x 0, set! x 1"
   :run-once
   (begin
     (let ((x 0))
       (set! x 1)
-      (assert x 1))))
+      (check x 1 1))))
 
 (test "let preserves initial value without mutation"
   :run-once
   (begin
     (let ((x 42))
-      (assert x 42))))
+      (check x 42 1))))
 
 (test "multiple let bindings are independent"
   :run-once
   (begin
     (let ((a 1) (b 2) (c 3))
-      (assert a 1)
-      (assert b 2)
-      (assert c 3))))
+      (check a 1 1)
+      (check b 2 2)
+      (check c 3 3))))
 
 (test "let*: sequential binding"
   :run-once
   (begin
     (let* ((x 1) (y (+ x 1)))
-      (assert y 2))))
+      (check y 2 1))))
 
 (test "let: parallel binding sees outer scope"
   :run-once
   (begin
     (let ((x 0))
       (let ((x 10) (y x))
-        (assert y 0)))))
+        (check y 0 1)))))
 
 (test "let: set! propagates to outer scope"
   :run-once
@@ -60,7 +78,7 @@
     (let ((x 0))
       (let ((a 1))
         (set! x 5))
-      (assert x 5))))
+      (check x 5 1))))
 
 ; ─── Arithmetic ──────────────────────────────────────────────
 
@@ -69,87 +87,87 @@
   (begin
     (let ((a 3) (b 4) (c 0))
       (set! c (+ a b))
-      (assert c 7))))
+      (check c 7 1))))
 
 (test "subtraction: x - 3"
   :run-once
   (begin
     (let ((x 10))
       (set! x (- x 3))
-      (assert x 7))))
+      (check x 7 1))))
 
 (test "multiplication: x * 7"
   :run-once
   (begin
     (let ((x 6))
       (set! x (* x 7))
-      (assert x 42))))
+      (check x 42 1))))
 
 (test "division: x / 4"
   :run-once
   (begin
     (let ((x 20))
       (set! x (/ x 4))
-      (assert x 5))))
+      (check x 5 1))))
 
 (test "modulo: 17 mod 5"
   :run-once
   (begin
     (let ((x 0))
       (set! x (mod 17 5))
-      (assert x 2))))
+      (check x 2 1))))
 
 (test "chained addition: 1+2+3+4"
   :run-once
   (begin
     (let ((x 0))
       (set! x (+ 1 2 3 4))
-      (assert x 10))))
+      (check x 10 1))))
 
 (test "bitwise and: 15 and 6 = 6"
   :run-once
   (begin
     (let ((x 0))
       (set! x (and 15 6))
-      (assert x 6))))
+      (check x 6 1))))
 
 (test "bitwise or: 8 or 5 = 13"
   :run-once
   (begin
     (let ((x 0))
       (set! x (or 8 5))
-      (assert x 13))))
+      (check x 13 1))))
 
 (test "left shift: 1 << 3 = 8"
   :run-once
   (begin
     (let ((x 1))
       (set! x (lshift x 3))
-      (assert x 8))))
+      (check x 8 1))))
 
 (test "right shift: 16 >> 2 = 4"
   :run-once
   (begin
     (let ((x 16))
       (set! x (rshift x 2))
-      (assert x 4))))
+      (check x 4 1))))
 
 (test "unary negation: (- x) on 5 = -5"
   :run-once
   (begin
     (let ((x 5))
       (set! x (- x))
-      (assert x -5))))
+      (check x -5 1))))
 
 (test "comparison operators on variable"
   :run-once
   (begin
     (let ((x 10))
-      (assert (> x 5) 1)
-      (assert (< x 20) 1)
-      (assert (>= x 10) 1)
-      (assert (<= x 10) 1)
-      (assert (!= x 9) 1))))
+      (check (> x 5) 1 1)
+      (check (< x 20) 1 2)
+      (check (>= x 10) 1 3)
+      (check (<= x 10) 1 4)
+      (check (!= x 9) 1 5))))
 
 ; ─── Named register assertions ───────────────────────────────
 
@@ -158,15 +176,15 @@
   (begin
     (let ((counter 0))
       (set! counter 99)
-      (assert counter 99))))
+      (check counter 99 1))))
 
 (test "score with comparison"
   :run-once
   (begin
     (let ((score 50))
       (set! score (+ score 10))
-      (assert (> score 55) 1)
-      (assert score 60))))
+      (check (> score 55) 1 1)
+      (check score 60 2))))
 
 ; ─── Conditionals ────────────────────────────────────────────
 
@@ -177,7 +195,7 @@
       (if (= x 1)
         (set! result 10)
         (set! result 20))
-      (assert result 10))))
+      (check result 10 1))))
 
 (test "if: else branch taken when condition false"
   :run-once
@@ -186,7 +204,7 @@
       (if (= x 1)
         (set! result 10)
         (set! result 20))
-      (assert result 20))))
+      (check result 20 1))))
 
 (test "cond: correct branch matched"
   :run-once
@@ -196,7 +214,7 @@
             ((= x 2) (set! result 200))
             ((= x 3) (set! result 300))
             (else    (set! result 999)))
-      (assert result 300))))
+      (check result 300 1))))
 
 (test "cond: else branch taken when no match"
   :run-once
@@ -205,7 +223,7 @@
       (cond ((= x 1) (set! result 1))
             ((= x 2) (set! result 2))
             (else    (set! result 42)))
-      (assert result 42))))
+      (check result 42 1))))
 
 (test "when: body runs when condition true"
   :run-once
@@ -213,7 +231,7 @@
     (let ((x 5) (flag 0))
       (when (> x 3)
         (set! flag 1))
-      (assert flag 1))))
+      (check flag 1 1))))
 
 (test "when: body skipped when condition false"
   :run-once
@@ -221,7 +239,7 @@
     (let ((x 1) (flag 0))
       (when (> x 3)
         (set! flag 1))
-      (assert flag 0))))
+      (check flag 0 1))))
 
 (test "unless: body skipped when condition true"
   :run-once
@@ -229,7 +247,7 @@
     (let ((x 5) (flag 0))
       (unless (> x 3)
         (set! flag 1))
-      (assert flag 0))))
+      (check flag 0 1))))
 
 (test "unless: body runs when condition false"
   :run-once
@@ -237,7 +255,7 @@
     (let ((x 1) (flag 0))
       (unless (> x 3)
         (set! flag 1))
-      (assert flag 1))))
+      (check flag 1 1))))
 
 ; ─── Loops ───────────────────────────────────────────────────
 
@@ -247,7 +265,7 @@
     (let ((count 0))
       (dotimes (i 5)
         (set! count (+ count 1)))
-      (assert count 5))))
+      (check count 5 1))))
 
 (test "while: loops while condition holds"
   :run-once
@@ -256,8 +274,8 @@
       (while (> x 5)
         (set! x (- x 1))
         (set! steps (+ steps 1)))
-      (assert x 5)
-      (assert steps 5))))
+      (check x 5 1)
+      (check steps 5 2))))
 
 (test "loop with break exits"
   :run-once
@@ -267,7 +285,7 @@
         (set! x (+ x 1))
         (if (= x 3)
           (break)))
-      (assert x 3))))
+      (check x 3 1))))
 
 (test "loop with continue skips rest of body"
   :run-once
@@ -278,7 +296,7 @@
         (if (!= (mod i 2) 0)
           (continue))
         (set! evens (+ evens 1)))
-      (assert evens 5))))
+      (check evens 5 1))))
 
 ; ─── Multi-tick accumulation ─────────────────────────────────
 ;
@@ -293,7 +311,7 @@
       (dotimes (i 3)
         (set! count (+ count 1))
         (move random))
-      (assert count 3))))
+      (check count 3 1))))
 
 (test "register accumulates +2 per tick over 5 ticks"
   :ticks 5
@@ -303,14 +321,14 @@
       (dotimes (i 5)
         (set! total (+ total 2))
         (move random))
-      (assert total 10))))
+      (check total 10 1))))
 
 ; ─── Food / action tests ─────────────────────────────────────
 
 (test "ant not carrying food initially"
   :run-once
   (begin
-    (assert (carrying?) 0)
+    (check (carrying?) 0 1)
     (move n)))
 
 (test "pickup food when standing on it"
@@ -321,7 +339,7 @@
   (begin
     (loop
       (pickup)
-      (assert (carrying?) 1))))
+      (check (carrying?) 1 1))))
 
 (test "food collected counter increases after drop at nest"
   :ticks 20
@@ -335,17 +353,26 @@
       (move w)
       (move w)
       (move w)
-      (drop)))
-  (assert-food-collected >= 0))
+      (drop)
+      ; rD_FD is food collected at tick start — after a drop+next tick it should be >= 0
+      (check (>= (reg rD_FD) 0) 1 1))))
 
 ; ─── Tick assertion ──────────────────────────────────────────
 
-(test "assert-tick: world.tick equals :ticks"
-  :ticks 7
-  :max-ops 1
+(test "rD_CL: tick register increments each tick"
+  :ticks 3
+  :run-once
   (begin
-    (move n))
-  (assert-tick 7))
+    (let ((seen0 0) (seen1 0) (seen2 0))
+      (set! seen0 (reg rD_CL))
+      (move n)
+      (set! seen1 (reg rD_CL))
+      (move n)
+      (set! seen2 (reg rD_CL))
+      (move n)
+      (check seen0 0 1)
+      (check seen1 1 2)
+      (check seen2 2 3))))
 
 ; ─── Sensing smoke tests ─────────────────────────────────────
 
@@ -354,21 +381,21 @@
   (begin
     (let ((dir 5))
       (set! dir (smell ch_red))
-      (assert dir 0))))
+      (check dir 0 1))))
 
 (test "sense food returns 0 when no adjacent food"
   :run-once
   (begin
     (let ((dir 5))
       (set! dir (sense food))
-      (assert dir 0))))
+      (check dir 0 1))))
 
 (test "carrying? returns 0 when not carrying"
   :run-once
   (begin
     (let ((c 255))
       (set! c (carrying?))
-      (assert c 0))))
+      (check c 0 1))))
 
 ; ─── Integration ─────────────────────────────────────────────
 
@@ -381,8 +408,8 @@
         (set! dx (+ dx 1))
         (set! dy (- dy 1))
         (move random))
-      (assert dx 4)
-      (assert dy -4))))
+      (check dx 4 1)
+      (check dy -4 2))))
 
 ; ─── Short-circuit and/or in conditional contexts ──────────────
 
@@ -391,69 +418,69 @@
   :run-once
   (begin (let ((r 0))
     (if (and (= 1 1) (= 2 2)) (set! r 10) (set! r 20))
-    (assert r 10))))
+    (check r 10 1))))
 
 (test "and short-circuit: first false takes else"
   :run-once
   (begin (let ((r 0))
     (if (and (= 1 2) (= 2 2)) (set! r 10) (set! r 20))
-    (assert r 20))))
+    (check r 20 1))))
 
 (test "and short-circuit: second false takes else"
   :run-once
   (begin (let ((r 0))
     (if (and (= 1 1) (= 2 3)) (set! r 10) (set! r 20))
-    (assert r 20))))
+    (check r 20 1))))
 
 (test "and short-circuit: three operands, middle false"
   :run-once
   (begin (let ((r 0))
     (if (and (= 1 1) (= 2 9) (= 3 3)) (set! r 1) (set! r 0))
-    (assert r 0))))
+    (check r 0 1))))
 
 (test "and short-circuit: in when context"
   :run-once
   (begin (let ((a 5) (b 10) (flag 0))
     (when (and (> a 3) (> b 7)) (set! flag 1))
-    (assert flag 1))))
+    (check flag 1 1))))
 
 (test "and short-circuit: in when, first false skips body"
   :run-once
   (begin (let ((a 1) (b 10) (flag 0))
     (when (and (> a 3) (> b 7)) (set! flag 1))
-    (assert flag 0))))
+    (check flag 0 1))))
 
 ;; --- short-circuit or ---
 (test "or short-circuit: first true takes then"
   :run-once
   (begin (let ((r 0))
     (if (or (= 1 1) (= 2 3)) (set! r 10) (set! r 20))
-    (assert r 10))))
+    (check r 10 1))))
 
 (test "or short-circuit: both false takes else"
   :run-once
   (begin (let ((r 0))
     (if (or (= 1 2) (= 3 4)) (set! r 10) (set! r 20))
-    (assert r 20))))
+    (check r 20 1))))
 
 (test "or short-circuit: second true takes then"
   :run-once
   (begin (let ((r 0))
     (if (or (= 1 2) (= 2 2)) (set! r 10) (set! r 20))
-    (assert r 10))))
+    (check r 10 1))))
 
 (test "or short-circuit: in unless, both false runs body"
   :run-once
   (begin (let ((a 1) (b 2) (flag 0))
     (unless (or (> a 5) (> b 5)) (set! flag 1))
-    (assert flag 1))))
+    (check flag 1 1))))
 
 ;; --- composition ---
 (test "not-and: not (and true false) is true"
   :run-once
   (begin (let ((r 0))
     (if (not (and (= 1 1) (= 2 3))) (set! r 1) (set! r 0))
-    (assert r 1))))
+    (check r 1 1))))
 
 ; ─── Loops & accumulators ──────────────────────────────────────
 
@@ -467,8 +494,8 @@
         (when (= (mod tick-count 2) 0)
           (set! flag (+ flag 1)))
         (move random))
-      (assert tick-count 10)
-      (assert flag 5))))
+      (check tick-count 10 1)
+      (check flag 5 2))))
 
 ; ─── Let-forwarding safety ─────────────────────────────────
 
@@ -487,7 +514,7 @@
         (when (!= saved 0)
           (set! target saved)))
       ; x=0 so when is not taken, target must still be 42
-      (assert target 42))))
+      (check target 42 1))))
 
 ; ─── Arithmetic / expression evaluation ─────────────────────
 ; (Migrated from antlisp.test.js codegen tests to runtime tests)
@@ -496,34 +523,34 @@
   :run-once
   (begin
     (let ((x (+ 3 4 5)))
-      (assert x 12))))
+      (check x 12 1))))
 
 (test "compound expr in mark: timer * 2"
   :run-once
   (begin
     (let ((timer 10) (result 0))
       (set! result (* timer 2))
-      (assert result 20))))
+      (check result 20 1))))
 
 (test "nested compound exprs: (+ (* 2 3) (- 10 5))"
   :run-once
   (begin
     (let ((x (+ (* 2 3) (- 10 5))))
-      (assert x 11))))
+      (check x 11 1))))
 
 (test "unary negation: (- 5) = -5"
   :run-once
   (begin
     (let ((x 5))
       (set! x (- x))
-      (assert x -5))))
+      (check x -5 1))))
 
 (test "unary negation in nested let"
   :run-once
   (begin
     (let ((x 5))
       (let ((y (- x)))
-        (assert y -5)))))
+        (check y -5 1)))))
 
 (test "nested let scopes preserve values"
   :run-once
@@ -534,16 +561,16 @@
           (b (sense wall))
           (c (sense nest)))
       ; On blank map at 5,5 (away from nest at 16,16) all should be 0
-      (assert a 0)
-      (assert b 0)
-      (assert c 0))))
+      (check a 0 1)
+      (check b 0 2)
+      (check c 0 3))))
 
 (test "let shadowing: inner x shadows outer"
   :run-once
   (begin
     (let ((x 5))
       (let ((x 10))
-        (assert x 10)))))
+        (check x 10 1)))))
 
 (test "let with multiple sensing bindings"
   :run-once
@@ -553,37 +580,37 @@
     (let ((a (sense food))
           (b (sense wall))
           (c (carrying?)))
-      (assert a 0)
-      (assert b 0)
-      (assert c 0))))
+      (check a 0 1)
+      (check b 0 2)
+      (check c 0 3))))
 
 (test "let binding as global-style var: dx + 1"
   :run-once
   (begin
     (let ((dx 0) (dy 0))
       (set! dx (+ dx 1))
-      (assert dx 1))))
+      (check dx 1 1))))
 
 (test "set! with compound expression: (* 2 3) + 4"
   :run-once
   (begin
     (let ((x 0))
       (set! x (+ (* 2 3) 4))
-      (assert x 10))))
+      (check x 10 1))))
 
 (test "double negation: (- (- 5)) = 5"
   :run-once
   (begin
     (let ((x 5))
       (let ((y (- (- x))))
-        (assert y 5)))))
+        (check y 5 1)))))
 
 (test "arithmetic with same operands: x + x"
   :run-once
   (begin
     (let ((x 5))
       (let ((y (+ x x)))
-        (assert y 10)))))
+        (check y 10 1)))))
 
 ; ─── Comparison operators ───────────────────────────────────
 ; (Migrated from antlisp.test.js — constant-input tests that
@@ -594,41 +621,41 @@
   (begin
     (let ((x 5) (r 0))
       (if (> x 3) (set! r 1) (set! r 2))
-      (assert r 1))))
+      (check r 1 1))))
 
 (test "less than: 2 < 5"
   :run-once
   (begin
     (let ((x 2) (r 0))
       (if (< x 5) (set! r 1) (set! r 2))
-      (assert r 1))))
+      (check r 1 1))))
 
 (test "greater or equal: 5 >= 5"
   :run-once
   (begin
     (let ((x 5) (r 0))
       (if (>= x 5) (set! r 1) (set! r 2))
-      (assert r 1))))
+      (check r 1 1))))
 
 (test "less or equal: 5 <= 5"
   :run-once
   (begin
     (let ((x 5) (r 0))
       (if (<= x 5) (set! r 1) (set! r 2))
-      (assert r 1))))
+      (check r 1 1))))
 
 (test "not equal: 5 != 0"
   :run-once
   (begin
     (let ((x 5) (r 0))
       (if (!= x 0) (set! r 1) (set! r 2))
-      (assert r 1))))
+      (check r 1 1))))
 
 (test "comparison as value: (> 5 3) = 1"
   :run-once
   (begin
     (let ((result (> 5 3)))
-      (assert result 1))))
+      (check result 1 1))))
 
 ; ─── More arithmetic ────────────────────────────────────────
 
@@ -636,49 +663,49 @@
   :run-once
   (begin
     (let ((x (- 10 3 2 1)))
-      (assert x 4))))
+      (check x 4 1))))
 
 (test "chained multiplication: 2*3*4 = 24"
   :run-once
   (begin
     (let ((x (* 2 3 4)))
-      (assert x 24))))
+      (check x 24 1))))
 
 (test "division: 10/2 = 5"
   :run-once
   (begin
     (let ((x (/ 10 2)))
-      (assert x 5))))
+      (check x 5 1))))
 
 (test "bitwise or: 8|4 = 12"
   :run-once
   (begin
     (let ((x (or 8 4)))
-      (assert x 12))))
+      (check x 12 1))))
 
 (test "bitwise xor: 15^8 = 7"
   :run-once
   (begin
     (let ((x (xor 15 8)))
-      (assert x 7))))
+      (check x 7 1))))
 
 (test "left shift: 1<<3 = 8"
   :run-once
   (begin
     (let ((x (lshift 1 3)))
-      (assert x 8))))
+      (check x 8 1))))
 
 (test "right shift: 8>>2 = 2"
   :run-once
   (begin
     (let ((x (rshift 8 2)))
-      (assert x 2))))
+      (check x 2 1))))
 
 (test "complex arithmetic: 6+5+1 = 12"
   :run-once
   (begin
     (let ((x (+ (* 2 3) (/ 10 2) (mod 7 3))))
-      (assert x 12))))
+      (check x 12 1))))
 
 ; ─── Cond with set! ────────────────────────────────────────
 
@@ -690,7 +717,7 @@
             ((= dir 2) (set! dx (+ dx 1)))
             ((= dir 3) (set! dy (+ dy 1)))
             ((= dir 4) (set! dx (- dx 1))))
-      (assert dx 1))))
+      (check dx 1 1))))
 
 (test "cond with set! updates variable: dir=3 increments dy"
   :run-once
@@ -700,7 +727,7 @@
             ((= dir 2) (set! dx (+ dx 1)))
             ((= dir 3) (set! dy (+ dy 1)))
             ((= dir 4) (set! dx (- dx 1))))
-      (assert dy 1))))
+      (check dy 1 1))))
 
 (test "cond set! in loop: dx accumulates over 3 east moves"
   :ticks 3
@@ -710,21 +737,21 @@
       (dotimes (i 3)
         (set! dx (+ dx 1))
         (move e))
-      (assert dx 3))))
+      (check dx 3 1))))
 
 ; ─── Assert expression (new syntax) ───────────────────────
 
 (test "assert: simple constant"
   :run-once
   (begin
-    (assert (+ 1 2) 3)))
+    (check (+ 1 2) 3 1)))
 
 (test "assert: variable after set!"
   :run-once
   (begin
     (let ((x 0))
       (set! x 5)
-      (assert x 5))))
+      (check x 5 1))))
 
 (test "assert: cond updates dx"
   :run-once
@@ -734,13 +761,13 @@
             ((= dir 2) (set! dx (+ dx 1)))
             ((= dir 3) (set! dy (+ dy 1)))
             ((= dir 4) (set! dx (- dx 1))))
-      (assert dx 1))))
+      (check dx 1 1))))
 
 (test "assert: compound expression"
   :run-once
   (begin
     (let ((x 3) (y 4))
-      (assert (+ x y) 7))))
+      (check (+ x y) 7 1))))
 
 ; ─── Phi-node cond/set! regression ──────────────────────────────
 ; When a cond with set! on multiple outer variables is nested inside
@@ -760,8 +787,8 @@
                 ((= dir 3) (set! dy (+ dy 1)))
                 ((= dir 4) (set! dx (- dx 1))))
           (begin)))
-      (assert dx 4)
-      (assert dy 10))))
+      (check dx 4 1)
+      (check dy 10 2))))
 
 (test "cond set! inside if: dir=1 decrements dy, preserves dx"
   :run-once
@@ -774,8 +801,8 @@
                 ((= dir 3) (set! dy (+ dy 1)))
                 ((= dir 4) (set! dx (- dx 1))))
           (begin)))
-      (assert dx 5)
-      (assert dy 9))))
+      (check dx 5 1)
+      (check dy 9 2))))
 
 ; ─── dolist ──────────────────────────────────────────────────
 
@@ -785,7 +812,7 @@
     (let ((sum 0))
       (dolist (x (values 10 20 30))
         (set! sum (+ sum x)))
-      (assert sum 60))))
+      (check sum 60 1))))
 
 (test "dolist: break exits early"
   :run-once
@@ -794,7 +821,7 @@
       (dolist (x (values 1 2 3 4 5))
         (when (= x 3) (break))
         (set! sum (+ sum x)))
-      (assert sum 3))))  ; 1+2
+      (check sum 3 1))))  ; 1+2
 
 (test "dolist: continue skips iteration"
   :run-once
@@ -803,7 +830,7 @@
       (dolist (x (values 1 2 3 4 5))
         (when (= x 3) (continue))
         (set! sum (+ sum x)))
-      (assert sum 12))))  ; 1+2+4+5
+      (check sum 12 1))))  ; 1+2+4+5
 
 (test "dolist: empty values is no-op"
   :run-once
@@ -811,7 +838,7 @@
     (let ((x 42))
       (dolist (v (values))
         (set! x 0))
-      (assert x 42))))
+      (check x 42 1))))
 
 ; ─── Unrolled dotimes ────────────────────────────────────────────
 
@@ -821,7 +848,7 @@
     (let ((count 0))
       (dotimes (i 3)
         (set! count (+ count 1)))
-      (assert count 3))))
+      (check count 3 1))))
 
 (test "dotimes unrolled: i has correct value each iteration"
   :run-once
@@ -829,7 +856,7 @@
     (let ((sum 0))
       (dotimes (i 4)
         (set! sum (+ sum i)))
-      (assert sum 6))))  ; 0+1+2+3
+      (check sum 6 1))))  ; 0+1+2+3
 
 (test "dotimes unrolled: break exits early"
   :run-once
@@ -838,7 +865,7 @@
       (dotimes (i 10)
         (set! count (+ count 1))
         (when (= count 3) (break)))
-      (assert count 3))))
+      (check count 3 1))))
 
 (test "dotimes unrolled: continue skips to next iteration"
   :run-once
@@ -847,7 +874,7 @@
       (dotimes (i 5)
         (when (= i 2) (continue))
         (set! count (+ count 1)))
-      (assert count 4))))
+      (check count 4 1))))
 
 ; ─── Phi-node cond/set! regression ──────────────────────────────
 (test "cond set! inside if: dir=2 increments dx, preserves dy"
@@ -861,5 +888,5 @@
                 ((= dir 3) (set! dy (+ dy 1)))
                 ((= dir 4) (set! dx (- dx 1))))
           (begin)))
-      (assert dx 6)
-      (assert dy 10))))
+      (check dx 6 1)
+      (check dy 10 2))))

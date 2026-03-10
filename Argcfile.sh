@@ -32,25 +32,40 @@ compile() {
 # @option -m --map      Run only a specific map (e.g. "open-38bs6g")
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
+# @flag      --no-debug Compile with DEBUG=0 and reject ABORT opcodes
 test() {
 	local -a flags=()
 	for d in ${argc_define+"${argc_define[@]}"}; do
 		flags+=(-D "$d")
 	done
+	local -a run_flags=(--allow-abort)
+	if [[ ${argc_no_debug+1} ]]; then
+		flags+=(-D DEBUG=0)
+		run_flags=()
+	fi
 	local asm
 	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
-	echo "$asm" | npx --prefix compiler tsx compiler/run.ts ${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"}
+	echo "$asm" | npx --prefix compiler tsx compiler/run.ts \
+		${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"} \
+		${run_flags+"${run_flags[@]}"}
 }
 
 # @cmd Run alisp unit tests
 # @arg  file!           .unit.alisp test file
 # @flag -v --verbose    Show compiled assembly and register state for each test
+# @option -D --define*  Override a const value (e.g. -D DEBUG=1)
 unit() {
-	npx --prefix compiler tsx compiler/antlisp.unit.js "${argc_file:?}" ${argc_verbose+--verbose}
+	local -a flags=()
+	for d in ${argc_define+"${argc_define[@]}"}; do
+		flags+=(-D "$d")
+	done
+	npx --prefix compiler tsx compiler/antlisp.unit.js \
+		${flags+"${flags[@]}"} "${argc_file:?}" ${argc_verbose+--verbose}
 }
 
 # @cmd Run all compiler tests (unit, self-test, type-check)
-# @flag -v --verbose  Show individual test names
+# @flag -v --verbose    Show individual test names
+# @flag    --no-debug   Compile unit tests without -D DEBUG=1
 selftest() {
 	local output rc f
 
@@ -71,10 +86,15 @@ selftest() {
 	done
 
 	echo "═══ Runtime unit tests ═══"
+	local -a debug_flags=()
+	if [[ ! ${argc_no_debug+1} ]]; then
+		debug_flags+=(-D DEBUG=1)
+	fi
 	for f in compiler/*.unit.alisp; do
 		[[ -f "$f" ]] || continue
 		echo "── $f ──"
-		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js "$f" 2>&1)" || rc=$?
+		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
+			${debug_flags+"${debug_flags[@]}"} "$f" 2>&1)" || rc=$?
 		if [[ ${argc_verbose+1} ]]; then
 			echo "$output"
 		else

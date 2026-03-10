@@ -34,7 +34,7 @@ const Opcode = Object.freeze({
   RANDOM: 16, MARK: 17,
   JMP: 18, CALL: 19, JEQ: 20, JNE: 21, JGT: 22, JLT: 23,
   MOVE: 24, PICKUP: 25, DROP: 26, ID: 27, NOP: 28, TAG: 29,
-  ASSERTEQ: 30,
+  ABORT: 30,
 });
 
 const BC_STRIDE = 5;
@@ -44,6 +44,12 @@ const DIR_HERE = 5;
 const DIR_RANDOM = 6;
 const NUM_PHEROMONE_CHANNELS = 4;
 const NUM_REGISTERS = 8;
+const NUM_TOTAL_REGISTERS = NUM_REGISTERS + 5;  // 8 GP + 5 magic (indices 8–12)
+const REG_FD = 8;   // rD_FD — food collected at tick start
+const REG_CL = 9;   // rD_CL — current tick number
+const REG_PX = 10;  // rD_PX — ant's absolute X
+const REG_PY = 11;  // rD_PY — ant's absolute Y
+const REG_PC = 12;  // rD_PC — ant's program counter
 const EVAL_MAP_COUNT = 120;
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -122,11 +128,16 @@ for (const [name, val] of Object.entries(Opcode)) {
   OPCODE_NAMES[name] = val;
 }
 
-/** Try to parse a token as a register reference (r0–r7). Returns index or null. */
+/** Try to parse a token as a GP register reference (r0–r7). Returns index or null. */
 function parseRegister(tok) {
   const m = /^[rR]([0-7])$/.exec(tok);
   return m ? parseInt(m[1]) : null;
 }
+
+/** Named magic register tokens accepted as source operands in SET. */
+const MAGIC_REGISTER_NAMES = {
+  'RD_FD': 8, 'RD_CL': 9, 'RD_PX': 10, 'RD_PY': 11, 'RD_PC': 12,
+};
 
 /** Parse a generic operand — register, channel, direction, sense target, or integer literal. */
 function parseOperand(tok) {
@@ -167,7 +178,7 @@ function parseDirection(tok, lineNum) {
  * Parse assembly source into a program IR.
  * Returns { instructions, sourceLines, tagNames?, registerAliases? }
  */
-function parseAssembly(source) {
+function parseAssembly(source, { allowAbort = false } = {}) {
   const lines = source.split("\n");
   const labels = new Map();
   const aliases = new Map();
@@ -326,7 +337,17 @@ function parseAssembly(source) {
         if (args.length !== 1) throw new AssemblyError(lineNum, "MOVE requires 1 arg: N, E, S, W, or register");
         return { op, operands: [parseDirection(args[0], lineNum)] };
 
-      case Opcode.SET:
+      case Opcode.SET: {
+        if (args.length !== 2) throw new AssemblyError(lineNum, `SET requires 2 args: <reg> <val>`);
+        const reg = parseRegister(args[0]);
+        if (reg === null) throw new AssemblyError(lineNum, `Expected register (r0-r7), got: "${args[0]}"`);
+        // Allow named magic registers (rD_FD etc.) as source — this is how (reg rD_PX) etc. are implemented
+        const magicIdx = MAGIC_REGISTER_NAMES[args[1].toUpperCase()];
+        if (magicIdx !== undefined) return { op, operands: [{ type: "lit", val: reg }, { type: "reg", val: magicIdx }] };
+        const val = parseOperand(args[1]);
+        if (!val) throw new AssemblyError(lineNum, `Invalid value: "${args[1]}"`);
+        return { op, operands: [{ type: "lit", val: reg }, val] };
+      }
       case Opcode.ADD:
       case Opcode.SUB:
       case Opcode.MOD:
@@ -339,7 +360,7 @@ function parseAssembly(source) {
       case Opcode.RSHIFT: {
         if (args.length !== 2) throw new AssemblyError(lineNum, `${mnemonic} requires 2 args: <reg> <val>`);
         const reg = parseRegister(args[0]);
-        if (reg === null) throw new AssemblyError(lineNum, `Expected register, got: "${args[0]}"`);
+        if (reg === null) throw new AssemblyError(lineNum, `Expected register (r0-r7), got: "${args[0]}"`);
         const val = parseOperand(args[1]);
         if (!val) throw new AssemblyError(lineNum, `Invalid value: "${args[1]}"`);
         return { op, operands: [{ type: "lit", val: reg }, val] };
@@ -402,13 +423,12 @@ function parseAssembly(source) {
         return { op, operands: [val] };
       }
 
-      case Opcode.ASSERTEQ: {
-        if (args.length !== 2) throw new AssemblyError(lineNum, "ASSERTEQ requires 2 args: <reg> <expected>");
-        const reg = parseRegister(args[0]);
-        if (reg === null) throw new AssemblyError(lineNum, `Expected register, got: "${args[0]}"`);
-        const expected = parseOperand(args[1]);
-        if (!expected) throw new AssemblyError(lineNum, `Invalid expected value: "${args[1]}"`);
-        return { op, operands: [{ type: "lit", val: reg }, expected] };
+      case Opcode.ABORT: {
+        if (!allowAbort) throw new AssemblyError(lineNum, "ABORT opcode is not allowed (run with --allow-abort for debug builds)");
+        if (args.length !== 1) throw new AssemblyError(lineNum, "ABORT requires 1 arg: <code>");
+        const val = parseOperand(args[0]);
+        if (!val) throw new AssemblyError(lineNum, `Invalid ABORT code: "${args[0]}"`);
+        return { op, operands: [val] };
       }
 
       default:
@@ -746,14 +766,11 @@ function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps,
         break;
       }
 
-      case Opcode.ASSERTEQ: {
-        const actual = regs[a0];
-        const expected = (flags & 2) ? regs[a1] : a1;
-        if (!ant._assertions) ant._assertions = [];
-        ant._assertions.push({ pc: pc, actual, expected, passed: actual === expected });
-        opsUsed--;  // ASSERTEQ doesn't count against op budget
-        pc++;
-        break;
+      case Opcode.ABORT: {
+        const code = (flags & 1) ? regs[a0] : a0;
+        ant._aborted = code;
+        ant.pc = pc;
+        return false;
       }
     }
   }
@@ -804,7 +821,7 @@ function createWorld(map, program, config = DEFAULT_CONFIG) {
       x: map.nestX,
       y: map.nestY,
       carrying: false,
-      regs: Array(NUM_REGISTERS).fill(0),
+      regs: Array(NUM_TOTAL_REGISTERS).fill(0),
       pc: 0,
       tag: 0,
     });
@@ -843,10 +860,30 @@ function runTick(world, config = DEFAULT_CONFIG) {
   _pheroList = world.pheroList;
   _pheroListLen = world.pheroListLen;
 
+  const tickFoodCollected = world.foodCollected;
+  const currentTick = world.tick;
+
   let stallCount = 0;
   for (let i = 0; i < ants.length; i++) {
     const ant = ants[i];
-    const pcBefore = ant.pc;
+    // Skip permanently aborted ants; count abort once on first skipped tick
+    if (ant._aborted !== undefined) {
+      if (!ant._abortedCounted) {
+        ant._abortedCounted = true;
+        if (!world.abortCounts) world.abortCounts = 0;
+        world.abortCounts++;
+        if (!world.abortsByCode) world.abortsByCode = {};
+        const code = ant._aborted;
+        world.abortsByCode[code] = (world.abortsByCode[code] || 0) + 1;
+      }
+      continue;
+    }
+    // Populate magic registers before each step
+    ant.regs[REG_FD] = tickFoodCollected;
+    ant.regs[REG_CL] = currentTick;
+    ant.regs[REG_PX] = ant.x;
+    ant.regs[REG_PY] = ant.y;
+    ant.regs[REG_PC] = ant.pc;
     const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange);
     if (delivered) world.foodCollected++;
     map.visitCounts[ant.y * map.width + ant.x]++;
@@ -1935,6 +1972,12 @@ module.exports = {
   DIR_RANDOM,
   NUM_PHEROMONE_CHANNELS,
   NUM_REGISTERS,
+  NUM_TOTAL_REGISTERS,
+  REG_FD,
+  REG_CL,
+  REG_PX,
+  REG_PY,
+  REG_PC,
   EVAL_MAP_COUNT,
   DEFAULT_CONFIG,
 

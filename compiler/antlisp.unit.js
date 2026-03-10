@@ -9,11 +9,12 @@
 // a set of assertion forms.
 //
 // Syntax:
-//   (test "name" [:opt val | :flag]* (begin ...) (assert-*) ...)
+//   (test "name" [:opt val | :flag]* (begin ...) ...)
 //
-// The (begin ...) is the program body.  Inline (assert expr expected)
-// forms go inside the body and compile to ASSERTEQ opcodes.  Harness
-// (assert-*) forms come after it and are checked post-execution.
+// The (begin ...) is the program body.  Inline (abort! code) forms
+// compile to ABORT opcodes — if triggered, the test fails.  Use the
+// (check expr expected code) and (assert-at ...) macros defined in the
+// test preamble for structured assertions.
 // :run-once implies :ticks 1 when :ticks is not also given.
 //
 // Options:
@@ -28,16 +29,10 @@
 //   :ant-x x          start ant at x (default: map center)
 //   :ant-y y          start ant at y (default: map center)
 //
-// Assertion forms (harness-side, checked after execution):
-//   (assert-food-collected n)       ; world.foodCollected == n
-//   (assert-food-collected op n)    ; world.foodCollected <op> n
-//   (assert-tick n)                 ; ran for exactly n ticks
-//   (assert-pc n)                   ; ant program counter == n
-//   (assert-at x y)                 ; ant is at position x, y
-//
 // Usage:
 //   node antlisp.unit.js tests.unit.alisp
 //   node antlisp.unit.js tests.unit.alisp --verbose
+//   node antlisp.unit.js tests.unit.alisp -D DEBUG=1
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -53,6 +48,7 @@ const {
   createEmptyMap, setCell, placeFood, addBorderWalls, placeNest,
   createWorld, runTick, cloneMap,
   stepAnt,
+  REG_FD, REG_CL, REG_PX, REG_PY, REG_PC,
 } = require("./node-engine");
 
 // ─── Assertion evaluators ─────────────────────────────────────
@@ -212,6 +208,13 @@ function runProgramOnce(world) {
 
   ant.pc = 0;
 
+  // Populate magic registers (runProgramOnce bypasses runTick, so we set them here)
+  ant.regs[REG_FD] = world.foodCollected;
+  ant.regs[REG_CL] = world.tick;
+  ant.regs[REG_PX] = ant.x;
+  ant.regs[REG_PY] = ant.y;
+  ant.regs[REG_PC] = ant.pc;
+
   stepAnt(
     ant, 0,
     world.bytecode, instrCount,
@@ -227,7 +230,7 @@ function runProgramOnce(world) {
 
 // ─── Build and run a single test ─────────────────────────────
 
-function runTestBlock(testDef, preamble, verbose, sourceFile) {
+function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {}) {
   const { name, opts, body, assertions } = testDef;
 
   const ticks    = Number(opts["ticks"]    ?? 10);
@@ -244,7 +247,7 @@ function runTestBlock(testDef, preamble, verbose, sourceFile) {
 
   let asm;
   try {
-    ({ asm } = compileAntLispDebug(source, { testing: true, sourceFile }));
+    ({ asm } = compileAntLispDebug(source, { constOverrides, sourceFile }));
   } catch (e) {
     return { name, passed: false, error: `Compile error: ${e.message}`,
              asmSource: null, failedAssertions: [] };
@@ -257,9 +260,16 @@ function runTestBlock(testDef, preamble, verbose, sourceFile) {
   }
 
   // ── Assemble ─────────────────────────────────────────────
+  // An empty program (all checks constant-folded away) means all assertions trivially passed.
+  if (!asm.trim()) {
+    return { name, passed: true, error: null, asmSource: asm, failedAssertions: [],
+             regState: '', worldTick: 0, foodCollected: 0,
+             ant: { x: 0, y: 0, carrying: false, pc: 0 } };
+  }
+
   let program;
   try {
-    program = parseAssembly(asm);
+    program = parseAssembly(asm, { allowAbort: true });
   } catch (e) {
     return { name, passed: false, error: `Assembly error: ${e.message}`,
              asmSource: asm, failedAssertions: [] };
@@ -310,41 +320,6 @@ function runTestBlock(testDef, preamble, verbose, sourceFile) {
     try {
       switch (kind) {
 
-        case "assert-food-collected": {
-          const actual = world.foodCollected;
-          if (list.length === 2) {
-            const expected = Number(list[1].value);
-            if (actual !== expected)
-              failedAssertions.push(`assert-food-collected = ${expected}: got ${actual}`);
-          } else if (list.length === 3) {
-            const op = list[1].value, expected = Number(list[2].value);
-            if (!evalOp(actual, op, expected))
-              failedAssertions.push(`assert-food-collected ${op} ${expected}: got ${actual}`);
-          }
-          break;
-        }
-
-        case "assert-tick": {
-          const expected = Number(list[1].value);
-          if (world.tick !== expected)
-            failedAssertions.push(`assert-tick ${expected}: world is at tick ${world.tick}`);
-          break;
-        }
-
-        case "assert-pc": {
-          const expected = Number(list[1].value);
-          if (ant0.pc !== expected)
-            failedAssertions.push(`assert-pc ${expected}: ant pc is ${ant0.pc}`);
-          break;
-        }
-
-        case "assert-at": {
-          const ex = Number(list[1].value), ey = Number(list[2].value);
-          if (ant0.x !== ex || ant0.y !== ey)
-            failedAssertions.push(`assert-at ${ex} ${ey}: ant is at ${ant0.x} ${ant0.y}`);
-          break;
-        }
-
         default:
           throw new Error(`Unknown assertion: ${kind}`);
       }
@@ -353,13 +328,9 @@ function runTestBlock(testDef, preamble, verbose, sourceFile) {
     }
   }
 
-  // Check VM-level ASSERTEQ results
-  if (ant0._assertions) {
-    for (const a of ant0._assertions) {
-      if (!a.passed) {
-        failedAssertions.push(`assert (pc=${a.pc}): expected ${a.expected}, got ${a.actual}`);
-      }
-    }
+  // Check VM-level ABORT
+  if (ant0._aborted !== undefined) {
+    failedAssertions.push(`aborted with code ${ant0._aborted}`);
   }
 
   const passed   = failedAssertions.length === 0;
@@ -374,7 +345,7 @@ function runTestBlock(testDef, preamble, verbose, sourceFile) {
 
 // ─── Main runner ─────────────────────────────────────────────
 
-function runUnitFile(filePath, verbose = false) {
+function runUnitFile(filePath, verbose = false, constOverrides = {}) {
   const resolvedPath = path.resolve(filePath);
   let source;
   try {
@@ -404,7 +375,7 @@ function runUnitFile(filePath, verbose = false) {
   let passed = 0, failed = 0;
 
   for (const testDef of tests) {
-    const result = runTestBlock(testDef, preamble, verbose, resolvedPath);
+    const result = runTestBlock(testDef, preamble, verbose, resolvedPath, constOverrides);
 
     if (result.passed) {
       console.log(`  ✓  ${result.name}`);
@@ -448,15 +419,21 @@ function runUnitFile(filePath, verbose = false) {
 if (require.main === module) {
   const args = process.argv.slice(2);
   let file = null, verbose = false;
-  for (const arg of args) {
-    if (arg === "--verbose" || arg === "-v") verbose = true;
-    else if (!arg.startsWith("-")) file = arg;
+  const constOverrides = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--verbose' || arg === '-v') verbose = true;
+    else if (arg === '-D' && i + 1 < args.length) {
+      const pair = args[++i];
+      const eq = pair.indexOf('=');
+      if (eq !== -1) constOverrides[pair.slice(0, eq)] = pair.slice(eq + 1);
+    } else if (!arg.startsWith('-')) file = arg;
   }
   if (!file) {
-    console.error("Usage: node antlisp.unit.js <tests.unit.alisp> [--verbose]");
+    console.error("Usage: node antlisp.unit.js <tests.unit.alisp> [--verbose] [-D KEY=VAL]");
     process.exit(1);
   }
-  runUnitFile(file, verbose);
+  runUnitFile(file, verbose, constOverrides);
 }
 
 module.exports = { runUnitFile, parseUnitFile, runTestBlock };

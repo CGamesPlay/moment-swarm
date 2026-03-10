@@ -24,6 +24,7 @@ Options:
   -l, --list            List generated map names and exit
   -v, --verbose         Print per-tick progress every 100 ticks
   -q, --quiet           Only print the final score number
+      --allow-abort     Allow ABORT opcodes in assembly (rejected by default)
   -h, --help            Show this help
 `.trim();
 
@@ -40,6 +41,8 @@ interface World {
   foodCollected: number;
   stallCounts?: number;
   stallsByTag?: Record<string, number>;
+  abortCounts?: number;
+  abortsByCode?: Record<string, number>;
 }
 
 interface Program {
@@ -55,6 +58,8 @@ interface SimResult {
   elapsed: number;
   stalls: number;
   stallsByTag: Record<string, number>;
+  aborts: number;
+  abortsByCode: Record<string, number>;
 }
 
 // ─── Arg parsing ─────────────────────────────────────────────────────────────
@@ -70,6 +75,7 @@ let maxOpsPerTick = 64;
 let listMaps = false;
 let verbose = false;
 let quiet = false;
+let allowAbort = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -103,6 +109,9 @@ for (let i = 0; i < args.length; i++) {
       break;
     case "-q": case "--quiet":
       quiet = true;
+      break;
+    case "--allow-abort":
+      allowAbort = true;
       break;
     default:
       if (arg.startsWith("-")) {
@@ -154,7 +163,7 @@ if (file) {
 
 let program: Program;
 try {
-  program = engine.parseAssembly(source);
+  program = engine.parseAssembly(source, { allowAbort });
 } catch (e) {
   if (e instanceof engine.AssemblyError) {
     console.error(`Assembly error: ${(e as Error).message}`);
@@ -207,7 +216,9 @@ for (let i = 0; i < maps.length; i++) {
   const ratio = total > 0 ? collected / total : 0;
   const stalls = world.stallCounts || 0;
   const stallsByTag = world.stallsByTag || {};
-  results.push({ name: map.name, collected, total, ratio, elapsed, stalls, stallsByTag });
+  const aborts = world.abortCounts || 0;
+  const abortsByCode = world.abortsByCode || {};
+  results.push({ name: map.name, collected, total, ratio, elapsed, stalls, stallsByTag, aborts, abortsByCode });
 
   if (!quiet) {
     // Format stalls-by-tag using .tag names from assembly
@@ -221,7 +232,15 @@ for (let i = 0; i < maps.length; i++) {
       }
       if (parts.length) tagDetail = `  [${parts.join(' ')}]`;
     }
-    console.error(`  ${map.name.padEnd(24)} ${String(collected).padStart(5)}/${String(total).padStart(5)}  (${(ratio * 100).toFixed(1).padStart(5)}%)  ${String(stalls).padStart(7)} stalls${tagDetail}  ${elapsed}ms`);
+    let abortDetail = '';
+    if (aborts > 0) {
+      const parts: string[] = [];
+      for (const [code, count] of Object.entries(abortsByCode).sort((a, b) => b[1] - a[1])) {
+        parts.push(`code${code}:${count}`);
+      }
+      if (parts.length) abortDetail = `  [aborts: ${parts.join(' ')}]`;
+    }
+    console.error(`  ${map.name.padEnd(24)} ${String(collected).padStart(5)}/${String(total).padStart(5)}  (${(ratio * 100).toFixed(1).padStart(5)}%)  ${String(stalls).padStart(7)} stalls${tagDetail}  ${String(aborts).padStart(5)} aborts${abortDetail}  ${elapsed}ms`);
   }
 }
 
@@ -231,13 +250,15 @@ const avgRatio = results.reduce((s, r) => s + r.ratio, 0) / results.length;
 const score = Math.round(avgRatio * 1000);
 const totalElapsed = results.reduce((s, r) => s + r.elapsed, 0);
 const totalStalls = results.reduce((s, r) => s + r.stalls, 0);
+const totalAborts = results.reduce((s, r) => s + r.aborts, 0);
 
 if (quiet) {
   console.log(score);
 } else {
   const opsNote = maxOpsPerTick !== 64 ? `, max-ops=${maxOpsPerTick}` : '';
   console.error("");
-  console.log(`Score: ${score}/1000  (${(avgRatio * 100).toFixed(1)}% avg collection, ${results.length} map${results.length > 1 ? "s" : ""}, ${totalStalls} stalls, ${totalElapsed}ms${opsNote})`);
+  const abortsNote = totalAborts > 0 ? `, ${totalAborts} aborts` : '';
+  console.log(`Score: ${score}/1000  (${(avgRatio * 100).toFixed(1)}% avg collection, ${results.length} map${results.length > 1 ? "s" : ""}, ${totalStalls} stalls${abortsNote}, ${totalElapsed}ms${opsNote})`);
 }
 
 })();

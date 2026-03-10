@@ -309,6 +309,82 @@ detection check prevents circular includes.
 (include "derived.inc.alisp")  ; BASE_TIMEOUT=200, EXPLORE_TIMEOUT=300
 ```
 
+### Debug Infrastructure
+
+AntLisp has built-in support for assertions and debugging that compiles away in production builds.
+
+#### The `DEBUG` constant
+
+Programs declare a `DEBUG` constant, which is `0` by default and can be overridden to `1` at the command line:
+
+```lisp
+(const DEBUG 0)
+
+(loop
+  (when DEBUG
+    (abort! 42))   ; fires only when DEBUG=1
+  (move random))
+```
+
+Because the compiler folds constants and eliminates dead branches, `(when DEBUG ...)` with `DEBUG=0` compiles to nothing — zero overhead in production.
+
+#### `abort!`
+
+```lisp
+(abort! code)    ; halt this ant permanently with a numeric code
+```
+
+Permanently halts the ant. The ant stops executing for the rest of the simulation. `code` is any integer and appears in the simulator's abort report.
+
+`abort!` is always available to the compiler. Whether it is accepted at runtime is controlled by the simulator — see [`argc test`](#running-with-argc-test) below.
+
+#### Magic registers
+
+Five read-only registers expose VM state at the start of each tick:
+
+```lisp
+(reg rD_FD)   ; food collected so far (at tick start)
+(reg rD_CL)   ; current tick number (0-indexed)
+(reg rD_PX)   ; ant's X position
+(reg rD_PY)   ; ant's Y position
+(reg rD_PC)   ; ant's program counter (at tick start)
+```
+
+#### Assertion pattern
+
+The recommended pattern for in-program assertions uses `(when DEBUG ...)` to guard an `abort!`:
+
+```lisp
+(const DEBUG 0)
+
+(defmacro check (expr expected code)
+  (when DEBUG
+    (when (!= expr expected) (abort! code))))
+
+(loop
+  (let ((dir (sense food)))
+    (check (>= dir 0) 1 10)   ; fires with code 10 if dir is negative
+    (move dir)))
+```
+
+With `DEBUG=0` (the default), the `check` macro expands to nothing. With `DEBUG=1`, it emits a conditional `ABORT`.
+
+#### Running with `argc test`
+
+```bash
+argc test program.alisp              # default: DEBUG=1 implied, aborts allowed
+argc test program.alisp --no-debug   # DEBUG=0 implied, ABORT opcode rejected by assembler
+```
+
+- **Default**: compiles with `DEBUG=1` as an implied default (overridden by any `(const DEBUG ...)` in the source), and passes `--allow-abort` to the simulator.
+- **`--no-debug`**: compiles with `DEBUG=0` (overriding the source's `(const DEBUG ...)`), and the assembler **rejects any `ABORT` opcode**. This acts as a production safety check — if a debug guard was accidentally omitted, the build fails with a clear error rather than silently scoring zero.
+
+```bash
+# Forgot the DEBUG guard — caught by --no-debug
+$ argc test my_program.alisp --no-debug
+Assembly error: Line 5: ABORT opcode is not allowed (run with --allow-abort for debug builds)
+```
+
 ### Low-Level Control Flow
 
 ```lisp
@@ -363,4 +439,4 @@ the same register) and redundant jumps (jump to the immediately following label)
 - **Bindings** (`let`/`let*`): allocated on entry, freed on scope exit; a `let` wrapping the main loop is effectively permanent for the program's lifetime
 - **Temps**: allocated by `resolveArg` for compound sub-expressions, freed immediately
 
-With 8 registers (r0-r7), a typical program uses 3–5 for long-lived state and leaves the rest for temporaries.
+With 8 GP registers (r0-r7), a typical program uses 3–5 for long-lived state and leaves the rest for temporaries. Indices 8–12 are reserved for magic registers (`rD_FD`–`rD_PC`) and are never allocated to program variables.

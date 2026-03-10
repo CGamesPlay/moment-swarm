@@ -125,7 +125,6 @@ export class SSALowering {
   }[] = [];
   private tags: TagDef[];
   private consts: Map<string, string>;
-  testing = false;
   allBindings = new Map<string, string>();  // for debug: var name → last temp
 
   constructor(tags: TagDef[], consts: Map<string, string>) {
@@ -293,7 +292,8 @@ export class SSALowering {
       case 'zero?':
         return this.lowerZeroQ(list, node);
 
-      case 'assert': return this.lowerAssert(list, node);
+      case 'abort!': return this.lowerAbort(list, node);
+      case 'reg':    return this.lowerReg(list, node);
       case 'defmacro': return '';  // should have been removed by expand phase
 
       default:
@@ -1144,12 +1144,29 @@ export class SSALowering {
     return '';
   }
 
-  private lowerAssert(list: ASTNode[], node: ASTNode): string {
-    if (!this.testing) throw new Error(`(assert ...) is only available in testing mode at line ${node.line}:${node.col}`);
-    const exprTemp = this.lowerExpr(list[1]);
-    const expected = this.resolveOperand(list[2]);
-    this.emit('asserteq', null, exprTemp, expected);
+  private lowerAbort(list: ASTNode[], node: ASTNode): string {
+    const code = this.resolveOperand(list[1]);
+    this.emit('abort', null, code);
     return '';
+  }
+
+  private static readonly MAGIC_REG_MAP: Record<string, number> = {
+    'rD_FD': 8, 'rD_CL': 9, 'rD_PX': 10, 'rD_PY': 11, 'rD_PC': 12,
+  };
+
+  private lowerReg(list: ASTNode[], node: ASTNode): string {
+    if (list.length !== 2 || list[1].type !== 'symbol') {
+      throw new Error(`(reg <name>) requires exactly one symbol argument at line ${node.line}:${node.col}`);
+    }
+    const name = (list[1] as any).value as string;
+    const idx = SSALowering.MAGIC_REG_MAP[name];
+    if (idx === undefined) {
+      const valid = Object.keys(SSALowering.MAGIC_REG_MAP).join(', ');
+      throw new Error(`Unknown magic register "${name}" at line ${node.line}:${node.col}. Valid: ${valid}`);
+    }
+    const temp = this.freshTemp();
+    this.emit('reg', temp, idx);
+    return temp;
   }
 
   // ── Comparisons ──
@@ -1454,9 +1471,7 @@ export function lowerToSSA(
   forms: ASTNode[],
   tags: TagDef[],
   consts: Map<string, string>,
-  options?: { testing?: boolean },
 ): SSAProgram {
   const lowering = new SSALowering(tags, consts);
-  if (options?.testing) lowering.testing = true;
   return lowering.lower(forms);
 }

@@ -105,26 +105,26 @@ export function collectMeta(src: string): Metadata & { constValues: Map<string, 
   return { ...meta, constValues: expanded.constValues };
 }
 
-export function lowerSource(src: string, opts?: { testing?: boolean }): SSAProgram {
+export function lowerSource(src: string): SSAProgram {
   const expanded = expandSource(src);
   const meta = collectMetadata(expanded.forms);
-  return lowerToSSA(meta.forms, meta.tags, expanded.constValues, opts);
+  return lowerToSSA(meta.forms, meta.tags, expanded.constValues);
 }
 
-export function lowerAndOptimize(src: string, opts?: { testing?: boolean }): SSAProgram {
-  const program = lowerSource(src, opts);
+export function lowerAndOptimize(src: string): SSAProgram {
+  const program = lowerSource(src);
   optimize(program);
   return program;
 }
 
-export function compileSource(src: string, opts?: { constOverrides?: Record<string, string>; testing?: boolean }): string {
+export function compileSource(src: string, opts?: { constOverrides?: Record<string, string> }): string {
   const ast = parseSource(src);
   const constOverrides = opts?.constOverrides
     ? new Map(Object.entries(opts.constOverrides))
     : undefined;
   const expanded = expandMacros(ast.body, { constOverrides });
   const meta = collectMetadata(expanded.forms);
-  const program = lowerToSSA(meta.forms, meta.tags, expanded.constValues, { testing: opts?.testing });
+  const program = lowerToSSA(meta.forms, meta.tags, expanded.constValues);
   optimize(program);
   const linearized = linearizeBlocks(program);
   const numbered = numberInstructions(linearized);

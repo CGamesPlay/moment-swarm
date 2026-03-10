@@ -227,6 +227,7 @@ function expandNode(
 
 export interface ExpandOptions {
   constOverrides?: Map<string, string>;
+  impliedConsts?: Map<string, string>;
   sourceFile?: string;
 }
 
@@ -326,7 +327,7 @@ function collectDefinitions(
 
 export function expandMacros(forms: ASTNode[], options: ExpandOptions = {}): ExpandResult {
   const macros = new Map<string, MacroDef>();
-  const consts = new Map<string, string>();
+  const consts = new Map<string, string>(options.impliedConsts ?? []);
   const remaining: ASTNode[] = [];
 
   // Reset expansion counter for deterministic output

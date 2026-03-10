@@ -22,7 +22,6 @@ import { peephole } from './peephole';
 
 export interface CompileOptions {
   constOverrides?: Record<string, string>;
-  testing?: boolean;
   sourceFile?: string;
 }
 
@@ -40,7 +39,11 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   const constOverrides = options.constOverrides
     ? new Map(Object.entries(options.constOverrides))
     : undefined;
-  const expanded = expandMacros(ast.body, { constOverrides, sourceFile: options.sourceFile });
+  const expanded = expandMacros(ast.body, {
+    constOverrides,
+    impliedConsts: new Map([['DEBUG', '0']]),
+    sourceFile: options.sourceFile,
+  });
 
   // Phase 2: Metadata collection
   const metadata = collectMetadata(expanded.forms);
@@ -50,7 +53,6 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
     metadata.forms,
     metadata.tags,
     expanded.constValues,
-    { testing: options.testing },
   );
 
   // Phase 4: Optimization passes

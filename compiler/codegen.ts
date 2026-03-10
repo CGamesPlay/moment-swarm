@@ -258,8 +258,13 @@ function emitInstr(instr: SSAInstr): string | null {
       return `  MARK ${args[0]} ${args[1]}`;
     case 'tag':
       return `  TAG ${args[0]}`;
-    case 'asserteq':
-      return `  ASSERTEQ ${args[0]} ${args[1]}`;
+    case 'abort':
+      return `  ABORT ${args[0]}`;
+    case 'reg': {
+      if (!dest) return null;
+      const magicNames: Record<number, string> = { 8: 'rD_FD', 9: 'rD_CL', 10: 'rD_PX', 11: 'rD_PY', 12: 'rD_PC' };
+      return `  SET ${dest} ${magicNames[args[0] as number]}`;
+    }
     default:
       return `  ; unknown op: ${op}`;
   }
