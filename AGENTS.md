@@ -80,6 +80,12 @@ You can also run alisp unit tests:
 argc unit compiler/antlisp.unit.alisp # Run specific unit file
 ```
 
+To run compiler tests (required when modifying the compiler):
+
+```bash
+argc selftest
+```
+
 ## From the user
 
 Do not, ever, decide to revert something the user points out a problem with. Only walk backwards from something the user explicitly asked for if the user subsequently explicitly asks you to do so.

@@ -84,6 +84,15 @@ runSuite('SSA', () => {
     assertIncludes(ir, '__endcond_');
   });
 
+  test('cond expression value has phi selecting branch results', () => {
+    const program = lowerSource(`
+      (let ((x (cond ((= 1 1) 42) (else 99))))
+        (mark ch_red x))`);
+    const endBlock = program.blocks.find(b => b.label.startsWith('__endcond_'))!;
+    assert(endBlock.phis.length > 0,
+      'endcond merge block must have a phi for cond expression result');
+  });
+
   // ── Control flow: when/unless ──
 
   test('when', () => {

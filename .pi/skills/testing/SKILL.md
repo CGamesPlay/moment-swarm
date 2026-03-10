@@ -1,6 +1,6 @@
 ---
 name: testing
-description: antlisp testing skill
+description: Use when you need to understand how to test alisp files, write alisp unit tests, or debug alisp code.
 ---
 ## Unit testing
 

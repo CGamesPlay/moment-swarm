@@ -561,6 +561,7 @@ export class SSALowering {
     const endBlock = this.makeBlock('endcond');
     const envBefore = new Map(this.env);
     const branchEnvs: { env: Map<string, string>; exitBlock: BasicBlock }[] = [];
+    const branchResults: { result: string; exitBlock: BasicBlock }[] = [];
 
     for (let i = 1; i < list.length; i++) {
       const clause = (list[i] as ListNode).value;
@@ -568,11 +569,13 @@ export class SSALowering {
 
       if (test.type === 'symbol' && test.value === 'else') {
         // Else clause — just compile the body
+        let result = '';
         for (let j = 1; j < clause.length; j++) {
-          this.lowerExpr(clause[j]);
+          result = this.lowerExpr(clause[j]);
         }
         branchEnvs.push({ env: new Map(this.env), exitBlock: this.currentBlock });
         if (!this.currentBlock.terminator) {
+          branchResults.push({ result, exitBlock: this.currentBlock });
           this.jumpTo(endBlock);
         }
         break;
@@ -585,11 +588,13 @@ export class SSALowering {
 
       this.sealBlock(bodyBlock);
       this.env = new Map(envBefore);
+      let result = '';
       for (let j = 1; j < clause.length; j++) {
-        this.lowerExpr(clause[j]);
+        result = this.lowerExpr(clause[j]);
       }
       branchEnvs.push({ env: new Map(this.env), exitBlock: this.currentBlock });
       if (!this.currentBlock.terminator) {
+        branchResults.push({ result, exitBlock: this.currentBlock });
         this.jumpTo(endBlock);
       }
 
@@ -600,6 +605,7 @@ export class SSALowering {
     // If we fell through without else, jump to end
     if (!this.currentBlock.terminator) {
       branchEnvs.push({ env: new Map(this.env), exitBlock: this.currentBlock });
+      branchResults.push({ result: '0', exitBlock: this.currentBlock });
       this.jumpTo(endBlock);
     }
 
@@ -607,6 +613,20 @@ export class SSALowering {
     // Insert phis for all branches
     if (branchEnvs.length > 0) {
       this.insertPhisMulti(branchEnvs, envBefore);
+    }
+
+    // Insert a result phi if branches produce different values
+    if (branchResults.length > 0) {
+      const allSame = branchResults.every(b => b.result === branchResults[0].result);
+      if (allSame) {
+        return branchResults[0].result;
+      }
+      const resultPhi = this.freshTemp(node);
+      this.currentBlock.phis.push({
+        dest: resultPhi,
+        entries: branchResults.map(b => ({ block: b.exitBlock, value: b.result })),
+      });
+      return resultPhi;
     }
     return '';
   }

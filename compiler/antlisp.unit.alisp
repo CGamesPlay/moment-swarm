@@ -752,6 +752,14 @@
     (let ((x 3) (y 4))
       (assert! (= (+ x y) 7) 1))))
 
+; ─── cond as value expression ─────────────────────────────────
+(test "cond as value expression"
+  :run-once
+  (begin
+    (let ((x (cond ((= 1 1) 42)
+                   (else 99))))
+      (assert! (= x 42) 1))))
+
 ; ─── Phi-node cond/set! regression ──────────────────────────────
 ; When a cond with set! on multiple outer variables is nested inside
 ; an if-branch (creating an outer join point with phi nodes), the
