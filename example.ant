@@ -4,10 +4,9 @@
 ; Hit play, then try improving it!
 
 ; ── Registers ──
-.alias dx     r1         ; x displacement from nest
-.alias dy     r2         ; y displacement from nest
-.alias ret    r3         ; return address for CALL
-.alias timer  r4         ; countdown timer for marking trail home
+.alias dx   r1           ; x displacement from nest
+.alias dy   r2           ; y displacement from nest
+.alias ret  r3           ; return address for CALL
 
 ; ── Pheromone ──
 .const TRAIL CH_RED      ; marks food locations
@@ -37,7 +36,7 @@ step:
 grab:
     CALL ret move_track
     PICKUP
-    SET timer 127
+    MARK TRAIL 100
     JMP main
 
 ; ── GO HOME: dead reckon toward nest ──────────
@@ -49,25 +48,16 @@ go_home:
     JEQ r0 0 wander       ; 25% random to unstick walls
     CALL ret home_dir
     CALL ret move_track
-    SET r5 timer
-    MUL r5 2
-    MARK TRAIL r5
-    SUB timer 1
     JMP main
 wander:
     RANDOM r0 4
     ADD r0 1
     CALL ret move_track
-    SET r5 timer
-    MUL r5 2
-    MARK TRAIL r5
-    SUB timer 1
     JMP main
 
 deliver:
     CALL ret move_track
     DROP
-    SET timer 0
     JMP main
 
 ; ══════════════════════════════════════════════

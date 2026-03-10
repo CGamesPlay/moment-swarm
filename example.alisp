@@ -1,102 +1,77 @@
-; ── SWARM FORAGER (AntLisp) ──────────────────
-; Port of brain.ant using macros for subroutines
-; Random walk to find food, dead reckoning home
+; ── SWARM FORAGER ────────────────────────────
+; Faithful reproduction of example.ant in AntLisp.
+; Random walk to find food, dead reckoning to
+; navigate home. Pheromone marks food for others.
 
-; ── Constants ──
 (const TRAIL ch_red)
 
-; ── Roles ──
-
-; ══════════════════════════════════════════════
-; MACROS — inline at each call site
-; ══════════════════════════════════════════════
-
-; move-with-tracking: move in 'dir', update dx/dy
-(defmacro move-with-tracking (dir dx dy)
+; move-track macro: MOVE dir, then update dx/dy
+(defmacro move-track (dir dx dy)
   (move dir)
-  (cond ((= dir 1) (set! dy (- dy 1)))   ; N
-        ((= dir 2) (set! dx (+ dx 1)))   ; E
-        ((= dir 3) (set! dy (+ dy 1)))   ; S
-        ((= dir 4) (set! dx (- dx 1))))) ; W
+  (cond ((= dir 1) (set! dy (- dy 1)))
+        ((= dir 2) (set! dx (+ dx 1)))
+        ((= dir 3) (set! dy (+ dy 1)))
+        ((= dir 4) (set! dx (- dx 1)))))
 
-; home-dir: set 'dir' = direction toward nest based on dx/dy
-; NOTE: matches brain.ant which uses r4 (timer) as abs_dx, clobbering timer
-(defmacro home-dir (dir dx dy timer)
-  ; Use timer as abs_dx (matches brain.ant clobbering r4)
-  (set! timer dx)
-  (let ((abs-dy dy))
-    ; timer = |dx|
-    (when (<= dx 0)
-      (set! timer (- dx)))
-    ; abs-dy = |dy|  
-    (when (<= dy 0)
-      (set! abs-dy (- dy)))
-    ; pick axis with larger displacement
-    (if (> abs-dy timer)
-      ; Y-axis dominant
-      (if (> dy 0)
-        (set! dir 1)    ; N (dy > 0 means south of nest, go north)
-        (set! dir 3))   ; S
-      ; X-axis dominant  
-      (if (> dx 0)
-        (set! dir 4)    ; W (dx > 0 means east of nest, go west)
-        (set! dir 2))))) ; E
+; home-dir macro: compute best direction toward nest into result
+; Mirrors brain.ant home_dir exactly:
+;   adx = |dx|, ady = |dy|
+;   if ady > adx: return N(1) if dy>0 else S(3)
+;   else:         return W(4) if dx>0 else E(2)
+(defmacro home-dir (result dx dy adx ady)
+  ; compute adx = |dx|
+  (set! adx dx)
+  (when (< adx 0) (set! adx (- 0 adx)))
+  ; compute ady = |dy|
+  (set! ady dy)
+  (when (< ady 0) (set! ady (- 0 ady)))
+  ; pick axis
+  (if (> ady adx)
+    ; y dominates
+    (if (> dy 0)
+      (set! result 1)    ; north
+      (set! result 3))   ; south
+    ; x dominates (or equal)
+    (if (> dx 0)
+      (set! result 4)    ; west
+      (set! result 2)))) ; east
 
-; ══════════════════════════════════════════════
-; MAIN PROGRAM
-; ══════════════════════════════════════════════
+; Long-lived displacement registers
+(let ((dx 0) (dy 0) (adx 0) (ady 0))
+  (loop
+    (if (carrying?)
+      ; ── GO HOME ───────────────────────────────
+      (begin
+        (set-tag homing)
+        (if (!= (sense nest) 0)
+          ; On nest: step onto it and deliver
+          (let ((d (sense nest)))
+            (move-track d dx dy)
+            (drop))
+          ; Not on nest: navigate home
+          (let ((rnd (random 4)))
+            (if (= rnd 0)
+              ; 25% random wander to unstick from walls
+              (let ((dir (+ (random 4) 1)))
+                (move-track dir dx dy))
+              ; Dead-reckon toward nest
+              (let ((dir 0))
+                (home-dir dir dx dy adx ady)
+                (move-track dir dx dy))))))
 
-(let ((dx 0)    ; x displacement from nest
-      (dy 0)    ; y displacement from nest
-      (timer 0) ; countdown for marking trail home
-      (dir 0))  ; current direction (for move-with-tracking)
-(loop
-  ; Check if carrying food
-  (if (carrying?)
-    ; ── GO HOME ──
-    (begin
-      (set-tag homing)
-      (let ((nest-dir (sense nest)))
-        (if (!= nest-dir 0)
-          ; At nest — deliver
-          (begin
-            (set! dir nest-dir)
-            (move-with-tracking dir dx dy)
-            (drop)
-            (set! timer 0))
-          ; Navigate home
-          (begin
-            (let ((rnd (random 4)))
-              (if (= rnd 0)
-                ; 25% random to unstick from walls
-                (begin
-                  (set! dir (+ (random 4) 1))
-                  (move-with-tracking dir dx dy))
-                ; 75% dead reckon toward nest
-                (begin
-                  (home-dir dir dx dy timer)
-                  (move-with-tracking dir dx dy))))
-            ; Mark trail
-            (let ((amt (* timer 2)))
-              (mark TRAIL amt))
-            (set! timer (- timer 1))))))
-    
-    ; ── SEARCH FOR FOOD ──
-    (begin
-      (set-tag foraging)
-      (let ((food-dir (sense food)))
-        (if (!= food-dir 0)
-          ; Found food — grab it
-          (begin
-            (set! dir food-dir)
-            (move-with-tracking dir dx dy)
-            (pickup)
-            (set! timer 127))
-          ; No food — follow trail if detected, else random
-          (begin
+      ; ── SEARCH FOR FOOD ───────────────────────
+      (begin
+        (set-tag foraging)
+        (let ((food (sense food)))
+          (if (!= food 0)
+            ; Food adjacent: step onto it, pick up, mark trail
+            (begin
+              (move-track food dx dy)
+              (pickup)
+              (mark TRAIL 100))
+            ; No food: follow trail or random walk
             (let ((trail-dir (smell TRAIL)))
               (if (!= trail-dir 0)
-                (set! dir trail-dir)
-                (begin
-                  (set! dir (+ (random 4) 1)))))
-            (move-with-tracking dir dx dy))))))))
+                (move-track trail-dir dx dy)
+                (let ((dir (+ (random 4) 1)))
+                  (move-track dir dx dy))))))))))
