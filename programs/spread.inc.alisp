@@ -1,0 +1,62 @@
+; ═══════════════════════════════════════════════════════════════
+; Spread Macro — Initial Dispersion
+; ═══════════════════════════════════════════════════════════════
+;
+; At the start of the program, all ants begin on the same cell.
+; This macro spreads them out using their ant ID to avoid clustering.
+;
+; Strategy:
+;   1. Compute (div (id) 25) to get a direction (0-7, octagonal)
+;   2. Convert to a cardinal direction (1-4) or diagonal pair
+;   3. Execute one or two moves to disperse
+;   4. Return control to the rest of the program
+;
+; This adds variation to the initial exploration pattern
+; and may improve overall scores by reducing congestion.
+;
+; ═══════════════════════════════════════════════════════════════
+
+(defmacro spread ()
+  (let ((ant-id (id))
+        (direction 0))
+    ; Compute octagonal direction from ant ID: div by 25 gives 0-7
+    (set! direction (/ ant-id 25))
+    
+    ; Map octant (0-7) to moves:
+    ;   0 = N        (move 1)
+    ;   1 = NE       (move 1 then move 2)
+    ;   2 = E        (move 2)
+    ;   3 = SE       (move 2 then move 3)
+    ;   4 = S        (move 3)
+    ;   5 = SW       (move 3 then move 4)
+    ;   6 = W        (move 4)
+    ;   7 = NW       (move 4 then move 1)
+    (cond
+      ((= direction 0)
+        ; N
+        (move 1))
+      ((= direction 1)
+        ; NE
+        (move 1)
+        (move 2))
+      ((= direction 2)
+        ; E
+        (move 2))
+      ((= direction 3)
+        ; SE
+        (move 2)
+        (move 3))
+      ((= direction 4)
+        ; S
+        (move 3))
+      ((= direction 5)
+        ; SW
+        (move 3)
+        (move 4))
+      ((= direction 6)
+        ; W
+        (move 4))
+      ((= direction 7)
+        ; NW
+        (move 4)
+        (move 1)))))

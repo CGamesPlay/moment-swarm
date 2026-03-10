@@ -14,6 +14,7 @@ def _():
     import re
     from itertools import product
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     return (
         ThreadPoolExecutor,
         alt,
@@ -50,8 +51,10 @@ def _(mo, os):
     def _list_alisp_files():
         return sorted(
             f
-            for f in os.listdir(".")
-            if f.endswith(".alisp") and not f.endswith(".unit.alisp")
+            for f in os.listdir("programs")
+            if f.endswith(".alisp")
+            and not f.endswith(".unit.alisp")
+            and not f.endswith(".inc.alisp")
         )
 
     _alisp_files = _list_alisp_files()
@@ -87,7 +90,7 @@ def _(os, re, refresh_button, sweep_file):
         with open(path) as fh:
             for line in fh:
                 line = line.strip()
-                m = re.match(r'^\(const\s+(\w+)\s+(-?\d+(?:\.\d+)?)\s*\)', line)
+                m = re.match(r"^\(const\s+(\w+)\s+(-?\d+(?:\.\d+)?)\s*\)", line)
                 if m:
                     name, val = m.group(1), m.group(2)
                     # Skip obvious state/ID constants (all-caps with small integers 0-9)
@@ -198,7 +201,11 @@ def _(
                 _dflags.extend(["-D", f"{sweep_names[_i]}={_combo[_i]}"])
 
             _test_result = subprocess.run(
-                ["argc", "test"] + _dflags + _map_flag + _op_flag + [sweep_file.value],
+                ["argc", "test"]
+                + _dflags
+                + _map_flag
+                + _op_flag
+                + [f"programs/{sweep_file.value}"],
                 capture_output=True,
                 text=True,
                 cwd=_project_dir,
@@ -206,9 +213,7 @@ def _(
             if _test_result.returncode != 0:
                 return _combo, None, _test_result.stderr.strip()
 
-            _match = re.search(
-                r"^Score:\s*(\d+)", _test_result.stdout, re.MULTILINE
-            )
+            _match = re.search(r"^Score:\s*(\d+)", _test_result.stdout, re.MULTILINE)
             if _match:
                 return _combo, int(_match.group(1)), None
             return _combo, None, _test_result.stdout + _test_result.stderr
@@ -326,9 +331,7 @@ def _(df, mo, param_cols, score_col):
     """
 
     # Best combo in (const ...) format
-    _const_lines = "\n".join(
-        f"(const {c} {best_row[c].item()})" for c in param_cols
-    )
+    _const_lines = "\n".join(f"(const {c} {best_row[c].item()})" for c in param_cols)
     best_combo_md = f"**Best combo** → score **{best_row[score_col].item()}**\n\n```\n{_const_lines}\n```"
 
     mo.hstack(
@@ -406,9 +409,7 @@ def _(mo):
 
 @app.cell
 def _(alt, df, mo, param_cols, pl, score_col):
-    mo.stop(
-        len(param_cols) < 2, mo.md("*Need at least 2 parameters for heatmaps.*")
-    )
+    mo.stop(len(param_cols) < 2, mo.md("*Need at least 2 parameters for heatmaps.*"))
 
     _grand_mean = df[score_col].mean()
     # Marginal means for each parameter value
@@ -465,9 +466,7 @@ def _(alt, df, mo, param_cols, pl, score_col):
                         alt.Tooltip(
                             "interaction:Q", title="Interaction", format="+.1f"
                         ),
-                        alt.Tooltip(
-                            "mean_score:Q", title="Mean Score", format=".1f"
-                        ),
+                        alt.Tooltip("mean_score:Q", title="Mean Score", format=".1f"),
                     ],
                 )
                 .properties(
