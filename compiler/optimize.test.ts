@@ -91,6 +91,35 @@ runSuite('Optimize', () => {
     assertEq(moveInstr.args[0], '%t0');
   });
 
+  test('copyPropagation: transfers tempNames and tempLocs from eliminated copy', () => {
+    // When a set! creates a copy temp with a name and binding location,
+    // and copy propagation eliminates the copy, the name and location
+    // should be transferred to the source temp.
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 1),   // source of copy (no name/loc yet)
+      makeInstr('copy', '%t1', '%t0'), // copy temp (will have name and binding loc)
+      makeInstr('move', null, '%t1'),  // use the copy
+    ]);
+    const program = makeProgram([entry]);
+
+    // Simulate set! behavior: the copy temp has a name and binding location
+    program.tempNames.set('%t1', 'x');
+    program.tempLocs.set('%t1', { file: 'test.alisp', line: 1, col: 5 });
+    program.allBindings.set('x', '%t1');
+
+    copyPropagation(program);
+
+    // After copy propagation, %t0 should have inherited the name and location
+    assertEq(program.tempNames.get('%t0'), 'x', 'source temp should be named x');
+    const loc = program.tempLocs.get('%t0');
+    assert(loc !== undefined, '%t0 should have a location');
+    assertEq(loc!.line, 1, 'source temp should have binding location');
+    assertEq(loc!.col, 5, 'source temp should have binding location col');
+
+    // allBindings should now point to %t0 instead of %t1
+    assertEq(program.allBindings.get('x'), '%t0');
+  });
+
   test('deadCodeElimination: unused pure op removed', () => {
     const entry = makeBlock('entry', [
       makeInstr('const', '%t0', 42),

@@ -131,6 +131,7 @@ export class SSALowering {
   allBindings = new Map<string, string>();  // for debug: var name → last temp
   tempNames = new Map<string, string>();    // for debug: temp → var name
   tempLocs = new Map<string, { file: string; line: number; col: number }>();  // temp → source location
+  private varBindingLocs = new Map<string, { file: string; line: number; col: number }>();  // var name → binding-site location
 
   constructor(tags: TagDef[], consts: Map<string, string>, sourceFile = '') {
     this.tags = tags;
@@ -348,6 +349,10 @@ export class SSALowering {
       if (bindingNode.file && !this.tempLocs.has(temp)) {
         this.tempLocs.set(temp, { file: bindingNode.file, line: bindingNode.line, col: bindingNode.col });
       }
+      // Record canonical binding location for this variable (for use by set! later)
+      if (bindingNode.file) {
+        this.varBindingLocs.set(name, { file: bindingNode.file, line: bindingNode.line, col: bindingNode.col });
+      }
     }
 
     let result = '';
@@ -384,6 +389,10 @@ export class SSALowering {
       if (binding.file && !this.tempLocs.has(initTemp)) {
         this.tempLocs.set(initTemp, { file: binding.file, line: binding.line, col: binding.col });
       }
+      // Record canonical binding location for this variable (for use by set! later)
+      if (binding.file) {
+        this.varBindingLocs.set(name, { file: binding.file, line: binding.line, col: binding.col });
+      }
     }
 
     let result = '';
@@ -412,8 +421,12 @@ export class SSALowering {
     this.env.set(name, newTemp);
     this.allBindings.set(name, newTemp);
     this.tempNames.set(newTemp, name);
-    // Record binding location for named variables
-    if (node.file && !this.tempLocs.has(newTemp)) {
+    // Prefer canonical binding location over set! location (macro expansions may have
+    // set! with location pointing to macro body; we want the original binding site)
+    const bindingLoc = this.varBindingLocs.get(name);
+    if (bindingLoc) {
+      this.tempLocs.set(newTemp, bindingLoc);
+    } else if (node.file) {
       this.tempLocs.set(newTemp, { file: node.file, line: node.line, col: node.col });
     }
     return newTemp;
@@ -602,10 +615,18 @@ export class SSALowering {
     const envBefore = new Map(this.env);
     const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, loopPred);
 
+    // Create exit phis for outer variables (so break merges correctly)
+    const exitPhiMap = new Map<string, string>();
+    for (const [name, _temp] of envBefore) {
+      const phiTemp = this.freshTemp();
+      exitBlock.phis.push({ dest: phiTemp, entries: [] });
+      exitPhiMap.set(name, phiTemp);
+    }
+
     this.jumpTo(bodyBlock);
     this.sealBlock(bodyBlock);
 
-    this.loopStack.push({ headerBlock, exitBlock });
+    this.loopStack.push({ headerBlock, exitBlock, exitPhiMap });
 
     for (let i = 1; i < list.length; i++) {
       this.lowerExpr(list[i]);
@@ -619,6 +640,10 @@ export class SSALowering {
 
     this.loopStack.pop();
     this.sealBlock(exitBlock);
+    // Restore env using exit phi temps so post-loop code sees merged values
+    for (const [name, phiTemp] of exitPhiMap) {
+      this.env.set(name, phiTemp);
+    }
     return '';
   }
 
@@ -635,11 +660,24 @@ export class SSALowering {
     const envBefore = new Map(this.env);
     const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, whilePred);
 
+    // Create exit phis for outer variables
+    const exitPhiMap = new Map<string, string>();
+    for (const [name, _temp] of envBefore) {
+      const phiTemp = this.freshTemp();
+      exitBlock.phis.push({ dest: phiTemp, entries: [] });
+      exitPhiMap.set(name, phiTemp);
+    }
+
     // Condition
     this.lowerCondBranch(list[1], bodyBlock, exitBlock);
 
+    // Fill exit phis for condition-false paths (all preds that branch to exitBlock)
+    for (const pred of exitBlock.preds) {
+      this.fillUnrolledPhis(exitPhiMap, exitBlock, this.env, pred);
+    }
+
     this.sealBlock(bodyBlock);
-    this.loopStack.push({ headerBlock, exitBlock });
+    this.loopStack.push({ headerBlock, exitBlock, exitPhiMap });
 
     for (let i = 2; i < list.length; i++) {
       this.lowerExpr(list[i]);
@@ -653,8 +691,8 @@ export class SSALowering {
 
     this.loopStack.pop();
     this.sealBlock(exitBlock);
-    // Restore loop header phis into env
-    for (const [name, phiTemp] of phiMap) {
+    // Restore env using exit phi temps so post-loop code sees merged values
+    for (const [name, phiTemp] of exitPhiMap) {
       this.env.set(name, phiTemp);
     }
     return '';
@@ -738,6 +776,12 @@ export class SSALowering {
         line: node.line,
         col: node.col,
       });
+      // Record canonical binding location for dotimes variable (for use by set! later)
+      this.varBindingLocs.set(varName, {
+        file: node.file,
+        line: node.line,
+        col: node.col,
+      });
     }
 
     const headerBlock = this.makeBlock('dotimes');
@@ -751,12 +795,23 @@ export class SSALowering {
     const envBefore = new Map(this.env);
     const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, dotimesPred);
 
+    // Create exit phis for outer variables
+    const exitPhiMap = new Map<string, string>();
+    for (const [name, _temp] of envBefore) {
+      const phiTemp = this.freshTemp();
+      exitBlock.phis.push({ dest: phiTemp, entries: [] });
+      exitPhiMap.set(name, phiTemp);
+    }
+
     // Condition: loop var == compareVal → exit
     const loopVar = this.env.get(varName)!;
     this.branchTo('eq', loopVar, compareVal, exitBlock, bodyBlock);
 
+    // Fill exit phis for normal exit (condition-true path from header)
+    this.fillUnrolledPhis(exitPhiMap, exitBlock, this.env, headerBlock);
+
     this.sealBlock(bodyBlock);
-    this.loopStack.push({ headerBlock, exitBlock });
+    this.loopStack.push({ headerBlock, exitBlock, exitPhiMap });
 
     for (let i = 2; i < list.length; i++) {
       this.lowerExpr(list[i]);
@@ -782,9 +837,9 @@ export class SSALowering {
     this.loopStack.pop();
     this.sealBlock(exitBlock);
     // Restore env to remove the loop variable from scope, then
-    // overlay loop header phis so post-loop code sees updated values
+    // overlay exit phis so post-loop code sees merged values
     this.env = savedEnv;
-    for (const [name, phiTemp] of phiMap) {
+    for (const [name, phiTemp] of exitPhiMap) {
       if (savedEnv.has(name)) {
         this.env.set(name, phiTemp);
       }

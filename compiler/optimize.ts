@@ -200,6 +200,25 @@ export function copyPropagation(program: SSAProgram): void {
       program.allBindings.set(name, resolve(temp));
     }
   }
+
+  // Transfer name and location from eliminated copy temps to their sources,
+  // so register exhaustion errors show the correct variable name and binding location.
+  for (const [dest, _src] of copyMap) {
+    const resolved = resolve(dest);
+    if (resolved === dest) continue;  // self-loop (shouldn't happen)
+
+    // If the copy temp had a name, propagate to the source (don't overwrite existing name)
+    const name = program.tempNames.get(dest);
+    if (name && !program.tempNames.has(resolved)) {
+      program.tempNames.set(resolved, name);
+    }
+
+    // If the copy temp had a location, propagate to source (prefer copy temp's loc = binding loc)
+    const loc = program.tempLocs.get(dest);
+    if (loc) {
+      program.tempLocs.set(resolved, loc);
+    }
+  }
 }
 
 // ─── 4c: Dead Code Elimination ──────────────────────────────

@@ -4,6 +4,10 @@
 
 import { runSuite, test, assert, assertEq, assertThrows, assertMatch,
          assertIncludes, assertNotIncludes, lowerSource, printSSA } from './test-helpers';
+import { tokenize, parse } from './parse';
+import { expandMacros } from './expand';
+import { collectMetadata } from './metadata';
+import { lowerToSSA } from './ssa';
 import type { SSAProgram, BasicBlock } from './ssa';
 
 function ssa(src: string): string {
@@ -421,6 +425,53 @@ runSuite('SSA', () => {
       `mark's value arg (${markArg}) should be an exit phi temp, not a pre-loop value`);
   });
 
+  test('dotimes non-unrolled: exit block has phis for outer variables', () => {
+    // When an outer variable is modified inside a non-unrolled dotimes,
+    // the exit block must have phis to merge normal-exit vs break-exit values.
+    const program = lowerSource(
+      '(let ((x 0)) (dotimes (i (random 100)) (set! x (+ x 1)) (when (>= x 3) (break))) (move x))');
+    const exitBlock = program.blocks.find(b => b.label.startsWith('__enddotimes_'))!;
+    assert(!!exitBlock, 'should have an enddotimes exit block');
+    // Exit block must have a phi for x
+    assert(exitBlock.phis.length > 0, 'exit block should have phis for outer variables');
+    const phiDests = new Set(exitBlock.phis.map(p => p.dest));
+    // The move instruction should use the exit phi, not the header phi
+    const moveInstr = exitBlock.instrs.find(i => i.op === 'move');
+    assert(!!moveInstr, 'exit block should have a move instruction');
+    assert(phiDests.has(moveInstr!.args[0] as string),
+      `move's arg (${moveInstr!.args[0]}) should be an exit phi temp`);
+    // The exit phi should have entries from both normal exit (header) and break
+    const xPhi = exitBlock.phis.find(p => p.dest === moveInstr!.args[0]);
+    assert(xPhi!.entries.length >= 2,
+      `exit phi should have entries from both normal-exit and break paths, got ${xPhi!.entries.length}`);
+  });
+
+  test('while: exit block has phis for outer variables', () => {
+    const program = lowerSource(
+      '(let ((x 0)) (while (< x 10) (set! x (+ x 1))) (move x))');
+    const exitBlock = program.blocks.find(b => b.label.startsWith('__endwhile_'))!;
+    assert(!!exitBlock, 'should have an endwhile exit block');
+    assert(exitBlock.phis.length > 0, 'exit block should have phis for outer variables');
+    const phiDests = new Set(exitBlock.phis.map(p => p.dest));
+    const moveInstr = exitBlock.instrs.find(i => i.op === 'move');
+    assert(!!moveInstr, 'exit block should have a move instruction');
+    assert(phiDests.has(moveInstr!.args[0] as string),
+      `move's arg (${moveInstr!.args[0]}) should be an exit phi temp`);
+  });
+
+  test('loop: exit block has phis for outer variables', () => {
+    const program = lowerSource(
+      '(let ((x 0)) (loop (set! x (+ x 1)) (when (>= x 3) (break))) (move x))');
+    const exitBlock = program.blocks.find(b => b.label.startsWith('__endloop_'))!;
+    assert(!!exitBlock, 'should have an endloop exit block');
+    assert(exitBlock.phis.length > 0, 'exit block should have phis for outer variables');
+    const phiDests = new Set(exitBlock.phis.map(p => p.dest));
+    const moveInstr = exitBlock.instrs.find(i => i.op === 'move');
+    assert(!!moveInstr, 'exit block should have a move instruction');
+    assert(phiDests.has(moveInstr!.args[0] as string),
+      `move's arg (${moveInstr!.args[0]}) should be an exit phi temp`);
+  });
+
   // ── if expression value ──
 
   test('if expression value has phi selecting then/else results', () => {
@@ -537,6 +588,31 @@ runSuite('SSA', () => {
           `set! inside let is being lost`);
       }
     }
+  });
+
+  test('set! on named let variable inherits binding location not set! location', () => {
+    // When a variable bound in let is reassigned with set!, the SSA temp for
+    // the set! result should carry the binding-site location (from let), not
+    // the set! site location. This ensures loop header phis and error messages
+    // show the original binding location.
+    const src = `(let ((x 0))
+  (set! x 1)
+  x)`;
+    const ast = parse(tokenize(src), { source: src, sourceFile: 'test.alisp' });
+    const expanded = expandMacros(ast.body, { sourceFile: 'test.alisp' });
+    const meta = collectMetadata(expanded.forms);
+    const program = lowerToSSA(meta.forms, meta.tags, expanded.constValues);
+    // Find the temp that was bound to x
+    const xBinding = program.allBindings.get('x');
+    assert(xBinding !== undefined, 'x should be in allBindings');
+    const xTemp = xBinding!;
+    // The set! operation creates a new temp with an assignment.
+    // That new temp should inherit the binding location.
+    const locForXTemp = program.tempLocs.get(xTemp);
+    assert(locForXTemp !== undefined, `temp ${xTemp} should have a location`);
+    // The binding `(x 0)` is on line 1; the set! is on line 2.
+    // We verify that the location points to the let binding, not the set!.
+    assertEq(locForXTemp!.line, 1, 'should inherit binding-site line (let), not set! line');
   });
 
 });
