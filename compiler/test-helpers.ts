@@ -88,7 +88,7 @@ export function assertThrows(fn: () => void, msgMatch?: string | RegExp): void {
 // ─── Pipeline Helpers ───────────────────────────────────────
 
 export function parseSource(src: string): Program {
-  return parse(tokenize(src));
+  return parse(tokenize(src), { source: src });
 }
 
 export function expandSource(src: string, opts?: { constOverrides?: Record<string, string>; sourceFile?: string }): ExpandResult {

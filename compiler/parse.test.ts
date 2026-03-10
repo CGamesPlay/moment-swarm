@@ -90,10 +90,41 @@ runSuite('Parse', () => {
   });
 
   test('parse: unclosed paren error', () => {
-    assertThrows(() => parseSource('(+ 1 2'), 'Missing closing paren');
+    assertThrows(() => parseSource('(+ 1 2'), 'unclosed expression');
   });
 
   test('parse: unexpected close paren error', () => {
-    assertThrows(() => parseSource(')'), 'Unexpected )');
+    assertThrows(() => parseSource(')'), 'unexpected `)`');
+  });
+
+  test('parse: unclosed paren shows source line', () => {
+    assertThrows(
+      () => parse(tokenize('(+ 1 2'), { source: '(+ 1 2', sourceFile: 'test.alisp' }),
+      /opened here, never closed/
+    );
+  });
+
+  test('parse: unclosed paren names the form', () => {
+    assertThrows(
+      () => parse(tokenize('(defn foo'), { source: '(defn foo', sourceFile: 'test.alisp' }),
+      /body of `defn`/
+    );
+  });
+
+  test('parse: multiple unclosed parens collected', () => {
+    assertThrows(
+      () => parse(tokenize('(let [x 10]\n  (if (> x 5)'), {
+        source: '(let [x 10]\n  (if (> x 5)',
+        sourceFile: 'test.alisp'
+      }),
+      /2 unclosed expressions/
+    );
+  });
+
+  test('parse: extra ) shows source line', () => {
+    assertThrows(
+      () => parse(tokenize('(+ x y z))'), { source: '(+ x y z))', sourceFile: 'test.alisp' }),
+      /no matching `\(`/
+    );
   });
 });

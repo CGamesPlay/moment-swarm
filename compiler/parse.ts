@@ -115,8 +115,48 @@ export function tokenize(source: string): Token[] {
 
 // ─── PARSER ─────────────────────────────────────────────────
 
-export function parse(tokens: Token[]): Program {
+export interface ParseOptions {
+  source?: string;
+  sourceFile?: string;
+}
+
+export class ParseDiagnosticError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ParseDiagnosticError';
+  }
+}
+
+function formatSourceBlock(
+  source: string | undefined,
+  filename: string | undefined,
+  line: number,
+  col: number,
+  caretMsg: string
+): string {
+  const file = filename ?? '<input>';
+  const gutterWidth = Math.max(2, String(line).length);
+  const arrow = `  --> ${file}:${line}:${col}`;
+  if (!source) return arrow;
+
+  const sourceLine = source.split('\n')[line - 1] ?? '';
+  const gutter = String(line).padStart(gutterWidth);
+  const blank = ' '.repeat(gutterWidth);
+  const caret = ' '.repeat(col - 1) + '^ ' + caretMsg;
+  return [
+    arrow,
+    `${blank} |`,
+    `${gutter} | ${sourceLine}`,
+    `${blank} | ${caret}`,
+  ].join('\n');
+}
+
+export function parse(tokens: Token[], opts?: ParseOptions): Program {
+  const source = opts?.source;
+  const sourceFile = opts?.sourceFile;
   let pos = 0;
+
+  const unclosedParens: Array<{ tok: Token; formName: string | null }> = [];
 
   function parseExpr(): ASTNode {
     if (pos >= tokens.length) throw new Error('Unexpected end of input');
@@ -124,16 +164,32 @@ export function parse(tokens: Token[]): Program {
     if (tok.type === 'paren' && tok.value === '(') {
       const startTok = tok;
       pos++;
+      // Peek at the next token to capture the form name (e.g. defn, let, if)
+      const formName = (pos < tokens.length && tokens[pos].type === 'symbol')
+        ? tokens[pos].value as string
+        : null;
       const list: ASTNode[] = [];
       while (pos < tokens.length && !(tokens[pos].type === 'paren' && tokens[pos].value === ')')) {
         list.push(parseExpr());
       }
-      if (pos >= tokens.length) throw new Error(`Missing closing paren for ( at line ${startTok.line}:${startTok.col}`);
+      if (pos >= tokens.length) {
+        // Collect this unclosed paren; return a dummy node and let the top-level loop handle reporting
+        unclosedParens.push({ tok: startTok, formName });
+        return { type: 'list', value: list, line: startTok.line, col: startTok.col };
+      }
       pos++;
       return { type: 'list', value: list, line: startTok.line, col: startTok.col };
     }
     if (tok.type === 'paren' && tok.value === ')') {
-      throw new Error(`Unexpected ) at line ${tok.line}:${tok.col}`);
+      const block = formatSourceBlock(source, sourceFile, tok.line, tok.col, 'this `)` has no matching `(`');
+      const msg = [
+        'unexpected `)`',
+        '',
+        block,
+        '',
+        '   = help: remove this `)`',
+      ].join('\n');
+      throw new ParseDiagnosticError(msg);
     }
     pos++;
     if (tok.type === 'number') return { type: 'number', value: tok.value as number, line: tok.line, col: tok.col };
@@ -143,6 +199,35 @@ export function parse(tokens: Token[]): Program {
 
   const program: ASTNode[] = [];
   while (pos < tokens.length) program.push(parseExpr());
+
+  if (unclosedParens.length > 0) {
+    const n = unclosedParens.length;
+    const header = n === 1 ? 'unclosed expression' : `${n} unclosed expressions`;
+    const parts: string[] = [header, ''];
+
+    for (const { tok, formName: _ } of unclosedParens) {
+      parts.push(formatSourceBlock(source, sourceFile, tok.line, tok.col, 'opened here, never closed'));
+      parts.push('');
+    }
+
+    if (n === 1) {
+      const { formName } = unclosedParens[0];
+      if (formName) {
+        parts.push(`   = note: reached end of file while parsing body of \`${formName}\``);
+      }
+      parts.push(`   = help: add 1 closing \`)\` before end of file`);
+    } else {
+      // Multiple: list inside-out (innermost first → reversed array is outermost-first, we want innermost close first)
+      const helpParts = [...unclosedParens].reverse().map(({ tok, formName }) => {
+        const name = formName ? `\`${formName}\`` : 'expression';
+        return `\`)\` to close ${name} (line ${tok.line})`;
+      });
+      parts.push(`   = help: add ${helpParts.join(', then ')}`);
+    }
+
+    throw new ParseDiagnosticError(parts.join('\n'));
+  }
+
   return { type: 'program', body: program };
 }
 

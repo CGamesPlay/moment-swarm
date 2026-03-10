@@ -33,7 +33,7 @@ export function compileAntLisp(source: string, options: CompileOptions = {}): st
 export function compileAntLispDebug(source: string, options: CompileOptions = {}): { asm: string; varMap: Map<string, string> } {
   // Parse
   const tokens = tokenize(source);
-  const ast = parse(tokens);
+  const ast = parse(tokens, { source, sourceFile: options.sourceFile });
 
   // Phase 1: Macro expansion
   const constOverrides = options.constOverrides
@@ -119,7 +119,7 @@ if (require.main === module) {
       const source = fs.readFileSync(sourceFile, 'utf-8');
       if (dumpSSA) {
         const tokens = tokenize(source);
-        const ast = parse(tokens);
+        const ast = parse(tokens, { source, sourceFile });
         const constMap = constOverrides ? new Map(Object.entries(constOverrides)) : undefined;
         const expanded = expandMacros(ast.body, { constOverrides: constMap, sourceFile });
         const metadata = collectMetadata(expanded.forms);
