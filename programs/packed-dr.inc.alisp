@@ -1,0 +1,238 @@
+; ═══════════════════════════════════════════════════════════════
+; Packed Dead-Reckoning — Macro Library (open2.alisp)
+; ═══════════════════════════════════════════════════════════════
+;
+; Maps are 128×128, so dx/dy fit in a signed 8-bit integer [-128, 127].
+; Both are packed into a single 32-bit register:
+;
+;   bits  7:0   → dx  (signed 8-bit, two's complement)
+;   bits 15:8   → dy  (signed 8-bit, two's complement)
+;   bits 31:16  → reserved for future use
+;
+; Directions: N=1  E=2  S=3  W=4
+; Tracking convention (displacement from nest, i.e. how far ant has moved):
+;   move N → dy -= 1    move E → dx += 1
+;   move S → dy += 1    move W → dx -= 1
+;
+; ─── Primitives ──────────────────────────────────────────────
+;   (pack-dx! packed dx)        write signed dx into bits 7:0
+;   (pack-dy! packed dy)        write signed dy into bits 15:8
+;   (unpack-dx! out packed)     extract signed dx from bits 7:0
+;   (unpack-dy! out packed)     extract signed dy from bits 15:8
+;   (inc-dx! packed)            add 1 to dx byte in-place
+;   (dec-dx! packed)            subtract 1 from dx byte in-place
+;   (inc-dy! packed)            add 1 to dy byte in-place
+;   (dec-dy! packed)            subtract 1 from dy byte in-place
+;
+; ── High-level macros ───────────────────────────────────────
+;   (move-track-unsafe dir packed)  move without wall check; updates packed
+;   (move-track dir packed)         wall-checked move; updates packed in-place
+;   (home-dir-packed dir packed)    sets dir toward nest from packed dx/dy
+;
+; ═══════════════════════════════════════════════════════════════
+
+; ─── Primitives ──────────────────────────────────────────────
+
+; Pack a signed integer into bits 7:0 of `packed`.
+; Clears the low byte first, then ORs in the new value masked to 8 bits.
+(defmacro pack-dx! (packed dx)
+  (set! packed (and packed 0xFFFFFF00))
+  (set! packed (or  packed (and dx 0xFF))))
+
+; Pack a signed integer into bits 15:8 of `packed`.
+(defmacro pack-dy! (packed dy)
+  (set! packed (and packed 0xFFFF00FF))
+  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+
+; Unpack bits 7:0 into `out` as a signed 8-bit integer.
+; Isolate the byte, then sign-extend: if bit 7 is set subtract 256.
+(defmacro unpack-dx! (out packed)
+  (set! out (and packed 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Unpack bits 15:8 into `out` as a signed 8-bit integer.
+(defmacro unpack-dy! (out packed)
+  (set! out (and (rshift packed 8) 0xFF))
+  (when (>= out 128)
+    (set! out (- out 256))))
+
+; Add 1 to the dx field of `packed` (stays in signed 8-bit range).
+; Operates directly on the unsigned byte — no sign-extension needed.
+; 6 instructions, 1 scratch register.
+(defmacro inc-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+; Subtract 1 from the dx field of `packed`.
+; 6 instructions, 1 scratch register.
+(defmacro dec-dx! (packed)
+  (let ((tmp 0))
+    (set! tmp (and packed 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! packed (and packed 0xFFFFFF00))
+    (set! packed (or packed tmp))))
+
+; Add 1 to the dy field of `packed`.
+; 8 instructions, 1 scratch register.
+(defmacro inc-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (+ tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; Subtract 1 from the dy field of `packed`.
+; 8 instructions, 1 scratch register.
+(defmacro dec-dy! (packed)
+  (let ((tmp 0))
+    (set! tmp (rshift packed 8))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (- tmp 1))
+    (set! tmp (and tmp 0xFF))
+    (set! tmp (lshift tmp 8))
+    (set! packed (and packed 0xFFFF00FF))
+    (set! packed (or packed tmp))))
+
+; ─── High-level movement macros ──────────────────────────────
+
+; Move in `dir` and update packed dx/dy.
+; Precondition: caller has already verified dir is not a wall.
+(defmacro move-track-unsafe (dir packed)
+  (cond ((= dir 1) (dec-dy! packed))
+        ((= dir 2) (inc-dx! packed))
+        ((= dir 3) (inc-dy! packed))
+        ((= dir 4) (dec-dx! packed)))
+  (move dir))
+
+; Move in `dir` with wall check; update packed dx/dy on success.
+; Returns 1 if moved, 0 if wall.
+(defmacro move-track (dir packed)
+  (if (= (probe dir) 1) 0 (move-track-unsafe dir packed)))
+
+; Set dir toward nest based on homepos dx/dy.
+(defmacro home-dir-packed (dir packed)
+  (let ((dx 0)
+        (dy 0)
+        (abs-dx 0))
+    (unpack-dx! dx packed)
+    (unpack-dy! dy packed)
+    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
+    (if (< dy 0)
+      (begin
+        (set! dy (- dy))
+        (if (> dy abs-dx)
+          (set! dir 3)
+          (if (> dx 0)
+            (set! dir 4)
+            (set! dir 2))))
+      (if (> dy abs-dx)
+        (set! dir 1)
+        (if (> dx 0)
+          (set! dir 4)
+          (set! dir 2))))))
+
+; ─── Utility macros ────────────────────────────────────────────
+
+; Opposite cardinal direction: N↔S, E↔W
+(defmacro invert-dir (d)
+  (+ (mod (+ d 1) 4) 1))
+
+; Turn right: N→E, E→S, S→W, W→N
+(defmacro turn-right (d)
+  (+ (mod d 4) 1))
+
+; Pick a random direction, rotating past walls
+(defmacro pick-random-nonwall (dir)
+  (set! dir (+ (random 4) 1))
+  (when (= (probe dir) 1)
+    (set! dir (+ (mod dir 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod dir 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod dir 4) 1))))))
+
+; Pick a random non-wall direction, but avoid reversing `avoid-dir`.
+(defmacro pick-nonwall-no-reverse (dir avoid-dir)
+  (let ((start (+ (random 3) 1)))
+    (set! dir (+ (mod (+ avoid-dir start -1) 4) 1))
+    (when (= (probe dir) 1)
+      (set! dir (+ (mod (+ avoid-dir (mod start 3)) 4) 1))
+      (when (= (probe dir) 1)
+        (set! dir (+ (mod (+ avoid-dir (mod (+ start 1) 3)) 4) 1))
+        (when (= (probe dir) 1)
+          (set! dir avoid-dir))))))
+
+; ─── Gradient trail marking ──────────────────────────────────
+;
+; Seeds MAX_TRAIL at nest, propagates strongest_neighbor - 1 elsewhere.
+; Only marks if deficit > 0 (never reduces the gradient).
+;
+; Uses 3 scratch registers (via let): current, strongest, tmp
+; ~20 instructions in worst case
+(defmacro mark-gradient ()
+  (let ((current (sniff TRAIL_PH here)))
+    (if (!= (sense nest) 0)
+      ; Adjacent to nest — seed the gradient
+      (when (< current MAX_TRAIL)
+        (mark TRAIL_PH (- MAX_TRAIL current)))
+      ; Not at nest — propagate from strongest neighbor
+      (let ((strongest (sniff TRAIL_PH n)))
+        (let ((tmp (sniff TRAIL_PH e)))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff TRAIL_PH s))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff TRAIL_PH w))
+          (when (> tmp strongest) (set! strongest tmp)))
+        ; target = strongest - 1; deficit = target - current
+        (when (> strongest 0)
+          (set! strongest (- strongest 1))
+          (when (> strongest current)
+            (mark TRAIL_PH (- strongest current))))))))
+
+
+; ─── Delivering gradient trail marking ────────────────────────
+;
+; Same approach as mark-gradient but for DELIVERING_PH.
+; Seeds MAX_TRAIL at food cells, propagates strongest_neighbor - 1.
+; Only marks if deficit > 0 (never reduces the gradient).
+(defmacro mark-delivering-gradient ()
+  (let ((current (sniff DELIVERING_PH here)))
+    (if (!= (sense food) 0)
+      ; Adjacent to food — seed the delivering gradient
+      (when (< current MAX_TRAIL)
+        (mark DELIVERING_PH (- MAX_TRAIL current)))
+      ; Not at food — propagate from strongest neighbor
+      (let ((strongest (sniff DELIVERING_PH n)))
+        (let ((tmp (sniff DELIVERING_PH e)))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff DELIVERING_PH s))
+          (when (> tmp strongest) (set! strongest tmp))
+          (set! tmp (sniff DELIVERING_PH w))
+          (when (> tmp strongest) (set! strongest tmp)))
+        ; target = strongest - 1; deficit = target - current
+        (when (> strongest 0)
+          (set! strongest (- strongest 1))
+          (when (> strongest current)
+            (mark DELIVERING_PH (- strongest current))))))))
+
+; ─── Food grab macro ─────────────────────────────────────────
+; Sense food, grab it, mark green beacon, go to returning.
+; Must be called inside tagbody with a `returning` label.
+(defmacro grab-food-if-adjacent (dir homepos)
+  (let ((food-dir (sense food)))
+    (when (!= food-dir 0)
+      (mark-gradient)
+      (set! dir food-dir)
+      (move-track-unsafe dir homepos)
+      (pickup)
+      (mark PICKUP_PH 255)
+      (go returning))))

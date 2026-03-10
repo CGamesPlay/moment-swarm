@@ -1,164 +1,19 @@
 ; ═══════════════════════════════════════════════════════════════
-; Packed Dead-Reckoning — Macro Library and Unit Tests
+; Packed Dead-Reckoning — Unit Tests
 ; ═══════════════════════════════════════════════════════════════
 ;
-; Maps are 128×128, so dx/dy fit in a signed 8-bit integer [-128, 127].
-; Both are packed into a single 32-bit register:
+; These tests verify that the packed dx/dy macros correctly pack,
+; unpack, increment, and decrement signed 8-bit values stored in
+; the low 16 bits of a 32-bit register.
 ;
-;   bits  7:0   → dx  (signed 8-bit, two's complement)
-;   bits 15:8   → dy  (signed 8-bit, two's complement)
-;   bits 31:16  → reserved for future use
+; Tests use inline (assert expr expected) forms to check values
+; computed by the macros. These compile to ASSERTEQ opcodes that
+; are checked at runtime.
 ;
-; Directions: N=1  E=2  S=3  W=4
-; Tracking convention (displacement from nest, i.e. how far ant has moved):
-;   move N → dy -= 1    move E → dx += 1
-;   move S → dy += 1    move W → dx -= 1
-;
-; ── Primitives ──────────────────────────────────────────────
-;   (pack-dx! packed dx)        write signed dx into bits 7:0
-;   (pack-dy! packed dy)        write signed dy into bits 15:8
-;   (unpack-dx! out packed)     extract signed dx from bits 7:0
-;   (unpack-dy! out packed)     extract signed dy from bits 15:8
-;   (inc-dx! packed)            add 1 to dx byte in-place
-;   (dec-dx! packed)            subtract 1 from dx byte in-place
-;   (inc-dy! packed)            add 1 to dy byte in-place
-;   (dec-dy! packed)            subtract 1 from dy byte in-place
-;
-; ── High-level macros ───────────────────────────────────────
-;   (move-with-tracking-packed dir packed)  wall-checked move; updates packed in-place
-;                               38 instructions, 1 scratch reg (r2)
-;
-;   (home-dir-packed dir packed)  sets dir toward nest from packed dx/dy
-;                               34 instructions, 3 scratch regs (r2–r4)
-;
-; ── Register budget (when both macros are used together) ────
-;   r0  dir         (caller-assigned)
-;   r1  packed      (caller-assigned)
-;   r2  scratch     (tmp byte / unpacked dx)
-;   r3  scratch     (unpacked dy; home-dir-packed only)
-;   r4  scratch     (abs-dx; home-dir-packed only)
-;   ──  ──────────────────────────────────────────────────
-;   5 registers consumed, 3 free (r5, r6, r7) for caller use
-;   72 instructions for one expansion of each macro
-;
-; ── Testing note ────────────────────────────────────────────
-; MOVE is an action opcode that ends the tick, so displacement
-; updates run at the start of the following tick.  Tests that
-; exercise move-with-tracking-packed use a done-flag + (move random)
-; pattern to fire the tracked move exactly once and prevent the
-; program from wrapping (which would re-initialise let-bound registers):
-;
-;   tick 1: done=0 → when-block → MOVE ends tick
-;   tick 2: displacement update → unpack → break → (move random) ends tick
-;
-; Run with: argc unit packed-dr.unit.alisp
+; Run with: argc unit programs/packed-dr.unit.alisp
 ; ═══════════════════════════════════════════════════════════════
 
-; ─── Primitives ──────────────────────────────────────────────
-
-; Pack a signed integer into bits 7:0 of `packed`.
-; Clears the low byte first, then ORs in the new value masked to 8 bits.
-(defmacro pack-dx! (packed dx)
-  (set! packed (and packed 0xFFFFFF00))
-  (set! packed (or  packed (and dx 0xFF))))
-
-; Pack a signed integer into bits 15:8 of `packed`.
-(defmacro pack-dy! (packed dy)
-  (set! packed (and packed 0xFFFF00FF))
-  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
-
-; Unpack bits 7:0 into `out` as a signed 8-bit integer.
-; Isolate the byte, then sign-extend: if bit 7 is set subtract 256.
-(defmacro unpack-dx! (out packed)
-  (set! out (and packed 0xFF))
-  (when (>= out 128)
-    (set! out (- out 256))))
-
-; Unpack bits 15:8 into `out` as a signed 8-bit integer.
-(defmacro unpack-dy! (out packed)
-  (set! out (and (rshift packed 8) 0xFF))
-  (when (>= out 128)
-    (set! out (- out 256))))
-
-; Add 1 to the dx field of `packed` (stays in signed 8-bit range).
-; Operates directly on the unsigned byte — no sign-extension needed.
-; 6 instructions, 1 scratch register.
-(defmacro inc-dx! (packed)
-  (let ((tmp 0))
-    (set! tmp (and packed 0xFF))
-    (set! tmp (+ tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! packed (and packed 0xFFFFFF00))
-    (set! packed (or packed tmp))))
-
-; Subtract 1 from the dx field of `packed`.
-; 6 instructions, 1 scratch register.
-(defmacro dec-dx! (packed)
-  (let ((tmp 0))
-    (set! tmp (and packed 0xFF))
-    (set! tmp (- tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! packed (and packed 0xFFFFFF00))
-    (set! packed (or packed tmp))))
-
-; Add 1 to the dy field of `packed`.
-; 8 instructions, 1 scratch register.
-(defmacro inc-dy! (packed)
-  (let ((tmp 0))
-    (set! tmp (rshift packed 8))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (+ tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (lshift tmp 8))
-    (set! packed (and packed 0xFFFF00FF))
-    (set! packed (or packed tmp))))
-
-; Subtract 1 from the dy field of `packed`.
-; 8 instructions, 1 scratch register.
-(defmacro dec-dy! (packed)
-  (let ((tmp 0))
-    (set! tmp (rshift packed 8))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (- tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (lshift tmp 8))
-    (set! packed (and packed 0xFFFF00FF))
-    (set! packed (or packed tmp))))
-
-; ─── High-level macros ───────────────────────────────────────
-
-; Move in `dir` with wall check; update packed dx/dy on success.
-; Drop-in replacement for forager.alisp move-with-tracking.
-(defmacro move-with-tracking-packed (dir packed)
-  (unless (= (probe dir) 1)
-    (move dir)
-    (cond ((= dir 1) (dec-dy! packed))
-          ((= dir 2) (inc-dx! packed))
-          ((= dir 3) (inc-dy! packed))
-          ((= dir 4) (dec-dx! packed)))))
-
-; Set dir toward nest based on packed dx/dy.
-; Drop-in replacement for forager.alisp home-dir.
-(defmacro home-dir-packed (dir packed)
-  (let ((dx 0)
-        (dy 0)
-        (abs-dx 0))
-    (unpack-dx! dx packed)
-    (unpack-dy! dy packed)
-    (if (< dx 0) (set! abs-dx (- dx)) (set! abs-dx dx))
-    (if (< dy 0)
-      (begin
-        (set! dy (- dy))            ; dy = |dy|, reuses register (MUL -1)
-        (if (> dy abs-dx)
-          (set! dir 3)              ; |dy| dominates, was negative → south
-          (if (> dx 0)
-            (set! dir 4)            ; |dx| dominates → west
-            (set! dir 2))))         ; |dx| dominates → east
-      (if (> dy abs-dx)
-        (set! dir 1)                ; |dy| dominates, was positive → north
-        (if (> dx 0)
-          (set! dir 4)              ; |dx| dominates → west
-          (set! dir 2))))))
+(include "./packed-dr.inc.alisp")
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 1 — pack/unpack round-trips
@@ -172,9 +27,10 @@
       (pack-dx! packed 0)
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 0)))
+  )
 
 (test "round-trip dx=1 dy=0"
   :ticks 1
@@ -184,9 +40,10 @@
       (pack-dx! packed 1)
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 1)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout 1)
+      (assert yout 0)))
+  )
 
 (test "round-trip dx=0 dy=1"
   :ticks 1
@@ -196,9 +53,10 @@
       (pack-dx! packed 0)
       (pack-dy! packed 1)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 1))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 1)))
+  )
 
 (test "round-trip dx=-1 dy=0"
   :ticks 1
@@ -208,9 +66,10 @@
       (pack-dx! packed -1)
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout -1)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout -1)
+      (assert yout 0)))
+  )
 
 (test "round-trip dx=0 dy=-1"
   :ticks 1
@@ -220,9 +79,10 @@
       (pack-dx! packed 0)
       (pack-dy! packed -1)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout -1))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout -1)))
+  )
 
 (test "round-trip dx=127 dy=0 (positive max)"
   :ticks 1
@@ -232,9 +92,10 @@
       (pack-dx! packed 127)
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 127)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout 127)
+      (assert yout 0)))
+  )
 
 (test "round-trip dx=0 dy=127 (positive max)"
   :ticks 1
@@ -244,9 +105,10 @@
       (pack-dx! packed 0)
       (pack-dy! packed 127)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 127))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 127)))
+  )
 
 (test "round-trip dx=-128 dy=0 (negative max)"
   :ticks 1
@@ -256,9 +118,10 @@
       (pack-dx! packed -128)
       (pack-dy! packed 0)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout -128)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout -128)
+      (assert yout 0)))
+  )
 
 (test "round-trip dx=0 dy=-128 (negative max)"
   :ticks 1
@@ -268,9 +131,10 @@
       (pack-dx! packed 0)
       (pack-dy! packed -128)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout -128))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout -128)))
+  )
 
 (test "round-trip dx=42 dy=-99 (mixed signs)"
   :ticks 1
@@ -280,9 +144,10 @@
       (pack-dx! packed 42)
       (pack-dy! packed -99)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 42)
-  (assert-reg-name yout -99))
+      (unpack-dy! yout packed)
+      (assert xout 42)
+      (assert yout -99)))
+  )
 
 (test "round-trip dx=-99 dy=42 (mixed signs, swapped)"
   :ticks 1
@@ -292,9 +157,10 @@
       (pack-dx! packed -99)
       (pack-dy! packed 42)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout -99)
-  (assert-reg-name yout 42))
+      (unpack-dy! yout packed)
+      (assert xout -99)
+      (assert yout 42)))
+  )
 
 (test "round-trip dx=127 dy=-128 (both extremes)"
   :ticks 1
@@ -304,9 +170,10 @@
       (pack-dx! packed 127)
       (pack-dy! packed -128)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 127)
-  (assert-reg-name yout -128))
+      (unpack-dy! yout packed)
+      (assert xout 127)
+      (assert yout -128)))
+  )
 
 (test "round-trip dx=-128 dy=127 (both extremes, swapped)"
   :ticks 1
@@ -316,9 +183,10 @@
       (pack-dx! packed -128)
       (pack-dy! packed 127)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout -128)
-  (assert-reg-name yout 127))
+      (unpack-dy! yout packed)
+      (assert xout -128)
+      (assert yout 127)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 2 — field isolation (no cross-byte bleed)
@@ -331,8 +199,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed 55)
       (pack-dx! packed 33)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 55))
+      (unpack-dy! yout packed)
+      (assert yout 55)))
+  )
 
 (test "pack-dy does not disturb dx field"
   :ticks 1
@@ -341,8 +210,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed 33)
       (pack-dy! packed 55)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 33))
+      (unpack-dx! xout packed)
+      (assert xout 33)))
+  )
 
 (test "overwriting dx leaves dy intact"
   :ticks 1
@@ -353,9 +223,10 @@
       (pack-dy! packed -10)
       (pack-dx! packed 20)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 20)
-  (assert-reg-name yout -10))
+      (unpack-dy! yout packed)
+      (assert xout 20)
+      (assert yout -10)))
+  )
 
 (test "overwriting dy leaves dx intact"
   :ticks 1
@@ -366,9 +237,10 @@
       (pack-dy! packed -10)
       (pack-dy! packed -20)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 10)
-  (assert-reg-name yout -20))
+      (unpack-dy! yout packed)
+      (assert xout 10)
+      (assert yout -20)))
+  )
 
 (test "high bits (above 15) stay zero after pack"
   :ticks 1
@@ -377,8 +249,9 @@
     (let ((packed 0) (hi 0))
       (pack-dx! packed 127)
       (pack-dy! packed 127)
-      (set! hi (rshift packed 16))))
-  (assert-reg-name hi 0))
+      (set! hi (rshift packed 16))
+      (assert hi 0)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 3 — inc/dec boundary values
@@ -391,8 +264,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed 0)
       (inc-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 1))
+      (unpack-dx! xout packed)
+      (assert xout 1)))
+  )
 
 (test "inc-dx: -1 → 0 (crosses zero)"
   :ticks 1
@@ -401,8 +275,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed -1)
       (inc-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 0))
+      (unpack-dx! xout packed)
+      (assert xout 0)))
+  )
 
 (test "inc-dx: 126 → 127 (approach positive max)"
   :ticks 1
@@ -411,8 +286,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed 126)
       (inc-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 127))
+      (unpack-dx! xout packed)
+      (assert xout 127)))
+  )
 
 (test "dec-dx: 0 → -1 (crosses zero)"
   :ticks 1
@@ -421,8 +297,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed 0)
       (dec-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout -1))
+      (unpack-dx! xout packed)
+      (assert xout -1)))
+  )
 
 (test "dec-dx: 1 → 0"
   :ticks 1
@@ -431,8 +308,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed 1)
       (dec-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 0))
+      (unpack-dx! xout packed)
+      (assert xout 0)))
+  )
 
 (test "dec-dx: -127 → -128 (approach negative max)"
   :ticks 1
@@ -441,8 +319,9 @@
     (let ((packed 0) (xout 0))
       (pack-dx! packed -127)
       (dec-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout -128))
+      (unpack-dx! xout packed)
+      (assert xout -128)))
+  )
 
 (test "inc-dy: 0 → 1"
   :ticks 1
@@ -451,8 +330,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed 0)
       (inc-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 1))
+      (unpack-dy! yout packed)
+      (assert yout 1)))
+  )
 
 (test "inc-dy: -1 → 0 (crosses zero)"
   :ticks 1
@@ -461,8 +341,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed -1)
       (inc-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert yout 0)))
+  )
 
 (test "inc-dy: 126 → 127 (approach positive max)"
   :ticks 1
@@ -471,8 +352,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed 126)
       (inc-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 127))
+      (unpack-dy! yout packed)
+      (assert yout 127)))
+  )
 
 (test "dec-dy: 0 → -1 (crosses zero)"
   :ticks 1
@@ -481,8 +363,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed 0)
       (dec-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout -1))
+      (unpack-dy! yout packed)
+      (assert yout -1)))
+  )
 
 (test "dec-dy: 1 → 0"
   :ticks 1
@@ -491,8 +374,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed 1)
       (dec-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert yout 0)))
+  )
 
 (test "dec-dy: -127 → -128 (approach negative max)"
   :ticks 1
@@ -501,8 +385,9 @@
     (let ((packed 0) (yout 0))
       (pack-dy! packed -127)
       (dec-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout -128))
+      (unpack-dy! yout packed)
+      (assert yout -128)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 4 — inc/dec field isolation
@@ -516,8 +401,9 @@
       (pack-dx! packed 0)
       (pack-dy! packed 50)
       (inc-dx! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 50))
+      (unpack-dy! yout packed)
+      (assert yout 50)))
+  )
 
 (test "dec-dx does not disturb dy field"
   :ticks 1
@@ -527,8 +413,9 @@
       (pack-dx! packed 0)
       (pack-dy! packed 50)
       (dec-dx! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 50))
+      (unpack-dy! yout packed)
+      (assert yout 50)))
+  )
 
 (test "inc-dy does not disturb dx field"
   :ticks 1
@@ -538,8 +425,9 @@
       (pack-dx! packed 50)
       (pack-dy! packed 0)
       (inc-dy! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 50))
+      (unpack-dx! xout packed)
+      (assert xout 50)))
+  )
 
 (test "dec-dy does not disturb dx field"
   :ticks 1
@@ -549,8 +437,9 @@
       (pack-dx! packed 50)
       (pack-dy! packed 0)
       (dec-dy! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 50))
+      (unpack-dx! xout packed)
+      (assert xout 50)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 5 — inc/dec chains
@@ -566,8 +455,9 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout 5))
+      (unpack-dx! xout packed)
+      (assert xout 5)))
+  )
 
 (test "dec-dx 5 times from 0 → -5"
   :ticks 1
@@ -579,8 +469,9 @@
       (dec-dx! packed)
       (dec-dx! packed)
       (dec-dx! packed)
-      (unpack-dx! xout packed)))
-  (assert-reg-name xout -5))
+      (unpack-dx! xout packed)
+      (assert xout -5)))
+  )
 
 (test "inc-dy 5 times from 0 → 5"
   :ticks 1
@@ -592,8 +483,9 @@
       (inc-dy! packed)
       (inc-dy! packed)
       (inc-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout 5))
+      (unpack-dy! yout packed)
+      (assert yout 5)))
+  )
 
 (test "dec-dy 5 times from 0 → -5"
   :ticks 1
@@ -605,8 +497,9 @@
       (dec-dy! packed)
       (dec-dy! packed)
       (dec-dy! packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name yout -5))
+      (unpack-dy! yout packed)
+      (assert yout -5)))
+  )
 
 (test "inc-dx and inc-dy independently: dx=12 dy=-8"
   :ticks 1
@@ -620,9 +513,10 @@
       (inc-dy! packed)
       (inc-dy! packed)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 12)
-  (assert-reg-name yout -8))
+      (unpack-dy! yout packed)
+      (assert xout 12)
+      (assert yout -8)))
+  )
 
 (test "opposing inc/dec cancel to zero"
   :ticks 1
@@ -638,122 +532,106 @@
       (dec-dy! packed)
       (dec-dy! packed)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 0))
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 0)))
+  )
 
 ; ─────────────────────────────────────────────────────────────
-; SECTION 6 — move-with-tracking-packed
-;
-; Displacement tests use a done-flag + (move random) to fire the
-; tracked move exactly once per run (see testing note in header).
-; Wall-blocking tests use :run-once since no MOVE action is taken.
+; SECTION 6 — move-track-unsafe and move-track
 ; ─────────────────────────────────────────────────────────────
 
-(test "move N: dy decrements"
+(test "move-track-unsafe N: dy decrements"
   :ticks 2
   (begin
     (let ((dir 1) (packed 0) (xout 0) (yout 0) (done 0))
       (loop
         (when (= done 0)
           (set! done 1)
-          (move-with-tracking-packed dir packed))
+          (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
+        (assert xout 0)
+        (assert yout -1)
         (break))
-      (move random)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout -1))
+      (move 3)))
+  )
 
-(test "move E: dx increments"
+(test "move-track-unsafe E: dx increments"
   :ticks 2
   (begin
     (let ((dir 2) (packed 0) (xout 0) (yout 0) (done 0))
       (loop
         (when (= done 0)
           (set! done 1)
-          (move-with-tracking-packed dir packed))
+          (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
+        (assert xout 1)
+        (assert yout 0)
         (break))
-      (move random)))
-  (assert-reg-name xout 1)
-  (assert-reg-name yout 0))
+      (move 3)))
+  )
 
-(test "move S: dy increments"
+(test "move-track-unsafe S: dy increments"
   :ticks 2
   (begin
     (let ((dir 3) (packed 0) (xout 0) (yout 0) (done 0))
       (loop
         (when (= done 0)
           (set! done 1)
-          (move-with-tracking-packed dir packed))
+          (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
+        (assert xout 0)
+        (assert yout 1)
         (break))
-      (move random)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 1))
+      (move 3)))
+  )
 
-(test "move W: dx decrements"
+(test "move-track-unsafe W: dx decrements"
   :ticks 2
   (begin
     (let ((dir 4) (packed 0) (xout 0) (yout 0) (done 0))
       (loop
         (when (= done 0)
           (set! done 1)
-          (move-with-tracking-packed dir packed))
+          (move-track-unsafe dir packed))
         (unpack-dx! xout packed)
         (unpack-dy! yout packed)
+        (assert xout -1)
+        (assert yout 0)
         (break))
-      (move random)))
-  (assert-reg-name xout -1)
-  (assert-reg-name yout 0))
+      (move 3)))
+  )
 
-(test "wall blocks move west: packed stays 0, ant stays put"
+(test "move-track wall blocks move west: packed stays 0, ant stays put"
   :ticks 1
   :run-once
   :ant-x 1
   :ant-y 16
   (begin
     (let ((dir 4) (packed 0) (xout 0) (yout 0))
-      (move-with-tracking-packed dir packed)
+      (move-track dir packed)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 0)
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 0)))
   (assert-at 1 16))
 
-(test "wall blocks move north: packed stays 0, ant stays put"
+(test "move-track wall blocks move north: packed stays 0, ant stays put"
   :ticks 1
   :run-once
   :ant-x 16
   :ant-y 1
   (begin
     (let ((dir 1) (packed 0) (xout 0) (yout 0))
-      (move-with-tracking-packed dir packed)
+      (move-track dir packed)
       (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 0)
+      (unpack-dy! yout packed)
+      (assert xout 0)
+      (assert yout 0)))
   (assert-at 16 1))
-
-(test "open then wall: net displacement is zero, ant back at start"
-  :ticks 2
-  :ant-x 1
-  :ant-y 16
-  (begin
-    (let ((dir 2) (packed 0) (xout 0) (yout 0))
-      (move-with-tracking-packed dir packed) ; tick 1: moves east x=1→2
-      (set! dir 4)
-      (move-with-tracking-packed dir packed) ; tick 2: moves west x=2→1
-      (set! dir 4)
-      (move-with-tracking-packed dir packed) ; tick 2: blocked at x=0 border
-      (unpack-dx! xout packed)
-      (unpack-dy! yout packed)))
-  (assert-reg-name xout 0)
-  (assert-reg-name yout 0)
-  (assert-at 1 16))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 7 — home-dir-packed
@@ -769,8 +647,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed 0)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 4))
+      (home-dir-packed dir packed)
+      (assert dir 4)))
+  )
 
 (test "home-dir: pure west (dx=-3) → E"
   :ticks 1
@@ -779,8 +658,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -3)
       (pack-dy! packed 0)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 2))
+      (home-dir-packed dir packed)
+      (assert dir 2)))
+  )
 
 (test "home-dir: pure south (dy=3) → N"
   :ticks 1
@@ -789,8 +669,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 0)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 1))
+      (home-dir-packed dir packed)
+      (assert dir 1)))
+  )
 
 (test "home-dir: pure north (dy=-3) → S"
   :ticks 1
@@ -799,8 +680,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 0)
       (pack-dy! packed -3)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 3))
+      (home-dir-packed dir packed)
+      (assert dir 3)))
+  )
 
 (test "home-dir: |dx| dominates (dx=5 dy=3) → W"
   :ticks 1
@@ -809,8 +691,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 5)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 4))
+      (home-dir-packed dir packed)
+      (assert dir 4)))
+  )
 
 (test "home-dir: |dy| dominates (dx=3 dy=5) → N"
   :ticks 1
@@ -819,8 +702,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed 5)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 1))
+      (home-dir-packed dir packed)
+      (assert dir 1)))
+  )
 
 (test "home-dir: |dx| dominates, dx negative (dx=-5 dy=3) → E"
   :ticks 1
@@ -829,8 +713,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -5)
       (pack-dy! packed 3)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 2))
+      (home-dir-packed dir packed)
+      (assert dir 2)))
+  )
 
 (test "home-dir: |dy| dominates, dy negative (dx=3 dy=-5) → S"
   :ticks 1
@@ -839,8 +724,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 3)
       (pack-dy! packed -5)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 3))
+      (home-dir-packed dir packed)
+      (assert dir 3)))
+  )
 
 (test "home-dir: large magnitudes (dx=100 dy=20) → W"
   :ticks 1
@@ -849,8 +735,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed 100)
       (pack-dy! packed 20)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 4))
+      (home-dir-packed dir packed)
+      (assert dir 4)))
+  )
 
 (test "home-dir: large negative (dx=-100 dy=-20) → E"
   :ticks 1
@@ -859,8 +746,9 @@
     (let ((dir 0) (packed 0))
       (pack-dx! packed -100)
       (pack-dy! packed -20)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 2))
+      (home-dir-packed dir packed)
+      (assert dir 2)))
+  )
 
 (test "walk east 4, home-dir → W"
   :ticks 1
@@ -871,8 +759,9 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 4))
+      (home-dir-packed dir packed)
+      (assert dir 4)))
+  )
 
 (test "walk north 4, home-dir → S"
   :ticks 1
@@ -883,8 +772,9 @@
       (dec-dy! packed)
       (dec-dy! packed)
       (dec-dy! packed)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 3))
+      (home-dir-packed dir packed)
+      (assert dir 3)))
+  )
 
 (test "walk S×3 then E×5: |dx| dominates, home-dir → W"
   :ticks 1
@@ -899,8 +789,9 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 4))
+      (home-dir-packed dir packed)
+      (assert dir 4)))
+  )
 
 (test "walk N×5 then E×3: |dy| dominates, home-dir → S"
   :ticks 1
@@ -915,5 +806,6 @@
       (inc-dx! packed)
       (inc-dx! packed)
       (inc-dx! packed)
-      (home-dir-packed dir packed)))
-  (assert-reg-name dir 3))
+      (home-dir-packed dir packed)
+      (assert dir 3)))
+  )
