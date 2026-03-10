@@ -406,6 +406,72 @@ runSuite('SSA', () => {
       `mark's value arg (${markArg}) should be an exit phi temp, not a pre-loop value`);
   });
 
+  // ── if expression value ──
+
+  test('if expression value has phi selecting then/else results', () => {
+    // When an if expression is used as a value (e.g., assigned to a variable),
+    // the merge block must have a phi selecting between the then-result and
+    // else-result.  Without this, only the then-result temp is used, which is
+    // undefined on the else path.
+    const program = lowerSource(`
+      (let ((x 0))
+        (set! x (if (carrying?) 1 2))
+        (mark ch_red x))`);
+    const mergeBlock = program.blocks.find(b => b.label.startsWith('__endif_'))!;
+    assert(!!mergeBlock, 'should have an endif merge block');
+    // The merge block must have a phi for the if-expression result value.
+    // Without it, instructions in the merge block reference a temp defined
+    // only in the then-branch, which is undefined on the else path.
+    const thenBlock = program.blocks.find(b => b.label.startsWith('__then_'))!;
+    const elseBlock = program.blocks.find(b => b.label.startsWith('__else_'))!;
+    const thenDefs = new Set(thenBlock.instrs.filter(i => i.dest).map(i => i.dest!));
+    // Check that merge block instructions don't directly reference then-only temps
+    for (const instr of mergeBlock.instrs) {
+      for (const arg of instr.args) {
+        if (typeof arg === 'string' && thenDefs.has(arg)) {
+          // This temp is defined only in the then block — it needs a phi
+          const hasPhiForArg = mergeBlock.phis.some(p =>
+            p.entries.some(e => e.value === arg));
+          assert(hasPhiForArg || mergeBlock.phis.some(p => p.dest === arg),
+            `merge block uses ${arg} (defined only in then block) without a phi — ` +
+            `if-expression value needs a result phi at the merge point`);
+        }
+      }
+    }
+  });
+
+  test('if expression value correct in nested if/let macro pattern', () => {
+    // Macro with if/let returning a value.
+    // The return value must be a phi at the merge, not just the then-result.
+    const program = lowerSource(`
+      (defmacro test-macro (x)
+        (if (= x 0)
+          10
+          (let ((tmp 0))
+            (set! tmp (+ x 1))
+            tmp)))
+      (let ((val 0))
+        (set! val (test-macro 5))
+        (mark ch_red val))`);
+    // After macro expansion + SSA lowering, val should get the else-branch
+    // result (tmp = 5+1 = 6) when x != 0.
+    const thenBlock = program.blocks.find(b => b.label.startsWith('__then_'))!;
+    const thenDefs = new Set(thenBlock.instrs.filter(i => i.dest).map(i => i.dest!));
+    // Check that merge block instructions don't directly reference then-only temps
+    const mergeBlock = program.blocks.find(b => b.label.startsWith('__endif_'))!;
+    for (const instr of mergeBlock.instrs) {
+      for (const arg of instr.args) {
+        if (typeof arg === 'string' && thenDefs.has(arg)) {
+          const hasPhiForArg = mergeBlock.phis.some(p =>
+            p.entries.some(e => e.value === arg));
+          assert(hasPhiForArg || mergeBlock.phis.some(p => p.dest === arg),
+            `merge block uses ${arg} (defined only in then block) without a phi — ` +
+            `if-expression value needs a result phi at the merge point`);
+        }
+      }
+    }
+  });
+
   // ── set! through let scope in if branches ──
 
   test('set! to outer var inside let propagates through if merge', () => {

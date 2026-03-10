@@ -436,7 +436,21 @@ export class SSALowering {
       this.insertPhis(thenEnv, envBeforeThen, thenExitBlock, elseExitBlock, envBeforeThen);
     }
 
-    return thenResult;  // result of the if
+    // If both branches exist and produce different result temps, insert a phi
+    // to select the if-expression's value.  Without this, only thenResult is
+    // returned, which is undefined on the else path.
+    if (elseBody && thenResult !== elseResult) {
+      const resultPhi = this.freshTemp();
+      this.currentBlock.phis.push({
+        dest: resultPhi,
+        entries: [
+          { block: thenExitBlock, value: thenResult },
+          { block: elseExitBlock, value: elseResult },
+        ],
+      });
+      return resultPhi;
+    }
+    return thenResult;
   }
 
   // ── when / unless ──
