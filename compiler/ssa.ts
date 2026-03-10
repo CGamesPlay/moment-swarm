@@ -661,6 +661,33 @@ export class SSALowering {
   }
 
   // ── dotimes ──
+
+  // Check if a variable name appears as a free reference in a list of expressions
+  private bodyReferencesVar(nodes: ASTNode[], varName: string): boolean {
+    for (const expr of nodes) {
+      if (this.exprReferencesVar(expr, varName)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private exprReferencesVar(expr: ASTNode, varName: string): boolean {
+    if ('value' in expr && typeof expr.value === 'string') {
+      // SymbolNode
+      return expr.value === varName;
+    }
+    if ('value' in expr && Array.isArray(expr.value)) {
+      // ListNode
+      for (const item of expr.value) {
+        if (this.exprReferencesVar(item, varName)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private lowerDotimes(list: ASTNode[], node: ASTNode): string {
     const pair = (list[1] as ListNode).value;
     const varName = (pair[0] as any).value as string;
@@ -673,9 +700,32 @@ export class SSALowering {
 
     const countVal = this.resolveOperand(pair[1]);
 
+    // Check if the loop variable is referenced in the body
+    const bodyNodes = list.slice(2);
+    const varIsUsed = this.bodyReferencesVar(bodyNodes, varName);
+
     // Initialize loop variable
-    const initTemp = this.freshTemp();
-    this.emit('const', initTemp, 0);
+    let initTemp: string;
+    let compareVal: string | number;
+
+    if (!varIsUsed) {
+      // Count-down optimization: initialize to countVal, compare against 0
+      // If countVal is a number literal, copy it to a temp; if it's already a temp, use it
+      if (typeof countVal === 'number') {
+        initTemp = this.freshTemp();
+        this.emit('const', initTemp, countVal);
+      } else {
+        initTemp = countVal;
+      }
+      const zeroTemp = this.freshTemp();
+      this.emit('const', zeroTemp, 0);
+      compareVal = zeroTemp;
+    } else {
+      // Count-up (traditional): initialize to 0, compare against countVal
+      initTemp = this.freshTemp();
+      this.emit('const', initTemp, 0);
+      compareVal = countVal;
+    }
 
     const savedEnv = new Map(this.env);
     this.env.set(varName, initTemp);
@@ -683,7 +733,11 @@ export class SSALowering {
     this.tempNames.set(initTemp, varName);
     // Record binding location for loop variable
     if (node.file) {
-      this.tempLocs.set(initTemp, { file: node.file, line: node.line, col: node.col });
+      this.tempLocs.set(initTemp, {
+        file: node.file,
+        line: node.line,
+        col: node.col,
+      });
     }
 
     const headerBlock = this.makeBlock('dotimes');
@@ -697,9 +751,9 @@ export class SSALowering {
     const envBefore = new Map(this.env);
     const phiMap = this.insertLoopHeaderPhis(headerBlock, envBefore, dotimesPred);
 
-    // Condition: i == count → exit
-    const iTemp = this.env.get(varName)!;
-    this.branchTo('eq', iTemp, countVal, exitBlock, bodyBlock);
+    // Condition: loop var == compareVal → exit
+    const loopVar = this.env.get(varName)!;
+    this.branchTo('eq', loopVar, compareVal, exitBlock, bodyBlock);
 
     this.sealBlock(bodyBlock);
     this.loopStack.push({ headerBlock, exitBlock });
@@ -708,9 +762,15 @@ export class SSALowering {
       this.lowerExpr(list[i]);
     }
 
-    // Increment
+    // Increment or decrement
     const newI = this.freshTemp();
-    this.emit('add', newI, this.env.get(varName)!, 1);
+    if (!varIsUsed) {
+      // Count-down: decrement
+      this.emit('sub', newI, this.env.get(varName)!, 1);
+    } else {
+      // Count-up: increment
+      this.emit('add', newI, this.env.get(varName)!, 1);
+    }
     this.env.set(varName, newI);
 
     // Back edge

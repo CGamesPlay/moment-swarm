@@ -124,7 +124,22 @@ runSuite('SSA', () => {
     const ir = ssa('(let ((n 5)) (dotimes (i n) (move random)))');
     assertIncludes(ir, '__dotimes_');
     assertIncludes(ir, 'br_cmp eq');
-    assertIncludes(ir, 'add');
+    assertIncludes(ir, 'sub');  // count-down since i is unused
+    assertNotIncludes(ir, 'add');
+  });
+
+  test('dotimes: unused loop variable uses count-down', () => {
+    const ir = ssa('(let ((n 5)) (dotimes (i n) (move random)))');
+    assertIncludes(ir, '__dotimes_');
+    assertIncludes(ir, 'br_cmp eq');
+    assertIncludes(ir, 'sub');       // decrement, not increment
+    assertNotIncludes(ir, 'add');    // no increment
+  });
+
+  test('dotimes: used loop variable keeps count-up', () => {
+    const ir = ssa('(let ((n 5)) (dotimes (i n) (move i)))');
+    assertIncludes(ir, 'add');       // still increments
+    assertNotIncludes(ir, 'sub');
   });
 
   test('dotimes zero iterations', () => {
