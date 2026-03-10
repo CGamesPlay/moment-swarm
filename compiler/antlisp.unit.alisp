@@ -813,6 +813,42 @@
         (set! x 0))
       (assert x 42))))
 
+; ─── Unrolled dotimes ────────────────────────────────────────────
+
+(test "dotimes unrolled: basic count"
+  :run-once
+  (begin
+    (let ((count 0))
+      (dotimes (i 3)
+        (set! count (+ count 1)))
+      (assert count 3))))
+
+(test "dotimes unrolled: i has correct value each iteration"
+  :run-once
+  (begin
+    (let ((sum 0))
+      (dotimes (i 4)
+        (set! sum (+ sum i)))
+      (assert sum 6))))  ; 0+1+2+3
+
+(test "dotimes unrolled: break exits early"
+  :run-once
+  (begin
+    (let ((count 0))
+      (dotimes (i 10)
+        (set! count (+ count 1))
+        (when (= count 3) (break)))
+      (assert count 3))))
+
+(test "dotimes unrolled: continue skips to next iteration"
+  :run-once
+  (begin
+    (let ((count 0))
+      (dotimes (i 5)
+        (when (= i 2) (continue))
+        (set! count (+ count 1)))
+      (assert count 4))))
+
 ; ─── Phi-node cond/set! regression ──────────────────────────────
 (test "cond set! inside if: dir=2 increments dx, preserves dy"
   :run-once

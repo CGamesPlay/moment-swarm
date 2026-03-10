@@ -118,6 +118,19 @@ that wraps the main loop.
 (continue)                      ; restart innermost loop
 ```
 
+`dotimes` with a compile-time constant count is fully unrolled — each
+iteration becomes straight-line code with no loop overhead. When the
+count is a runtime value, the compiler falls back to a normal loop.
+`break` and `continue` work in both cases.
+
+```lisp
+;; Break exits early
+(let ((count 0))
+  (dotimes (i 10)
+    (set! count (+ count 1))
+    (when (= count 3) (break))))  ; count = 3
+```
+
 `dolist` iterates a variable over a list of compile-time constant values.
 All values must be literals or const-resolvable expressions. The loop body
 is fully unrolled — each iteration becomes straight-line code with no

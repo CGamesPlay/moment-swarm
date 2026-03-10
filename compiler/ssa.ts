@@ -623,6 +623,13 @@ export class SSALowering {
   private lowerDotimes(list: ASTNode[], node: ASTNode): string {
     const pair = (list[1] as ListNode).value;
     const varName = (pair[0] as any).value as string;
+
+    // Try to unroll when count is a compile-time constant
+    const constCount = tryEvalConst(pair[1], this.consts);
+    if (constCount !== null) {
+      return this.lowerDotimesUnrolled(varName, constCount, list);
+    }
+
     const countVal = this.resolveOperand(pair[1]);
 
     // Initialize loop variable
@@ -675,6 +682,104 @@ export class SSALowering {
       if (savedEnv.has(name)) {
         this.env.set(name, phiTemp);
       }
+    }
+    return '';
+  }
+
+  // Unrolled dotimes: each iteration gets its own block with phi nodes
+  // for outer env vars so break/continue work correctly.
+  private lowerDotimesUnrolled(varName: string, count: number, list: ASTNode[]): string {
+    const savedEnv = new Map(this.env);
+
+    // Zero iterations — no-op
+    if (count <= 0) {
+      return '';
+    }
+
+    const exitBlock = this.makeBlock('enddotimes');
+
+    // Create all iteration blocks up front
+    const iterBlocks: BasicBlock[] = [];
+    for (let i = 0; i < count; i++) {
+      iterBlocks.push(this.makeBlock(`dotimes_${i}`));
+    }
+
+    // Jump into the first iteration
+    this.jumpTo(iterBlocks[0]);
+    const firstPred = this.currentBlock;
+
+    // Insert phi nodes at each iteration block (and exit) for outer env vars
+    const iterPhiMaps: Map<string, string>[] = [];
+    for (let i = 0; i < count; i++) {
+      const phiMap = new Map<string, string>();
+      if (i === 0) {
+        // First iteration only has one predecessor — no phis needed
+      } else {
+        for (const [name, _temp] of savedEnv) {
+          const phiTemp = this.freshTemp();
+          iterBlocks[i].phis.push({
+            dest: phiTemp,
+            entries: [],
+          });
+          phiMap.set(name, phiTemp);
+        }
+      }
+      iterPhiMaps.push(phiMap);
+    }
+
+    // Insert phis at exitBlock for outer env vars
+    const exitPhiMap = new Map<string, string>();
+    for (const [name, _temp] of savedEnv) {
+      const phiTemp = this.freshTemp();
+      exitBlock.phis.push({
+        dest: phiTemp,
+        entries: [],
+      });
+      exitPhiMap.set(name, phiTemp);
+    }
+
+    for (let i = 0; i < count; i++) {
+      this.sealBlock(iterBlocks[i]);
+
+      // Update env to use phi temps for non-first iterations
+      if (i > 0) {
+        for (const [name, phiTemp] of iterPhiMaps[i]) {
+          this.env.set(name, phiTemp);
+        }
+      }
+
+      // Bind loop variable to this iteration's constant value
+      const valTemp = this.freshTemp();
+      this.emit('const', valTemp, i);
+      this.env.set(varName, valTemp);
+      this.allBindings.set(varName, valTemp);
+
+      // break → exitBlock, continue → next iter (or exit if last)
+      const nextBlock = i + 1 < count ? iterBlocks[i + 1] : exitBlock;
+      const headerPhiMap = i + 1 < count ? iterPhiMaps[i + 1] : exitPhiMap;
+      this.loopStack.push({ headerBlock: nextBlock, exitBlock, headerPhiMap, exitPhiMap });
+
+      // Lower body
+      for (let j = 2; j < list.length; j++) {
+        this.lowerExpr(list[j]);
+      }
+
+      // Fall through to next iteration or exit
+      if (!this.currentBlock.terminator) {
+        const targetPhiMap = i + 1 < count ? iterPhiMaps[i + 1] : exitPhiMap;
+        this.fillUnrolledPhis(targetPhiMap, nextBlock, this.env, this.currentBlock);
+        this.jumpTo(nextBlock);
+      }
+
+      this.loopStack.pop();
+    }
+
+    this.sealBlock(exitBlock);
+
+    // Restore env: use exit phi temps for outer vars
+    this.env = savedEnv;
+    for (const [name, phiTemp] of exitPhiMap) {
+      this.env.set(name, phiTemp);
     }
     return '';
   }
