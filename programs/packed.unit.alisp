@@ -1,0 +1,1082 @@
+; ═══════════════════════════════════════════════════════════════
+; Packed Bytes — Unit Tests (Signed [-128, 127])
+; ═══════════════════════════════════════════════════════════════
+;
+; Tests verify that pack/unpack/inc/dec macros correctly handle
+; signed 8-bit values in all four byte positions of a 32-bit
+; register.
+;
+; Run with: argc unit programs/packed.unit.alisp
+; ═══════════════════════════════════════════════════════════════
+
+(include "./packed.inc.alisp")
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 1 — pack/unpack round-trips (byte 0)
+; ─────────────────────────────────────────────────────────────
+
+(test "byte 0: round-trip 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 0)
+      (unpack-0 out p)
+      (assert! (= out 0) 1))))
+
+(test "byte 0: round-trip 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 1)
+      (unpack-0 out p)
+      (assert! (= out 1) 1))))
+
+(test "byte 0: round-trip -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -1)
+      (unpack-0 out p)
+      (assert! (= out -1) 1))))
+
+(test "byte 0: round-trip 127 (positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 127)
+      (unpack-0 out p)
+      (assert! (= out 127) 1))))
+
+(test "byte 0: round-trip -128 (negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -128)
+      (unpack-0 out p)
+      (assert! (= out -128) 1))))
+
+(test "byte 0: round-trip 42"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 42)
+      (unpack-0 out p)
+      (assert! (= out 42) 1))))
+
+(test "byte 0: round-trip -99"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -99)
+      (unpack-0 out p)
+      (assert! (= out -99) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 2 — pack/unpack round-trips (byte 1)
+; ─────────────────────────────────────────────────────────────
+
+(test "byte 1: round-trip 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 0)
+      (unpack-1 out p)
+      (assert! (= out 0) 1))))
+
+(test "byte 1: round-trip 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 1)
+      (unpack-1 out p)
+      (assert! (= out 1) 1))))
+
+(test "byte 1: round-trip -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -1)
+      (unpack-1 out p)
+      (assert! (= out -1) 1))))
+
+(test "byte 1: round-trip 127 (positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 127)
+      (unpack-1 out p)
+      (assert! (= out 127) 1))))
+
+(test "byte 1: round-trip -128 (negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -128)
+      (unpack-1 out p)
+      (assert! (= out -128) 1))))
+
+(test "byte 1: round-trip -50"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -50)
+      (unpack-1 out p)
+      (assert! (= out -50) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 3 — pack/unpack round-trips (byte 2)
+; ─────────────────────────────────────────────────────────────
+
+(test "byte 2: round-trip 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 0)
+      (unpack-2 out p)
+      (assert! (= out 0) 1))))
+
+(test "byte 2: round-trip 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 1)
+      (unpack-2 out p)
+      (assert! (= out 1) 1))))
+
+(test "byte 2: round-trip -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -1)
+      (unpack-2 out p)
+      (assert! (= out -1) 1))))
+
+(test "byte 2: round-trip 127 (positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 127)
+      (unpack-2 out p)
+      (assert! (= out 127) 1))))
+
+(test "byte 2: round-trip -128 (negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -128)
+      (unpack-2 out p)
+      (assert! (= out -128) 1))))
+
+(test "byte 2: round-trip 42"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 42)
+      (unpack-2 out p)
+      (assert! (= out 42) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 4 — pack/unpack round-trips (byte 3)
+; ─────────────────────────────────────────────────────────────
+
+(test "byte 3: round-trip 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 0)
+      (unpack-3 out p)
+      (assert! (= out 0) 1))))
+
+(test "byte 3: round-trip 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 1)
+      (unpack-3 out p)
+      (assert! (= out 1) 1))))
+
+(test "byte 3: round-trip -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -1)
+      (unpack-3 out p)
+      (assert! (= out -1) 1))))
+
+(test "byte 3: round-trip 127 (positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 127)
+      (unpack-3 out p)
+      (assert! (= out 127) 1))))
+
+(test "byte 3: round-trip -128 (negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -128)
+      (unpack-3 out p)
+      (assert! (= out -128) 1))))
+
+(test "byte 3: round-trip 99"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 99)
+      (unpack-3 out p)
+      (assert! (= out 99) 1))))
+
+(test "byte 3: round-trip -99"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -99)
+      (unpack-3 out p)
+      (assert! (= out -99) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 5 — mixed-sign round-trips (all four bytes at once)
+; ─────────────────────────────────────────────────────────────
+
+(test "all four bytes: 42, -99, 127, -128"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 42)
+      (pack-1! p -99)
+      (pack-2! p 127)
+      (pack-3! p -128)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 42) 1)
+      (assert! (= o1 -99) 2)
+      (assert! (= o2 127) 3)
+      (assert! (= o3 -128) 4))))
+
+(test "all four bytes: -1, -1, -1, -1"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p -1)
+      (pack-1! p -1)
+      (pack-2! p -1)
+      (pack-3! p -1)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 -1) 1)
+      (assert! (= o1 -1) 2)
+      (assert! (= o2 -1) 3)
+      (assert! (= o3 -1) 4))))
+
+(test "all four bytes: 127, -128, 127, -128 (both extremes)"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 127)
+      (pack-1! p -128)
+      (pack-2! p 127)
+      (pack-3! p -128)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 127) 1)
+      (assert! (= o1 -128) 2)
+      (assert! (= o2 127) 3)
+      (assert! (= o3 -128) 4))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 6 — field isolation (no cross-byte bleed)
+; ─────────────────────────────────────────────────────────────
+
+(test "pack-0 does not disturb byte 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 55)
+      (pack-0! p -33)
+      (unpack-1 out p)
+      (assert! (= out 55) 1))))
+
+(test "pack-1 does not disturb byte 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -33)
+      (pack-1! p 55)
+      (unpack-0 out p)
+      (assert! (= out -33) 1))))
+
+(test "pack-2 does not disturb bytes 0 and 1"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0))
+      (pack-0! p -11)
+      (pack-1! p 22)
+      (pack-2! p -33)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (assert! (= o0 -11) 1)
+      (assert! (= o1 22) 2))))
+
+(test "pack-3 does not disturb bytes 0, 1, 2"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0))
+      (pack-0! p 11)
+      (pack-1! p -22)
+      (pack-2! p 33)
+      (pack-3! p -44)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (assert! (= o0 11) 1)
+      (assert! (= o1 -22) 2)
+      (assert! (= o2 33) 3))))
+
+(test "overwriting byte 0 leaves bytes 1-3 intact"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 10)
+      (pack-1! p -20)
+      (pack-2! p 30)
+      (pack-3! p -40)
+      (pack-0! p -99)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 -99) 1)
+      (assert! (= o1 -20) 2)
+      (assert! (= o2 30) 3)
+      (assert! (= o3 -40) 4))))
+
+(test "overwriting byte 2 leaves others intact"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p -10)
+      (pack-1! p 20)
+      (pack-2! p -30)
+      (pack-3! p 40)
+      (pack-2! p 99)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 -10) 1)
+      (assert! (= o1 20) 2)
+      (assert! (= o2 99) 3)
+      (assert! (= o3 40) 4))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 7 — inc/dec byte 0
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-0: 0 → 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 0)
+      (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out 1) 1))))
+
+(test "inc-0: -1 → 0 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -1)
+      (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out 0) 1))))
+
+(test "inc-0: 126 → 127 (approach positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 126)
+      (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out 127) 1))))
+
+(test "dec-0: 0 → -1 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 0)
+      (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out -1) 1))))
+
+(test "dec-0: 1 → 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 1)
+      (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out 0) 1))))
+
+(test "dec-0: -127 → -128 (approach negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -127)
+      (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out -128) 1))))
+
+(test "inc-0: 5 increments from 0 → 5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (inc-0! p) (inc-0! p) (inc-0! p) (inc-0! p) (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out 5) 1))))
+
+(test "dec-0: 5 decrements from 0 → -5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (dec-0! p) (dec-0! p) (dec-0! p) (dec-0! p) (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out -5) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 8 — inc/dec byte 1
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-1: 0 → 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 0)
+      (inc-1! p)
+      (unpack-1 out p)
+      (assert! (= out 1) 1))))
+
+(test "inc-1: -1 → 0 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -1)
+      (inc-1! p)
+      (unpack-1 out p)
+      (assert! (= out 0) 1))))
+
+(test "inc-1: 126 → 127 (approach positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 126)
+      (inc-1! p)
+      (unpack-1 out p)
+      (assert! (= out 127) 1))))
+
+(test "dec-1: 0 → -1 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 0)
+      (dec-1! p)
+      (unpack-1 out p)
+      (assert! (= out -1) 1))))
+
+(test "dec-1: 1 → 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 1)
+      (dec-1! p)
+      (unpack-1 out p)
+      (assert! (= out 0) 1))))
+
+(test "dec-1: -127 → -128 (approach negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -127)
+      (dec-1! p)
+      (unpack-1 out p)
+      (assert! (= out -128) 1))))
+
+(test "inc-1: 5 increments from 0 → 5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (inc-1! p) (inc-1! p) (inc-1! p) (inc-1! p) (inc-1! p)
+      (unpack-1 out p)
+      (assert! (= out 5) 1))))
+
+(test "dec-1: 5 decrements from 0 → -5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (dec-1! p) (dec-1! p) (dec-1! p) (dec-1! p) (dec-1! p)
+      (unpack-1 out p)
+      (assert! (= out -5) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 9 — inc/dec byte 2
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-2: 0 → 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 0)
+      (inc-2! p)
+      (unpack-2 out p)
+      (assert! (= out 1) 1))))
+
+(test "inc-2: -1 → 0 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -1)
+      (inc-2! p)
+      (unpack-2 out p)
+      (assert! (= out 0) 1))))
+
+(test "inc-2: 126 → 127 (approach positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 126)
+      (inc-2! p)
+      (unpack-2 out p)
+      (assert! (= out 127) 1))))
+
+(test "dec-2: 0 → -1 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 0)
+      (dec-2! p)
+      (unpack-2 out p)
+      (assert! (= out -1) 1))))
+
+(test "dec-2: 1 → 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 1)
+      (dec-2! p)
+      (unpack-2 out p)
+      (assert! (= out 0) 1))))
+
+(test "dec-2: -127 → -128 (approach negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -127)
+      (dec-2! p)
+      (unpack-2 out p)
+      (assert! (= out -128) 1))))
+
+(test "inc-2: 5 increments from 0 → 5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (inc-2! p) (inc-2! p) (inc-2! p) (inc-2! p) (inc-2! p)
+      (unpack-2 out p)
+      (assert! (= out 5) 1))))
+
+(test "dec-2: 5 decrements from 0 → -5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (dec-2! p) (dec-2! p) (dec-2! p) (dec-2! p) (dec-2! p)
+      (unpack-2 out p)
+      (assert! (= out -5) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 10 — inc/dec byte 3
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-3: 0 → 1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 0)
+      (inc-3! p)
+      (unpack-3 out p)
+      (assert! (= out 1) 1))))
+
+(test "inc-3: -1 → 0 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -1)
+      (inc-3! p)
+      (unpack-3 out p)
+      (assert! (= out 0) 1))))
+
+(test "inc-3: 126 → 127 (approach positive max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 126)
+      (inc-3! p)
+      (unpack-3 out p)
+      (assert! (= out 127) 1))))
+
+(test "dec-3: 0 → -1 (crosses zero)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 0)
+      (dec-3! p)
+      (unpack-3 out p)
+      (assert! (= out -1) 1))))
+
+(test "dec-3: 1 → 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 1)
+      (dec-3! p)
+      (unpack-3 out p)
+      (assert! (= out 0) 1))))
+
+(test "dec-3: -127 → -128 (approach negative max)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -127)
+      (dec-3! p)
+      (unpack-3 out p)
+      (assert! (= out -128) 1))))
+
+(test "inc-3: 5 increments from 0 → 5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (inc-3! p) (inc-3! p) (inc-3! p) (inc-3! p) (inc-3! p)
+      (unpack-3 out p)
+      (assert! (= out 5) 1))))
+
+(test "dec-3: 5 decrements from 0 → -5"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (dec-3! p) (dec-3! p) (dec-3! p) (dec-3! p) (dec-3! p)
+      (unpack-3 out p)
+      (assert! (= out -5) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 11 — inc/dec field isolation
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-0 does not disturb bytes 1-3"
+  :run-once
+  (begin
+    (let ((p 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 0)
+      (pack-1! p 50)
+      (pack-2! p -100)
+      (pack-3! p 77)
+      (inc-0! p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o1 50) 1)
+      (assert! (= o2 -100) 2)
+      (assert! (= o3 77) 3))))
+
+(test "dec-0 does not disturb bytes 1-3"
+  :run-once
+  (begin
+    (let ((p 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 5)
+      (pack-1! p -50)
+      (pack-2! p 100)
+      (pack-3! p -77)
+      (dec-0! p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o1 -50) 1)
+      (assert! (= o2 100) 2)
+      (assert! (= o3 -77) 3))))
+
+(test "inc-1 does not disturb bytes 0, 2, 3"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o2 0) (o3 0))
+      (pack-0! p -11)
+      (pack-1! p 0)
+      (pack-2! p 100)
+      (pack-3! p -55)
+      (inc-1! p)
+      (unpack-0 o0 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 -11) 1)
+      (assert! (= o2 100) 2)
+      (assert! (= o3 -55) 3))))
+
+(test "dec-1 does not disturb bytes 0, 2, 3"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o2 0) (o3 0))
+      (pack-0! p 11)
+      (pack-1! p 5)
+      (pack-2! p -100)
+      (pack-3! p 55)
+      (dec-1! p)
+      (unpack-0 o0 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 11) 1)
+      (assert! (= o2 -100) 2)
+      (assert! (= o3 55) 3))))
+
+(test "inc-2 does not disturb bytes 0, 1, 3"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o3 0))
+      (pack-0! p -11)
+      (pack-1! p 22)
+      (pack-2! p 0)
+      (pack-3! p -88)
+      (inc-2! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 -11) 1)
+      (assert! (= o1 22) 2)
+      (assert! (= o3 -88) 3))))
+
+(test "dec-2 does not disturb bytes 0, 1, 3"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o3 0))
+      (pack-0! p 11)
+      (pack-1! p -22)
+      (pack-2! p 5)
+      (pack-3! p 88)
+      (dec-2! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 11) 1)
+      (assert! (= o1 -22) 2)
+      (assert! (= o3 88) 3))))
+
+(test "inc-3 does not disturb bytes 0, 1, 2"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0))
+      (pack-0! p -11)
+      (pack-1! p 22)
+      (pack-2! p -33)
+      (pack-3! p 0)
+      (inc-3! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (assert! (= o0 -11) 1)
+      (assert! (= o1 22) 2)
+      (assert! (= o2 -33) 3))))
+
+(test "dec-3 does not disturb bytes 0, 1, 2"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0))
+      (pack-0! p 11)
+      (pack-1! p -22)
+      (pack-2! p 33)
+      (pack-3! p 5)
+      (dec-3! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (assert! (= o0 11) 1)
+      (assert! (= o1 -22) 2)
+      (assert! (= o2 33) 3))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 12 — inc/dec chains across multiple bytes
+; ─────────────────────────────────────────────────────────────
+
+(test "independent inc/dec across all bytes"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0) (o3 0))
+      (pack-0! p 10)
+      (pack-1! p -20)
+      (pack-2! p 30)
+      (pack-3! p -40)
+      (inc-0! p) (inc-0! p)
+      (dec-1! p) (dec-1! p) (dec-1! p)
+      (inc-2! p)
+      (dec-3! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o0 12) 1)
+      (assert! (= o1 -23) 2)
+      (assert! (= o2 31) 3)
+      (assert! (= o3 -41) 4))))
+
+(test "opposing inc/dec cancel to original value"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0))
+      (pack-0! p -3)
+      (pack-1! p 3)
+      (inc-0! p) (inc-0! p) (inc-0! p)
+      (dec-0! p) (dec-0! p) (dec-0! p)
+      (inc-1! p) (dec-1! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (assert! (= o0 -3) 1)
+      (assert! (= o1 3) 2))))
+
+(test "inc from negative to positive: -3 +6 → 3"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -3)
+      (inc-0! p) (inc-0! p) (inc-0! p)
+      (inc-0! p) (inc-0! p) (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out 3) 1))))
+
+(test "dec from positive to negative: 3 -6 → -3"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 3)
+      (dec-0! p) (dec-0! p) (dec-0! p)
+      (dec-0! p) (dec-0! p) (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out -3) 1))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 13 — inc/dec signed overflow (127 → -128, -128 → 127)
+; ─────────────────────────────────────────────────────────────
+
+(test "inc-0: 127 → -128 (overflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 127)
+      (inc-0! p)
+      (unpack-0 out p)
+      (assert! (= out -128) 1))))
+
+(test "dec-0: -128 → 127 (underflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -128)
+      (dec-0! p)
+      (unpack-0 out p)
+      (assert! (= out 127) 1))))
+
+(test "inc-1: 127 → -128 (overflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 127)
+      (inc-1! p)
+      (unpack-1 out p)
+      (assert! (= out -128) 1))))
+
+(test "dec-1: -128 → 127 (underflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p -128)
+      (dec-1! p)
+      (unpack-1 out p)
+      (assert! (= out 127) 1))))
+
+(test "inc-2: 127 → -128 (overflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p 127)
+      (inc-2! p)
+      (unpack-2 out p)
+      (assert! (= out -128) 1))))
+
+(test "dec-2: -128 → 127 (underflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -128)
+      (dec-2! p)
+      (unpack-2 out p)
+      (assert! (= out 127) 1))))
+
+(test "inc-3: 127 → -128 (overflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p 127)
+      (inc-3! p)
+      (unpack-3 out p)
+      (assert! (= out -128) 1))))
+
+(test "dec-3: -128 → 127 (underflow wraps)"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -128)
+      (dec-3! p)
+      (unpack-3 out p)
+      (assert! (= out 127) 1))))
+
+; overflow doesn't bleed into neighboring bytes
+(test "inc-0 overflow does not disturb byte 1"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0))
+      (pack-0! p 127)
+      (pack-1! p 50)
+      (inc-0! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (assert! (= o0 -128) 1)
+      (assert! (= o1 50) 2))))
+
+(test "dec-1 underflow does not disturb bytes 0 or 2"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0) (o2 0))
+      (pack-0! p -33)
+      (pack-1! p -128)
+      (pack-2! p 77)
+      (dec-1! p)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (assert! (= o0 -33) 1)
+      (assert! (= o1 127) 2)
+      (assert! (= o2 77) 3))))
+
+(test "inc-2 overflow does not disturb bytes 1 or 3"
+  :run-once
+  (begin
+    (let ((p 0) (o1 0) (o2 0) (o3 0))
+      (pack-1! p -10)
+      (pack-2! p 127)
+      (pack-3! p 25)
+      (inc-2! p)
+      (unpack-1 o1 p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o1 -10) 1)
+      (assert! (= o2 -128) 2)
+      (assert! (= o3 25) 3))))
+
+(test "dec-3 underflow does not disturb byte 2"
+  :run-once
+  (begin
+    (let ((p 0) (o2 0) (o3 0))
+      (pack-2! p -50)
+      (pack-3! p -128)
+      (dec-3! p)
+      (unpack-2 o2 p)
+      (unpack-3 o3 p)
+      (assert! (= o2 -50) 1)
+      (assert! (= o3 127) 2))))
+
+; ─────────────────────────────────────────────────────────────
+; SECTION 14 — pack out-of-range values (truncation to low byte)
+; ─────────────────────────────────────────────────────────────
+
+; 128 = 0x80 → low byte 0x80 → signed -128
+(test "pack-0: 128 truncates to -128"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 128)
+      (unpack-0 out p)
+      (assert! (= out -128) 1))))
+
+; 255 = 0xFF → low byte 0xFF → signed -1
+(test "pack-0: 255 truncates to -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 255)
+      (unpack-0 out p)
+      (assert! (= out -1) 1))))
+
+; 256 = 0x100 → low byte 0x00 → signed 0
+(test "pack-0: 256 truncates to 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p 256)
+      (unpack-0 out p)
+      (assert! (= out 0) 1))))
+
+; 300 = 0x12C → low byte 0x2C = 44
+(test "pack-1: 300 truncates to 44"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 300)
+      (unpack-1 out p)
+      (assert! (= out 44) 1))))
+
+; -129 = 0xFFFFFF7F → low byte 0x7F = 127
+(test "pack-2: -129 truncates to 127"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-2! p -129)
+      (unpack-2 out p)
+      (assert! (= out 127) 1))))
+
+; -256 = 0xFFFFFF00 → low byte 0x00 = 0
+(test "pack-3: -256 truncates to 0"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-3! p -256)
+      (unpack-3 out p)
+      (assert! (= out 0) 1))))
+
+; -257 = 0xFFFFFEFF → low byte 0xFF → signed -1
+(test "pack-0: -257 truncates to -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-0! p -257)
+      (unpack-0 out p)
+      (assert! (= out -1) 1))))
+
+; 511 = 0x1FF → low byte 0xFF → signed -1
+(test "pack-1: 511 truncates to -1"
+  :run-once
+  (begin
+    (let ((p 0) (out 0))
+      (pack-1! p 511)
+      (unpack-1 out p)
+      (assert! (= out -1) 1))))
+
+; out-of-range pack doesn't bleed into other bytes
+(test "pack-0: 256 truncation does not disturb byte 1"
+  :run-once
+  (begin
+    (let ((p 0) (o0 0) (o1 0))
+      (pack-1! p -42)
+      (pack-0! p 256)
+      (unpack-0 o0 p)
+      (unpack-1 o1 p)
+      (assert! (= o0 0) 1)
+      (assert! (= o1 -42) 2))))

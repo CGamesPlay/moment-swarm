@@ -31,76 +31,22 @@
 ;
 ; ═══════════════════════════════════════════════════════════════
 
-; ─── Primitives ──────────────────────────────────────────────
+; Pull in the general-purpose packed-byte primitives.
+; dx = byte 0 (bits 7:0), dy = byte 1 (bits 15:8).
+(include "./packed.inc.alisp")
 
-; Pack a signed integer into bits 7:0 of `packed`.
-; Clears the low byte first, then ORs in the new value masked to 8 bits.
-(defmacro pack-dx! (packed dx)
-  (set! packed (and packed 0xFFFFFF00))
-  (set! packed (or  packed (and dx 0xFF))))
+; ─── Primitives (aliases for packed byte helpers) ────────────
 
-; Pack a signed integer into bits 15:8 of `packed`.
-(defmacro pack-dy! (packed dy)
-  (set! packed (and packed 0xFFFF00FF))
-  (set! packed (or  packed (lshift (and dy 0xFF) 8))))
+(defmacro pack-dx! (packed dx)   (pack-0! packed dx))
+(defmacro pack-dy! (packed dy)   (pack-1! packed dy))
 
-; Unpack bits 7:0 into `out` as a signed 8-bit integer.
-; Isolate the byte, then sign-extend: if bit 7 is set subtract 256.
-(defmacro unpack-dx! (out packed)
-  (set! out (and packed 0xFF))
-  (when (>= out 128)
-    (set! out (- out 256))))
+(defmacro unpack-dx! (out packed) (unpack-0 out packed))
+(defmacro unpack-dy! (out packed) (unpack-1 out packed))
 
-; Unpack bits 15:8 into `out` as a signed 8-bit integer.
-(defmacro unpack-dy! (out packed)
-  (set! out (and (rshift packed 8) 0xFF))
-  (when (>= out 128)
-    (set! out (- out 256))))
-
-; Add 1 to the dx field of `packed` (stays in signed 8-bit range).
-; Operates directly on the unsigned byte — no sign-extension needed.
-; 6 instructions, 1 scratch register.
-(defmacro inc-dx! (packed)
-  (let ((tmp 0))
-    (set! tmp (and packed 0xFF))
-    (set! tmp (+ tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! packed (and packed 0xFFFFFF00))
-    (set! packed (or packed tmp))))
-
-; Subtract 1 from the dx field of `packed`.
-; 6 instructions, 1 scratch register.
-(defmacro dec-dx! (packed)
-  (let ((tmp 0))
-    (set! tmp (and packed 0xFF))
-    (set! tmp (- tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! packed (and packed 0xFFFFFF00))
-    (set! packed (or packed tmp))))
-
-; Add 1 to the dy field of `packed`.
-; 8 instructions, 1 scratch register.
-(defmacro inc-dy! (packed)
-  (let ((tmp 0))
-    (set! tmp (rshift packed 8))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (+ tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (lshift tmp 8))
-    (set! packed (and packed 0xFFFF00FF))
-    (set! packed (or packed tmp))))
-
-; Subtract 1 from the dy field of `packed`.
-; 8 instructions, 1 scratch register.
-(defmacro dec-dy! (packed)
-  (let ((tmp 0))
-    (set! tmp (rshift packed 8))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (- tmp 1))
-    (set! tmp (and tmp 0xFF))
-    (set! tmp (lshift tmp 8))
-    (set! packed (and packed 0xFFFF00FF))
-    (set! packed (or packed tmp))))
+(defmacro inc-dx! (packed) (inc-0! packed))
+(defmacro dec-dx! (packed) (dec-0! packed))
+(defmacro inc-dy! (packed) (inc-1! packed))
+(defmacro dec-dy! (packed) (dec-1! packed))
 
 ; ─── High-level movement macros ──────────────────────────────
 
