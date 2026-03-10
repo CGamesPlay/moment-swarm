@@ -109,26 +109,37 @@ runSuite('SSA', () => {
     assertIncludes(ir, 'br_cmp gt');
   });
 
-  test('dotimes', () => {
-    const ir = ssa('(dotimes (i 5) (move random))');
+  test('dotimes: constant count is unrolled', () => {
+    const ir = ssa('(dotimes (i 3) (move random))');
+    // Should have per-iteration blocks, not a loop header
+    assertIncludes(ir, '__dotimes_0_');
+    assertIncludes(ir, '__dotimes_1_');
+    assertIncludes(ir, '__dotimes_2_');
+    // No loop compare or increment — fully unrolled
+    assertNotIncludes(ir, 'br_cmp eq');
+    assertNotIncludes(ir, 'add');
+  });
+
+  test('dotimes: non-constant count uses loop', () => {
+    const ir = ssa('(let ((n 5)) (dotimes (i n) (move random)))');
     assertIncludes(ir, '__dotimes_');
     assertIncludes(ir, 'br_cmp eq');
-    // Should have increment instruction
     assertIncludes(ir, 'add');
   });
 
   test('dotimes zero iterations', () => {
     const ir = ssa('(dotimes (i 0) (move random))');
-    // Should still have the exit condition
-    assertIncludes(ir, 'br_cmp eq');
+    // Zero iterations is a no-op — no iteration or exit blocks emitted
+    assertNotIncludes(ir, '__dotimes_0_');
+    assertNotIncludes(ir, 'move');
   });
 
   test('dotimes nested', () => {
-    const program = lowerSource('(dotimes (i 3) (dotimes (j 3) (move random)))');
-    // Two dotimes header blocks (not body/end blocks)
-    const headerBlocks = program.blocks.filter(b =>
-      /^__dotimes_\d+$/.test(b.label));
-    assertEq(headerBlocks.length, 2);
+    const program = lowerSource('(dotimes (i 2) (dotimes (j 2) (move random)))');
+    // Unrolled: outer 2 iterations × inner 2 iterations = 4 inner blocks + 2 outer = 6 total
+    const allDotimesBlocks = program.blocks.filter(b =>
+      /^__dotimes_/.test(b.label));
+    assertEq(allDotimesBlocks.length, 6);
   });
 
   // ── Control flow: break/continue ──
@@ -365,33 +376,34 @@ runSuite('SSA', () => {
     }
   });
 
-  test('dotimes: phi entries reference predecessor blocks, not the header', () => {
-    const program = lowerSource('(let ((count 0)) (dotimes (i 5) (set! count (+ count 1))))');
-    const header = program.blocks.find(b => b.label.startsWith('__dotimes_'))!;
-    assert(header.phis.length > 0, 'header should have phis');
-    for (const phi of header.phis) {
-      for (const entry of phi.entries) {
-        assert(entry.block !== header,
-          `phi ${phi.dest} has entry from header block itself (${entry.block.label}), should reference a predecessor`);
+  test('dotimes unrolled: phi entries at iteration blocks reference predecessors', () => {
+    const program = lowerSource('(let ((count 0)) (dotimes (i 3) (set! count (+ count 1))))');
+    // Iteration blocks after the first should have phi nodes
+    const iterBlocks = program.blocks.filter(b => /^__dotimes_[12]_/.test(b.label));
+    assert(iterBlocks.length > 0, 'should have iteration blocks after first');
+    for (const block of iterBlocks) {
+      assert(block.phis.length > 0, `${block.label} should have phis`);
+      for (const phi of block.phis) {
+        for (const entry of phi.entries) {
+          assert(entry.block !== block,
+            `phi ${phi.dest} has entry from its own block (${entry.block.label}), should reference a predecessor`);
+        }
       }
     }
   });
 
-  test('dotimes: post-loop code references phi temps, not pre-loop values', () => {
-    // After dotimes, "count" should resolve to the header phi temp,
-    // not the original %t for the initial value
+  test('dotimes unrolled: post-loop code references exit phi temps', () => {
+    // After unrolled dotimes, "count" should resolve to an exit block phi temp
     const program = lowerSource(
-      '(let ((count 0)) (dotimes (i 5) (set! count (+ count 1))) (mark ch_red count))');
+      '(let ((count 0)) (dotimes (i 3) (set! count (+ count 1))) (mark ch_red count))');
     const exitBlock = program.blocks.find(b => b.label.startsWith('__enddotimes_'))!;
-    const header = program.blocks.find(b => b.label.startsWith('__dotimes_'))!;
-    // The mark instruction in the exit block should use a phi temp from the header,
-    // not the initial const temp from the entry block
+    // The mark instruction in the exit block should use a phi temp from the exit block
     const markInstr = exitBlock.instrs.find(i => i.op === 'mark');
     assert(!!markInstr, 'exit block should have a mark instruction');
-    const phiDests = new Set(header.phis.map(p => p.dest));
+    const phiDests = new Set(exitBlock.phis.map(p => p.dest));
     const markArg = markInstr!.args[1];
     assert(phiDests.has(markArg as string),
-      `mark's value arg (${markArg}) should be a header phi temp, not a pre-loop value`);
+      `mark's value arg (${markArg}) should be an exit phi temp, not a pre-loop value`);
   });
 
   // ── set! through let scope in if branches ──

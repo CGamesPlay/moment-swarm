@@ -512,14 +512,24 @@ runSuite('Register Allocation', () => {
           (set! counter 0)
           (go exploring)))`);
 
+    // Find the 3-instruction swap pattern: three consecutive SET rX rY lines.
+    // The __tag_lost_ label may be optimized away by dead label elimination,
+    // but the swap sequence itself must still be present.
     const lines = asm.split('\n').map(l => l.trim());
-    const lostIdx = lines.findIndex(l => l.includes('__tag_lost_'));
-    assert(lostIdx !== -1, 'Expected __tag_lost_ label in assembly');
+    let swapStart = -1;
+    for (let i = 0; i < lines.length - 2; i++) {
+      if (lines[i].match(/^SET r\d+ r\d+$/) &&
+          lines[i + 1].match(/^SET r\d+ r\d+$/) &&
+          lines[i + 2].match(/^SET r\d+ r\d+$/)) {
+        swapStart = i;
+        break;
+      }
+    }
+    assert(swapStart !== -1, 'Expected 3-instruction swap sequence in assembly');
 
-    // Collect all SET destinations between __tag_lost_ and JMP
+    // Collect all SET destinations in the swap
     const setDests = new Set<string>();
-    for (let i = lostIdx + 1; i < lines.length; i++) {
-      if (lines[i].startsWith('JMP')) break;
+    for (let i = swapStart; i < swapStart + 3; i++) {
       const setMatch = lines[i].match(/^SET (r\d+)/);
       if (setMatch) {
         setDests.add(setMatch[1]);
@@ -529,17 +539,10 @@ runSuite('Register Allocation', () => {
     // The swap involves 2 registers (counter and explore-age).
     // A correct implementation writes to those 2 registers plus a temp that
     // is NOT dir's register. With the bug, it writes to 3 registers including
-    // dir's register (r0). We check that the SET destinations are at most
-    // the 2 swap registers plus 1 temp, and that the temp is not used as a
-    // source of the final value at the exploring header.
-    //
-    // Simplest check: the number of distinct registers written should be <= 3,
-    // and they should not include a register that is unchanged by the transition
-    // (dir). Dir's register at the tag header is r0 (first phi, first allocated).
-    // After the lost block sets const 0 into r1 and r2, the swap should only
-    // touch r1, r2, and a temp that is r3+ (not r0).
+    // dir's register (r0). Dir's register is r0 (first phi, first allocated).
+    // The swap should only touch r1, r2, and a temp that is r3+ (not r0).
     assert(!setDests.has('r0'),
-      `Swap temp clobbered r0 (dir) at __tag_lost_: writes to {${[...setDests].join(', ')}} — ` +
+      `Swap temp clobbered r0 (dir): writes to {${[...setDests].join(', ')}} — ` +
       `resolveParallelMoves used dir's register as temp`);
   });
 
