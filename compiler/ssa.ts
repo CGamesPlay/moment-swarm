@@ -245,6 +245,7 @@ export class SSALowering {
     switch (op) {
       case 'begin': return this.lowerBegin(list);
       case 'let': return this.lowerLet(list);
+      case 'let*': return this.lowerLetStar(list);
       case 'set!': return this.lowerSet(list);
       case 'if': return this.lowerIf(list, node);
       case 'when': return this.lowerWhen(list, node);
@@ -307,8 +308,45 @@ export class SSALowering {
     return result;
   }
 
-  // ── let ──
+  // ── let (parallel bindings: all inits evaluated before any name is bound) ──
   private lowerLet(list: ASTNode[]): string {
+    const bindings = (list[1] as ListNode).value;
+    const savedEnv = new Map(this.env);
+
+    // Evaluate all init expressions in the outer environment first
+    const evaluated: { name: string; temp: string }[] = [];
+    for (const binding of bindings) {
+      const pair = (binding as ListNode).value;
+      const name = (pair[0] as any).value as string;
+      const initTemp = this.lowerExpr(pair[1]);
+      evaluated.push({ name, temp: initTemp });
+    }
+
+    // Then bind all names at once
+    for (const { name, temp } of evaluated) {
+      this.env.set(name, temp);
+      this.allBindings.set(name, temp);
+    }
+
+    let result = '';
+    for (let i = 2; i < list.length; i++) {
+      result = this.lowerExpr(list[i]);
+    }
+
+    // Restore let-local bindings but preserve set! updates to outer variables.
+    // Any variable that existed before the let and was mutated (set!) inside
+    // the let body must keep its updated SSA temp in the restored env.
+    for (const [name, temp] of this.env) {
+      if (savedEnv.has(name)) {
+        savedEnv.set(name, temp);
+      }
+    }
+    this.env = savedEnv;
+    return result;
+  }
+
+  // ── let* (sequential bindings: each init can see previous bindings) ──
+  private lowerLetStar(list: ASTNode[]): string {
     const bindings = (list[1] as ListNode).value;
     const savedEnv = new Map(this.env);
 
@@ -326,8 +364,6 @@ export class SSALowering {
     }
 
     // Restore let-local bindings but preserve set! updates to outer variables.
-    // Any variable that existed before the let and was mutated (set!) inside
-    // the let body must keep its updated SSA temp in the restored env.
     for (const [name, temp] of this.env) {
       if (savedEnv.has(name)) {
         savedEnv.set(name, temp);

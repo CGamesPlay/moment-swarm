@@ -76,15 +76,23 @@ argc compile --dump-ssa file.alisp
 ### Binding & Mutation
 
 ```lisp
-(let ((dir (sense food))        ; bindings — scoped registers
-      (ch  (carrying?)))
-  body...)
+(let ((x 10) (y x))            ; parallel: all inits eval before binding
+  body...)                      ;   y sees outer x, not the x=10 being bound
+
+(let* ((x 1) (y (+ x 1)))      ; sequential: each init sees prior bindings
+  body...)                      ;   y sees x=1 from the same block
 
 (set! var expr)                 ; mutate any let variable
 ```
 
-`let` variables are freed when the scope exits. Place long-lived state
-(dead-reckoning, FSM state, etc.) in a `let` that wraps the main loop.
+`let` evaluates all init expressions in the enclosing scope, then binds
+all names at once. `let*` evaluates and binds sequentially, so later
+bindings can refer to earlier ones in the same block. Both scope their
+variables — names are freed when the block exits. `set!` mutations to
+outer variables propagate through both forms.
+
+Place long-lived state (dead-reckoning, FSM state, etc.) in a `let`
+that wraps the main loop.
 
 ### Control Flow
 
@@ -281,7 +289,7 @@ the same register) and redundant jumps (jump to the immediately following label)
 
 ## Register Allocation Strategy
 
-- **Bindings** (`let`): allocated on entry, freed on scope exit; a `let` wrapping the main loop is effectively permanent for the program's lifetime
+- **Bindings** (`let`/`let*`): allocated on entry, freed on scope exit; a `let` wrapping the main loop is effectively permanent for the program's lifetime
 - **Temps**: allocated by `resolveArg` for compound sub-expressions, freed immediately
 
 With 8 registers (r0-r7), a typical program uses 3–5 for long-lived state and leaves the rest for temporaries.

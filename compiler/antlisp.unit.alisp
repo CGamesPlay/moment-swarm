@@ -41,6 +41,27 @@
       (assert b 2)
       (assert c 3))))
 
+(test "let*: sequential binding"
+  :run-once
+  (begin
+    (let* ((x 1) (y (+ x 1)))
+      (assert y 2))))
+
+(test "let: parallel binding sees outer scope"
+  :run-once
+  (begin
+    (let ((x 0))
+      (let ((x 10) (y x))
+        (assert y 0)))))
+
+(test "let: set! propagates to outer scope"
+  :run-once
+  (begin
+    (let ((x 0))
+      (let ((a 1))
+        (set! x 5))
+      (assert x 5))))
+
 ; ─── Arithmetic ──────────────────────────────────────────────
 
 (test "addition: a + b into c"
