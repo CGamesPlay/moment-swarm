@@ -69,6 +69,7 @@ argc compile --dump-ssa file.alisp
 ```lisp
 (const name value)              ; inline constant (no register)
 (alias name reg)                ; emit .alias
+(include "path.inc.alisp")      ; import macros/consts from file
 ```
 
 **Tags are automatically allocated** from all `(set-tag name)` calls in the order they first appear in the program (0–7). There is no need to declare tags explicitly.
@@ -266,6 +267,47 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 
   (let ((counter 99))
     (bump)))   ; increments outer counter (r0), not inner (r1)
+```
+
+### Includes
+
+`(include "path")` imports macro and const definitions from another file,
+enabling shared libraries without copy-paste.
+
+```lisp
+;; macros.inc.alisp — shared library
+(const TRAIL_STRENGTH 80)
+(defmacro wander () (move (+ (random 4) 1)))
+
+;; program.alisp — uses the library
+(include "macros.inc.alisp")
+(loop
+  (mark ch_red TRAIL_STRENGTH)
+  (wander))
+```
+
+**Path resolution**: include paths are relative to the file containing the
+`(include ...)` form. The compiler CLI and unit test runner provide the
+source file path automatically.
+
+**Allowed forms**: included files may only contain `const`, `defmacro`,
+`comment`, and `include`. Any code form (e.g. `move`, `if`, `let`) in an
+included file causes a compile error. This keeps includes purely
+declarative — they define reusable building blocks, not executable code.
+
+**Transitive includes**: included files can include other files. A cycle
+detection check prevents circular includes.
+
+```lisp
+;; base.inc.alisp
+(const BASE_TIMEOUT 200)
+
+;; derived.inc.alisp — builds on base
+(include "base.inc.alisp")
+(const EXPLORE_TIMEOUT (+ BASE_TIMEOUT 100))
+
+;; program.alisp — gets both
+(include "derived.inc.alisp")  ; BASE_TIMEOUT=200, EXPLORE_TIMEOUT=300
 ```
 
 ### Low-Level Control Flow

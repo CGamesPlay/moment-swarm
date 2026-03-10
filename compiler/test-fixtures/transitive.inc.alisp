@@ -1,0 +1,2 @@
+(include "base.inc.alisp")
+(const DERIVED_VAL (+ BASE_VAL 50))

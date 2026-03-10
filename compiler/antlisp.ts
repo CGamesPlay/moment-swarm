@@ -23,6 +23,7 @@ import { peephole } from './peephole';
 export interface CompileOptions {
   constOverrides?: Record<string, string>;
   testing?: boolean;
+  sourceFile?: string;
 }
 
 export function compileAntLisp(source: string, options: CompileOptions = {}): string {
@@ -39,7 +40,7 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   const constOverrides = options.constOverrides
     ? new Map(Object.entries(options.constOverrides))
     : undefined;
-  const expanded = expandMacros(ast.body, { constOverrides });
+  const expanded = expandMacros(ast.body, { constOverrides, sourceFile: options.sourceFile });
 
   // Phase 2: Metadata collection
   const metadata = collectMetadata(expanded.forms);
@@ -86,6 +87,7 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
 
 if (require.main === module) {
   const fs = require('fs');
+  const path = require('path');
   const args = process.argv.slice(2);
   const constOverrides: Record<string, string> = {};
   const positional: string[] = [];
@@ -112,18 +114,19 @@ if (require.main === module) {
     console.log('Usage: npx tsx compiler/antlisp.ts [--dump-ssa] [-D NAME=VALUE]... <source.alisp>');
   } else {
     try {
-      const source = fs.readFileSync(positional[0], 'utf-8');
+      const sourceFile = path.resolve(positional[0]);
+      const source = fs.readFileSync(sourceFile, 'utf-8');
       if (dumpSSA) {
         const tokens = tokenize(source);
         const ast = parse(tokens);
         const constMap = constOverrides ? new Map(Object.entries(constOverrides)) : undefined;
-        const expanded = expandMacros(ast.body, { constOverrides: constMap });
+        const expanded = expandMacros(ast.body, { constOverrides: constMap, sourceFile });
         const metadata = collectMetadata(expanded.forms);
         const ssaProgram = lowerToSSA(metadata.forms, metadata.tags, metadata.aliases, expanded.constValues);
         optimize(ssaProgram);
         console.log(printSSA(ssaProgram));
       } else {
-        console.log(compileAntLisp(source, { constOverrides }));
+        console.log(compileAntLisp(source, { constOverrides, sourceFile }));
       }
     } catch (err: any) {
       console.error(`error: ${err.message}`);

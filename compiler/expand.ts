@@ -2,7 +2,9 @@
 // AntLisp Pipeline — Phase 1: Macro Expansion + Const Resolution
 // ═══════════════════════════════════════════════════════════════
 
-import { ASTNode, ListNode, cloneAST } from './parse';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ASTNode, ListNode, cloneAST, tokenize, parse } from './parse';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -225,29 +227,74 @@ function expandNode(
 
 export interface ExpandOptions {
   constOverrides?: Map<string, string>;
+  sourceFile?: string;
 }
 
-export function expandMacros(forms: ASTNode[], options: ExpandOptions = {}): ExpandResult {
-  const macros = new Map<string, MacroDef>();
-  const consts = new Map<string, string>();
-  const remaining: ASTNode[] = [];
+// Allowed top-level forms in included files
+const INCLUDE_ALLOWED_FORMS = new Set(['const', 'defmacro', 'comment', 'include']);
 
-  // Reset expansion counter for deterministic output
-  expansionCounter = 0;
-
-  // Pass 1: Collect defmacro and const definitions, keep other forms
+function collectDefinitions(
+  forms: ASTNode[],
+  macros: Map<string, MacroDef>,
+  consts: Map<string, string>,
+  remaining: ASTNode[],
+  options: ExpandOptions,
+  includedFiles: Set<string>,
+  isInclude: boolean,
+): void {
   for (const form of forms) {
     if (form.type !== 'list' || form.value.length === 0) {
+      if (isInclude) continue; // skip empty forms in includes
       remaining.push(form);
       continue;
     }
     const head = form.value[0];
     if (head.type !== 'symbol') {
+      if (isInclude) {
+        throw new Error(`Include file may only contain const, defmacro, comment, and include forms (line ${form.line}:${form.col})`);
+      }
       remaining.push(form);
       continue;
     }
 
-    if (head.value === 'defmacro') {
+    if (head.value === 'include') {
+      const list = form.value;
+      if (list.length !== 2 || list[1].type !== 'string') {
+        throw new Error(`include requires exactly one string argument at line ${form.line}:${form.col}`);
+      }
+      const includePath = list[1].value;
+      if (!options.sourceFile) {
+        throw new Error(`include requires sourceFile to resolve paths (line ${form.line}:${form.col})`);
+      }
+      const resolved = path.resolve(path.dirname(options.sourceFile), includePath);
+      if (includedFiles.has(resolved)) {
+        throw new Error(`Circular include detected: ${resolved} (line ${form.line}:${form.col})`);
+      }
+      includedFiles.add(resolved);
+
+      let source: string;
+      try {
+        source = fs.readFileSync(resolved, 'utf-8');
+      } catch (e: any) {
+        throw new Error(`Cannot read include file "${includePath}": ${e.message} (line ${form.line}:${form.col})`);
+      }
+
+      const tokens = tokenize(source);
+      const ast = parse(tokens);
+
+      // Validate all top-level forms are allowed
+      for (const incForm of ast.body) {
+        if (incForm.type === 'list' && incForm.value.length > 0 &&
+            incForm.value[0].type === 'symbol') {
+          if (!INCLUDE_ALLOWED_FORMS.has(incForm.value[0].value)) {
+            throw new Error(`Include file "${includePath}" contains disallowed form "${incForm.value[0].value}" at line ${incForm.line}:${incForm.col}. Only const, defmacro, comment, and include are allowed.`);
+          }
+        }
+      }
+
+      collectDefinitions(ast.body, macros, consts, remaining, { ...options, sourceFile: resolved }, includedFiles, true);
+
+    } else if (head.value === 'defmacro') {
       const list = form.value;
       const name = (list[1] as any).value as string;
       const params = (list[2] as ListNode).value.map((p: ASTNode) => (p as any).value as string);
@@ -268,10 +315,33 @@ export function expandMacros(forms: ASTNode[], options: ExpandOptions = {}): Exp
         const value = resolveConstValue(list[2], consts);
         consts.set(name, value);
       }
+    } else if (head.value === 'comment') {
+      // Skip comment forms
     } else {
+      if (isInclude) {
+        throw new Error(`Include file may only contain const, defmacro, comment, and include forms, got "${head.value}" (line ${form.line}:${form.col})`);
+      }
       remaining.push(form);
     }
   }
+}
+
+export function expandMacros(forms: ASTNode[], options: ExpandOptions = {}): ExpandResult {
+  const macros = new Map<string, MacroDef>();
+  const consts = new Map<string, string>();
+  const remaining: ASTNode[] = [];
+
+  // Reset expansion counter for deterministic output
+  expansionCounter = 0;
+
+  // Track included files for cycle detection (seed with sourceFile if present)
+  const includedFiles = new Set<string>();
+  if (options.sourceFile) {
+    includedFiles.add(path.resolve(options.sourceFile));
+  }
+
+  // Pass 1: Collect defmacro, const, and include definitions; keep other forms
+  collectDefinitions(forms, macros, consts, remaining, options, includedFiles, false);
 
   // Pass 2: Expand macros and substitute consts in remaining forms
   const expanded = remaining.map(form => expandNode(form, macros, consts, 0));

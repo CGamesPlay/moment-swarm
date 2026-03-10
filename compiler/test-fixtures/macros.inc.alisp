@@ -1,0 +1,2 @@
+(defmacro wander () (move random))
+(const WANDER_SPEED 3)

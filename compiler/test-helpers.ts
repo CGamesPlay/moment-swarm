@@ -91,12 +91,12 @@ export function parseSource(src: string): Program {
   return parse(tokenize(src));
 }
 
-export function expandSource(src: string, opts?: { constOverrides?: Record<string, string> }): ExpandResult {
+export function expandSource(src: string, opts?: { constOverrides?: Record<string, string>; sourceFile?: string }): ExpandResult {
   const ast = parseSource(src);
   const constOverrides = opts?.constOverrides
     ? new Map(Object.entries(opts.constOverrides))
     : undefined;
-  return expandMacros(ast.body, { constOverrides });
+  return expandMacros(ast.body, { constOverrides, sourceFile: opts?.sourceFile });
 }
 
 export function collectMeta(src: string): Metadata & { constValues: Map<string, string> } {

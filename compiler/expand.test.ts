@@ -2,8 +2,13 @@
 // Expand Tests — macro expansion + const evaluation
 // ═══════════════════════════════════════════════════════════════
 
+import * as path from 'path';
 import { runSuite, test, assert, assertEq, assertThrows, expandSource, tryEvalConst, parseSource } from './test-helpers';
 import type { ASTNode } from './parse';
+
+const FIXTURES = path.resolve(__dirname, 'test-fixtures');
+// A fake sourceFile in the fixtures directory, for resolving relative include paths
+const FIXTURE_SOURCE = path.join(FIXTURES, 'test.alisp');
 
 function astHead(node: ASTNode): string {
   if (node.type === 'list' && node.value.length > 0 && node.value[0].type === 'symbol') {
@@ -225,5 +230,70 @@ runSuite('Expand', () => {
       () => expandSource('(const X (+ 1 y))'),
       'not a compile-time constant'
     );
+  });
+
+  // ── Include ──
+
+  test('include resolves macros from .inc.alisp file', () => {
+    const { forms } = expandSource(
+      '(include "macros.inc.alisp")\n(wander)',
+      { sourceFile: FIXTURE_SOURCE }
+    );
+    assertEq(forms.length, 1);
+    assertEq(astHead(forms[0]), 'move');
+  });
+
+  test('include resolves consts from .inc.alisp file', () => {
+    const { constValues } = expandSource(
+      '(include "macros.inc.alisp")\n(move WANDER_SPEED)',
+      { sourceFile: FIXTURE_SOURCE }
+    );
+    assertEq(constValues.get('WANDER_SPEED'), '3');
+  });
+
+  test('include rejects code forms with clear error', () => {
+    assertThrows(
+      () => expandSource(
+        '(include "bad-code.inc.alisp")',
+        { sourceFile: FIXTURE_SOURCE }
+      ),
+      'disallowed form "move"'
+    );
+  });
+
+  test('include cycle detection errors', () => {
+    assertThrows(
+      () => expandSource(
+        '(include "cycle-a.inc.alisp")',
+        { sourceFile: FIXTURE_SOURCE }
+      ),
+      'Circular include'
+    );
+  });
+
+  test('include missing file errors', () => {
+    assertThrows(
+      () => expandSource(
+        '(include "nonexistent.inc.alisp")',
+        { sourceFile: FIXTURE_SOURCE }
+      ),
+      'Cannot read include file'
+    );
+  });
+
+  test('include without sourceFile errors', () => {
+    assertThrows(
+      () => expandSource('(include "macros.inc.alisp")'),
+      'sourceFile'
+    );
+  });
+
+  test('transitive includes work', () => {
+    const { constValues } = expandSource(
+      '(include "transitive.inc.alisp")\n(move DERIVED_VAL)',
+      { sourceFile: FIXTURE_SOURCE }
+    );
+    assertEq(constValues.get('BASE_VAL'), '100');
+    assertEq(constValues.get('DERIVED_VAL'), '150');
   });
 });

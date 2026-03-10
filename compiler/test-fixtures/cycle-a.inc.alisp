@@ -1,0 +1,2 @@
+(include "cycle-b.inc.alisp")
+(const CYCLE_A 1)

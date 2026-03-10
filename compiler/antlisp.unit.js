@@ -44,6 +44,7 @@
 "use strict";
 
 const fs = require("fs");
+const path = require("path");
 const { compileAntLispDebug } = require("./antlisp");
 const { tokenize, parse } = require("./parse");
 const {
@@ -226,7 +227,7 @@ function runProgramOnce(world) {
 
 // ─── Build and run a single test ─────────────────────────────
 
-function runTestBlock(testDef, preamble, verbose) {
+function runTestBlock(testDef, preamble, verbose, sourceFile) {
   const { name, opts, body, assertions } = testDef;
 
   const ticks    = Number(opts["ticks"]    ?? 10);
@@ -243,7 +244,7 @@ function runTestBlock(testDef, preamble, verbose) {
 
   let asm;
   try {
-    ({ asm } = compileAntLispDebug(source, { testing: true }));
+    ({ asm } = compileAntLispDebug(source, { testing: true, sourceFile }));
   } catch (e) {
     return { name, passed: false, error: `Compile error: ${e.message}`,
              asmSource: null, failedAssertions: [] };
@@ -374,9 +375,10 @@ function runTestBlock(testDef, preamble, verbose) {
 // ─── Main runner ─────────────────────────────────────────────
 
 function runUnitFile(filePath, verbose = false) {
+  const resolvedPath = path.resolve(filePath);
   let source;
   try {
-    source = fs.readFileSync(filePath, "utf8");
+    source = fs.readFileSync(resolvedPath, "utf8");
   } catch (e) {
     console.error(`Cannot read file: ${filePath}`);
     process.exit(1);
@@ -402,7 +404,7 @@ function runUnitFile(filePath, verbose = false) {
   let passed = 0, failed = 0;
 
   for (const testDef of tests) {
-    const result = runTestBlock(testDef, preamble, verbose);
+    const result = runTestBlock(testDef, preamble, verbose, resolvedPath);
 
     if (result.passed) {
       console.log(`  ✓  ${result.name}`);
