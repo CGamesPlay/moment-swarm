@@ -104,10 +104,6 @@ function runTests() {
     '(let ((x 5)) (move random))',
     r => r.includes('MOVE RANDOM'));
 
-  test('comment',
-    '(comment "this is a test") (move random)',
-    r => r.includes('MOVE RANDOM'));
-
   test('multiple break conditions',
     `(let ((i 0))
        (loop

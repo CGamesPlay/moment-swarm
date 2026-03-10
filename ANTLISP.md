@@ -68,7 +68,6 @@ argc compile --dump-ssa file.alisp
 
 ```lisp
 (const name value)              ; inline constant (no register)
-(alias name reg)                ; emit .alias
 (include "path.inc.alisp")      ; import macros/consts from file
 ```
 
@@ -236,7 +235,7 @@ Macros expand inline at each call site — no CALL/return overhead, no register 
 
 **Key properties:**
 - **Hygienic**: Free variables in the macro body resolve at the **definition site**, not the call site. A caller's `let` variable with the same name won't accidentally shadow the macro's reference.
-- **Parameters**: Evaluated at the call site, then bound by name inside the macro. Variable args alias the caller's register (allowing `set!`); literal/constant args are inlined.
+- **Parameters**: Evaluated at the call site, then bound by name inside the macro. Variable args are passed by reference to the caller's register (allowing `set!`); literal/constant args are inlined.
 - **Hygienic tags**: `tagbody` tags and `(go ...)` inside macros get freshened at each expansion site to avoid collisions
 - **Multi-statement bodies**: All forms in the body are emitted inline
 
@@ -291,7 +290,7 @@ enabling shared libraries without copy-paste.
 source file path automatically.
 
 **Allowed forms**: included files may only contain `const`, `defmacro`,
-`comment`, and `include`. Any code form (e.g. `move`, `if`, `let`) in an
+and `include`. Any code form (e.g. `move`, `if`, `let`) in an
 included file causes a compile error. This keeps includes purely
 declarative — they define reusable building blocks, not executable code.
 
@@ -317,8 +316,6 @@ detection check prevents circular includes.
   tag-name                      ;   bare symbol = label
   (expr ...)                    ;   interleaved code
   (go tag-name))                ;   jump to tag (validated at compile time)
-
-(comment "text")                ; emit ; text
 ```
 
 `tagbody` tags are scoped — two separate `tagbody` forms with the same

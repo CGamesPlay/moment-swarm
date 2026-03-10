@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ASTNode, ListNode } from './parse';
-import { TagDef, AliasDef } from './metadata';
+import { TagDef } from './metadata';
 import { tryEvalConst } from './expand';
 
 // ─── SSA IR Types ───────────────────────────────────────────
@@ -52,7 +52,6 @@ export interface SSAProgram {
   entryBlock: BasicBlock;
   nextTemp: number;
   tags: TagDef[];
-  aliases: AliasDef[];
   allBindings: Map<string, string>;  // var name → last SSA temp (for debug)
 }
 
@@ -125,14 +124,12 @@ export class SSALowering {
     phiMaps: Map<string, Map<string, string>>;  // tag name → (var name → phi temp)
   }[] = [];
   private tags: TagDef[];
-  private aliases: AliasDef[];
   private consts: Map<string, string>;
   testing = false;
   allBindings = new Map<string, string>();  // for debug: var name → last temp
 
-  constructor(tags: TagDef[], aliases: AliasDef[], consts: Map<string, string>) {
+  constructor(tags: TagDef[], consts: Map<string, string>) {
     this.tags = tags;
-    this.aliases = aliases;
     this.consts = consts;
     this.env = new Map();
     this.currentBlock = this.makeBlock('entry');
@@ -205,7 +202,6 @@ export class SSALowering {
       entryBlock: this.blocks[0],
       nextTemp: this.nextTemp,
       tags: this.tags,
-      aliases: this.aliases,
       allBindings: this.allBindings,
     };
   }
@@ -298,7 +294,6 @@ export class SSALowering {
         return this.lowerZeroQ(list, node);
 
       case 'assert': return this.lowerAssert(list, node);
-      case 'comment': return '';  // no-op
       case 'defmacro': return '';  // should have been removed by expand phase
 
       default:
@@ -1458,11 +1453,10 @@ export function printSSA(program: SSAProgram): string {
 export function lowerToSSA(
   forms: ASTNode[],
   tags: TagDef[],
-  aliases: AliasDef[],
   consts: Map<string, string>,
   options?: { testing?: boolean },
 ): SSAProgram {
-  const lowering = new SSALowering(tags, aliases, consts);
+  const lowering = new SSALowering(tags, consts);
   if (options?.testing) lowering.testing = true;
   return lowering.lower(forms);
 }

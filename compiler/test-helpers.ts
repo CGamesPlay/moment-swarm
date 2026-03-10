@@ -108,7 +108,7 @@ export function collectMeta(src: string): Metadata & { constValues: Map<string, 
 export function lowerSource(src: string, opts?: { testing?: boolean }): SSAProgram {
   const expanded = expandSource(src);
   const meta = collectMetadata(expanded.forms);
-  return lowerToSSA(meta.forms, meta.tags, meta.aliases, expanded.constValues, opts);
+  return lowerToSSA(meta.forms, meta.tags, expanded.constValues, opts);
 }
 
 export function lowerAndOptimize(src: string, opts?: { testing?: boolean }): SSAProgram {
@@ -124,7 +124,7 @@ export function compileSource(src: string, opts?: { constOverrides?: Record<stri
     : undefined;
   const expanded = expandMacros(ast.body, { constOverrides });
   const meta = collectMetadata(expanded.forms);
-  const program = lowerToSSA(meta.forms, meta.tags, meta.aliases, expanded.constValues, { testing: opts?.testing });
+  const program = lowerToSSA(meta.forms, meta.tags, expanded.constValues, { testing: opts?.testing });
   optimize(program);
   const linearized = linearizeBlocks(program);
   const numbered = numberInstructions(linearized);
@@ -164,7 +164,6 @@ export function makeProgram(blocks: BasicBlock[]): SSAProgram {
     entryBlock: blocks[0],
     nextTemp: 100,
     tags: [],
-    aliases: [],
     allBindings: new Map(),
   };
 }

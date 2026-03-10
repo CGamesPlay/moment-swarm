@@ -54,6 +54,10 @@ unit() {
 selftest() {
 	local output rc f
 
+	echo "═══ TypeScript ═══"
+	npx --prefix compiler tsc -p compiler --noEmit
+	echo "tsc: OK"
+
 	echo "═══ Compiler tests ═══"
 	for f in compiler/*.test.ts compiler/antlisp.test.js; do
 		[[ -f "$f" ]] || continue
@@ -78,10 +82,6 @@ selftest() {
 		fi
 		[[ $rc -eq 0 ]] || exit $rc
 	done
-
-	echo "═══ TypeScript ═══"
-	npx --prefix compiler tsc -p compiler --noEmit
-	echo "tsc: OK"
 }
 
 if ! command -v argc >/dev/null; then

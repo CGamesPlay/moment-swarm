@@ -16,8 +16,7 @@ export function generateCode(
 
   // Emit directives
   for (const t of program.tags) output.push(`.tag ${t.id} ${t.name}`);
-  for (const a of program.aliases) output.push(`.alias ${a.name} ${a.reg}`);
-  if (program.tags.length || program.aliases.length) output.push('');
+  if (program.tags.length) output.push('');
 
   // Build phi copy map: block → copies to insert at end
   const phiCopiesPerBlock = new Map<BasicBlock, { from: string; to: string }[]>();

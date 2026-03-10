@@ -458,10 +458,4 @@ runSuite('SSA', () => {
     }
   });
 
-  test('comment is no-op', () => {
-    const program = lowerSource('(comment "test") (move random)');
-    assert(hasOp(program, 'move'));
-    // No comment instruction emitted
-    assert(!hasOp(program, 'comment'));
-  });
 });

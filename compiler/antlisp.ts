@@ -49,7 +49,6 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   const ssaProgram = lowerToSSA(
     metadata.forms,
     metadata.tags,
-    metadata.aliases,
     expanded.constValues,
     { testing: options.testing },
   );
@@ -122,7 +121,7 @@ if (require.main === module) {
         const constMap = constOverrides ? new Map(Object.entries(constOverrides)) : undefined;
         const expanded = expandMacros(ast.body, { constOverrides: constMap, sourceFile });
         const metadata = collectMetadata(expanded.forms);
-        const ssaProgram = lowerToSSA(metadata.forms, metadata.tags, metadata.aliases, expanded.constValues);
+        const ssaProgram = lowerToSSA(metadata.forms, metadata.tags, expanded.constValues);
         optimize(ssaProgram);
         console.log(printSSA(ssaProgram));
       } else {

@@ -5,16 +5,6 @@
 import { runSuite, test, assert, assertEq, collectMeta } from './test-helpers';
 
 runSuite('Metadata', () => {
-  test('alias directive produces AliasDef and is removed from forms', () => {
-    const meta = collectMeta('(alias counter r5) (move random)');
-    assertEq(meta.aliases.length, 1);
-    assertEq(meta.aliases[0].name, 'counter');
-    assertEq(meta.aliases[0].reg, 'r5');
-    // alias should be removed; only (move random) remains
-    assertEq(meta.forms.length, 1);
-    assert(meta.forms[0].type === 'list');
-  });
-
   test('set-tag produces TagDef with correct ID', () => {
     const meta = collectMeta('(set-tag homing) (move random)');
     assertEq(meta.tags.length, 1);
@@ -22,17 +12,12 @@ runSuite('Metadata', () => {
     assertEq(meta.tags[0].id, 0);
   });
 
-  test('multiple aliases and tags', () => {
+  test('multiple tags', () => {
     const meta = collectMeta(`
-      (alias dx r5)
-      (alias dy r6)
       (set-tag exploring)
       (set-tag homing)
       (move random)
     `);
-    assertEq(meta.aliases.length, 2);
-    assertEq(meta.aliases[0].name, 'dx');
-    assertEq(meta.aliases[1].name, 'dy');
     assertEq(meta.tags.length, 2);
     assertEq(meta.tags[0].name, 'exploring');
     assertEq(meta.tags[0].id, 0);
@@ -42,7 +27,6 @@ runSuite('Metadata', () => {
 
   test('no directives: passthrough', () => {
     const meta = collectMeta('(move random) (pickup)');
-    assertEq(meta.aliases.length, 0);
     assertEq(meta.tags.length, 0);
     assertEq(meta.forms.length, 2);
   });

@@ -11,15 +11,9 @@ export interface TagDef {
   id: number;
 }
 
-export interface AliasDef {
-  name: string;
-  reg: string;
-}
-
 export interface Metadata {
   tags: TagDef[];
-  aliases: AliasDef[];
-  forms: ASTNode[];   // forms with alias directives removed
+  forms: ASTNode[];   // remaining forms
 }
 
 // ─── Collection ─────────────────────────────────────────────
@@ -47,25 +41,14 @@ function collectTagsFromNode(node: ASTNode, seen: Set<string>, tags: TagDef[]): 
 
 export function collectMetadata(forms: ASTNode[]): Metadata {
   const tags: TagDef[] = [];
-  const aliases: AliasDef[] = [];
   const seen = new Set<string>();
   const remaining: ASTNode[] = [];
 
   for (const form of forms) {
-    // Check for (alias name reg) top-level directive
-    if (form.type === 'list' && form.value.length >= 3 &&
-        form.value[0].type === 'symbol' && form.value[0].value === 'alias') {
-      aliases.push({
-        name: (form.value[1] as any).value as string,
-        reg: (form.value[2] as any).value as string,
-      });
-      continue;
-    }
-
     // Collect tags from set-tag calls
     collectTagsFromNode(form, seen, tags);
     remaining.push(form);
   }
 
-  return { tags, aliases, forms: remaining };
+  return { tags, forms: remaining };
 }

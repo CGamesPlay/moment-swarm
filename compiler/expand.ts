@@ -231,7 +231,7 @@ export interface ExpandOptions {
 }
 
 // Allowed top-level forms in included files
-const INCLUDE_ALLOWED_FORMS = new Set(['const', 'defmacro', 'comment', 'include']);
+const INCLUDE_ALLOWED_FORMS = new Set(['const', 'defmacro', 'include']);
 
 function collectDefinitions(
   forms: ASTNode[],
@@ -251,7 +251,7 @@ function collectDefinitions(
     const head = form.value[0];
     if (head.type !== 'symbol') {
       if (isInclude) {
-        throw new Error(`Include file may only contain const, defmacro, comment, and include forms (line ${form.line}:${form.col})`);
+        throw new Error(`Include file may only contain const, defmacro, and include forms (line ${form.line}:${form.col})`);
       }
       remaining.push(form);
       continue;
@@ -287,7 +287,7 @@ function collectDefinitions(
         if (incForm.type === 'list' && incForm.value.length > 0 &&
             incForm.value[0].type === 'symbol') {
           if (!INCLUDE_ALLOWED_FORMS.has(incForm.value[0].value)) {
-            throw new Error(`Include file "${includePath}" contains disallowed form "${incForm.value[0].value}" at line ${incForm.line}:${incForm.col}. Only const, defmacro, comment, and include are allowed.`);
+            throw new Error(`Include file "${includePath}" contains disallowed form "${incForm.value[0].value}" at line ${incForm.line}:${incForm.col}. Only const, defmacro, and include are allowed.`);
           }
         }
       }
@@ -315,11 +315,9 @@ function collectDefinitions(
         const value = resolveConstValue(list[2], consts);
         consts.set(name, value);
       }
-    } else if (head.value === 'comment') {
-      // Skip comment forms
     } else {
       if (isInclude) {
-        throw new Error(`Include file may only contain const, defmacro, comment, and include forms, got "${head.value}" (line ${form.line}:${form.col})`);
+        throw new Error(`Include file may only contain const, defmacro, and include forms, got "${head.value}" (line ${form.line}:${form.col})`);
       }
       remaining.push(form);
     }

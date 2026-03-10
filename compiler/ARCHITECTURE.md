@@ -7,7 +7,7 @@ inputs and outputs.
 ```
 Source → Parse → AST
   → Phase 1: Macro Expansion        (AST → AST)
-  → Phase 2: Metadata Collection    (AST → AST + tags/aliases)
+  → Phase 2: Metadata Collection    (AST → AST + tags)
   → Phase 3: SSA Lowering           (AST → SSA IR)
   → Phase 4: Optimization Passes    (SSA IR → SSA IR)
   → Phase 5: Register Allocation    (SSA IR → allocated IR)
@@ -22,7 +22,7 @@ Source → Parse → AST
 | `antlisp.ts` | Pipeline coordinator and CLI entry point |
 | `parse.ts` | Tokenizer, recursive-descent parser, AST types |
 | `expand.ts` | Phase 1 — macro expansion, `(const ...)` evaluation, hygienic substitution |
-| `metadata.ts` | Phase 2 — collects `(set-tag ...)` and `(alias ...)` directives |
+| `metadata.ts` | Phase 2 — collects `(set-tag ...)` directives |
 | `ssa.ts` | Phase 3 — lowers AST to SSA IR (basic blocks, phi nodes, terminators) |
 | `optimize.ts` | Phase 4 — constant folding, copy propagation, DCE, dead block elimination, comparison rewriting |
 | `regalloc.ts` | Phase 5 — linearize blocks, liveness analysis, linear scan register allocator |
