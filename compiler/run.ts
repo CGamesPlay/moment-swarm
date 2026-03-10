@@ -183,7 +183,19 @@ const allMaps: EvalMap[] = engine.generateEvalMaps(config.mapWidth, config.mapHe
 
 let maps: EvalMap[];
 if (mapFilter) {
-  const match = allMaps.find((m: EvalMap) => m.name === mapFilter);
+  // Try exact match first, then prefix match (e.g. "gauntlet" matches "gauntlet-41jczs")
+  let match = allMaps.find((m: EvalMap) => m.name === mapFilter);
+  if (!match) {
+    const prefix = mapFilter + "-";
+    const prefixMatches = allMaps.filter((m: EvalMap) => m.name.startsWith(prefix));
+    if (prefixMatches.length === 1) {
+      match = prefixMatches[0];
+    } else if (prefixMatches.length > 1) {
+      console.error(`Multiple maps match "${mapFilter}":`);
+      for (const m of prefixMatches) console.error(`  ${m.name}`);
+      process.exit(1);
+    }
+  }
   if (!match) {
     console.error(`Map "${mapFilter}" not found. Available maps:`);
     for (const m of allMaps) console.error(`  ${m.name}`);

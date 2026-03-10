@@ -6,8 +6,6 @@
 - compiler/node-engine.js is the virtual machine, ported to node.
 - compiler/run.ts is a CLI for the above.
 
-Testbed usage: `npx --prefix compiler tsx compiler/run.ts brain.ant`
-
 Runs the training dataset using the given antssembly file. Prints a per-map score and a total score.
 
 Example baseline using the example brain.ant file:
@@ -44,6 +42,8 @@ The language is very limited, due to only having 8 registers and no stack. We ma
 
 The 64-op limit is particularly concerning for our compiled language. The "stalls" display indicates the number of times the op limit was hit during the run, and the tag of each ant when the stall happened. Before optimizing for stalls, verify that stalls are actually causing problems by `argc test file.alisp -o 1000`.
 
+Interestingly, there is no limit on program size. This means that unrolled loops and duplicating code (via macros) results in larger instruction counts but fewer stalls due to fewer JMP instructions. Use this to your advantage.
+
 If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No exceptions.
 
 ## ISA notes
@@ -53,6 +53,32 @@ If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No excepti
 - Hitting the 64-op limit without an action is a "stall" — the ant wastes a tick doing nothing visible. The goal is to reach an action within budget every tick.
 - The program restarts automatically if it reaches the end.
 - Pheremone decays at a rate of 1 per tick, independently between all channels. The decay happens after all ants mark the cell.
+
+## Development commands
+
+The most common command is to run the test suite on a given alisp file. By default, it runs the same tests as the official practice maps. It can be overridden with parameters:
+
+```bash
+argc test example.alisp             # Run official practice maps
+argc test example.alisp -o 1000     # Run official practice maps with artifically increased op limit
+argc test example.alisp -m open     # Run only the "open" map type
+argc test example.alisp -s 16       # Run a different set of maps
+argc test example.alisp --no-debug  # Set DEBUG=0 and disable ABORT opcode (production mode)
+```
+
+You may with to inspect the output of a program:
+
+```bash
+argc compile example.alisp             # Print antssembly
+argc compile example.alisp --dump-ssa  # Print the internal SSA representation
+argc compile example.alisp -D DEBUG=0  # Compile without debugging information
+```
+
+You can also run alisp unit tests:
+
+```bash
+argc unit compiler/antlisp.unit.alisp # Run specific unit file
+```
 
 ## From the user
 

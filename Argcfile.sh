@@ -29,7 +29,8 @@ compile() {
 
 # @cmd Run an alisp file through the simulator
 # @arg  file!           alisp file
-# @option -m --map      Run only a specific map (e.g. "open-38bs6g")
+# @option -m --map      Run only a specific map (type like "gauntlet" or full name like "gauntlet-41jczs")
+# @option -s --seed     Global map seed (default: 42)
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 # @flag      --no-debug Compile with DEBUG=0 and reject ABORT opcodes
@@ -46,7 +47,8 @@ test() {
 	local asm
 	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
 	echo "$asm" | npx --prefix compiler tsx compiler/run.ts \
-		${argc_map+-m "$argc_map"} ${argc_max_ops+-o "$argc_max_ops"} \
+		${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
+		${argc_max_ops+-o "$argc_max_ops"} \
 		${run_flags+"${run_flags[@]}"}
 }
 
