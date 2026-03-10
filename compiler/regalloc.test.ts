@@ -485,6 +485,7 @@ runSuite('Register Allocation', () => {
     //
     // This models the LOST→EXPLORING transition in bridge.alisp:
     // - dir (r0), counter (r1), explore-age (r2) are live at exploring header
+    // - dir is read before being overwritten, keeping its phi live through DCE
     // - counter and explore-age are both set to 0 (new const temps in r1, r2)
     // - The phi swap of r1↔r2 picks r0 (dir) as temp, clobbering dir
     //
@@ -502,6 +503,8 @@ runSuite('Register Allocation', () => {
           exploring
           (when (>= explore-age 10)
             (go lost))
+          (when (>= dir 4)
+            (mark ch_blue dir))
           (set! dir (+ (random 4) 1))
           (mark ch_red dir)
           (set! counter (- counter 1))

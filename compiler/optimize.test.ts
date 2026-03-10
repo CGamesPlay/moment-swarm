@@ -4,7 +4,7 @@
 
 import { runSuite, test, assert, assertEq, assertIncludes, assertNotIncludes,
          lowerAndOptimize, lowerSource, printSSA,
-         makeBlock, makeInstr, makeProgram, link } from './test-helpers';
+         makeBlock, makeInstr, makePhi, makeProgram, link } from './test-helpers';
 import { constantFolding, copyPropagation, deadCodeElimination,
          deadBlockElimination, comparisonRewriting, deadBranchChainElimination } from './optimize';
 import type { SSAProgram, BasicBlock } from './ssa';
@@ -229,6 +229,78 @@ runSuite('Optimize', () => {
   });
 
   // ── Dead Cond-Chain Elimination ──
+
+  test('deadCodeElimination: self-referencing phi cycle eliminated', () => {
+    // Simulates: while loop with unused loop variable (e.g. dotimes step)
+    // entry: %t0 = const 0, %t1 = const 42, jmp → header
+    // header: %dead = phi [entry: %t0] [body: %dead], br_cmp %t1 0 → body/exit
+    // body: move %t1, jmp → header
+    // exit: (empty)
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 0),
+      makeInstr('const', '%t1', 42),
+    ]);
+    const header = makeBlock('header');
+    const body = makeBlock('body', [makeInstr('move', null, '%t1')]);
+    const exit = makeBlock('exit');
+
+    entry.terminator = { op: 'jmp', target: header };
+    link(entry, header);
+
+    header.phis.push(makePhi('%dead', [
+      { block: entry, value: '%t0' },
+      { block: body, value: '%dead' },
+    ]));
+    header.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t1', b: 0, thenBlock: exit, elseBlock: body };
+    link(header, body); link(header, exit);
+
+    body.terminator = { op: 'jmp', target: header };
+    link(body, header);
+
+    const program = makeProgram([entry, header, body, exit]);
+    deadCodeElimination(program);
+
+    assertEq(header.phis.length, 0, 'self-referencing dead phi should be removed');
+    assert(!entry.instrs.some(i => i.dest === '%t0'), 'dead const %t0 should be removed');
+    assert(entry.instrs.some(i => i.dest === '%t1'), 'used const %t1 should remain');
+  });
+
+  test('deadCodeElimination: mutual phi cycle eliminated', () => {
+    // Two phis reference each other but nothing outside uses either
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 0),
+      makeInstr('const', '%t1', 1),
+      makeInstr('const', '%t2', 42),
+    ]);
+    const header = makeBlock('header');
+    const body = makeBlock('body');
+    const exit = makeBlock('exit');
+
+    entry.terminator = { op: 'jmp', target: header };
+    link(entry, header);
+
+    header.phis.push(makePhi('%a', [
+      { block: entry, value: '%t0' },
+      { block: body, value: '%b' },
+    ]));
+    header.phis.push(makePhi('%b', [
+      { block: entry, value: '%t1' },
+      { block: body, value: '%a' },
+    ]));
+    header.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t2', b: 0, thenBlock: exit, elseBlock: body };
+    link(header, body); link(header, exit);
+
+    body.terminator = { op: 'jmp', target: header };
+    link(body, header);
+
+    const program = makeProgram([entry, header, body, exit]);
+    deadCodeElimination(program);
+
+    assertEq(header.phis.length, 0, 'mutual phi cycle should be eliminated');
+    assert(!entry.instrs.some(i => i.dest === '%t0'), 'dead const %t0 should be removed');
+    assert(!entry.instrs.some(i => i.dest === '%t1'), 'dead const %t1 should be removed');
+    assert(entry.instrs.some(i => i.dest === '%t2'), 'used const %t2 should remain');
+  });
 
   test('deadBranchChainElimination: 3-clause empty chain → jmp merge', () => {
     // Build: entry → br_cmp → body1(jmp merge) / next1

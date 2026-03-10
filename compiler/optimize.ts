@@ -209,22 +209,40 @@ export function deadCodeElimination(program: SSAProgram): void {
   while (changed) {
     changed = false;
 
-    // Collect all used temps
-    const used = new Set<string>();
+    // Phase 1: Collect "real" uses from instructions and terminators (NOT phi entries)
+    const realUsed = new Set<string>();
     for (const block of program.blocks) {
-      for (const phi of block.phis) {
-        for (const entry of phi.entries) {
-          used.add(entry.value);
-        }
-      }
       for (const instr of block.instrs) {
         for (const arg of instr.args) {
-          if (typeof arg === 'string') used.add(arg);
+          if (typeof arg === 'string') realUsed.add(arg);
         }
       }
       if (block.terminator?.op === 'br_cmp') {
-        if (typeof block.terminator.a === 'string') used.add(block.terminator.a);
-        if (typeof block.terminator.b === 'string') used.add(block.terminator.b);
+        if (typeof block.terminator.a === 'string') realUsed.add(block.terminator.a);
+        if (typeof block.terminator.b === 'string') realUsed.add(block.terminator.b);
+      }
+    }
+
+    // Phase 2: Propagate liveness through phis via worklist
+    const used = new Set<string>(realUsed);
+    const phiByDest = new Map<string, PhiNode>();
+    for (const block of program.blocks) {
+      for (const phi of block.phis) {
+        phiByDest.set(phi.dest, phi);
+      }
+    }
+    const worklist: string[] = [];
+    for (const dest of realUsed) {
+      if (phiByDest.has(dest)) worklist.push(dest);
+    }
+    while (worklist.length > 0) {
+      const dest = worklist.pop()!;
+      const phi = phiByDest.get(dest)!;
+      for (const entry of phi.entries) {
+        if (!used.has(entry.value)) {
+          used.add(entry.value);
+          if (phiByDest.has(entry.value)) worklist.push(entry.value);
+        }
       }
     }
 
