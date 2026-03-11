@@ -11,12 +11,22 @@
 (const TRAIL_PH ch_red)           ; gradient trail channel
 (const DELIVERING_PH ch_blue)    ; food-delivery breadcrumb channel
 
-(const MAX_TRAIL 255)            ; gradient seed intensity at points of interest
-(const SCAN_STEPS 30)            ; wall-follow budget in SCANNING
-(const HEADING_STEPS 32)         ; max steps before picking a new direction
-(const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
-(const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
-(const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
+; gradient seed intensity at points of interest
+(const MAX_TRAIL 255)
+; wall-follow budget in SCANNING
+; @hp min=20 max=40 step=10
+(const SCAN_STEPS 30)
+; max steps before picking a new direction
+; @hp min=16 max=32 step=4
+(const HEADING_STEPS 32)
+; explorer turns back if gradient here < this
+(const GRADIENT_GO_HOME 2)
+; returner resumes exploring once gradient >= this
+; @hp min=3 max=6 step=1
+(const GRADIENT_NEAR_HOME_SHIFT 3)
+(const GRADIENT_NEAR_HOME (lshift 1 GRADIENT_NEAR_HOME_SHIFT))
+; explorer follows delivery trail if signal >= this
+(const DELIVERY_GO_TOWARD 2)
 
 
 ; ══════════════════════════════════════════════

@@ -65,6 +65,11 @@ unit() {
 		${flags+"${flags[@]}"} "${argc_file:?}" ${argc_verbose+--verbose}
 }
 
+# @cmd Run hyperparameter optimization dashboard
+optimize() {
+	exec marimo run --sandbox --watch hyperparameters.py
+}
+
 # @cmd Run all compiler tests (unit, self-test, type-check)
 # @flag -v --verbose    Show detailed output
 selftest() {
