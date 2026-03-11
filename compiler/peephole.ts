@@ -269,14 +269,78 @@ export function peephole(lines: string[]): string[] {
   while (changed) {
     changed = false;
 
-    // Pass 0: Tail merging.
+    // Pass 0: Jump threading — rewrite jumps through trampoline blocks.
+    // A trampoline is a label whose only instruction is JMP <target>.
+    // Rewrite all references to jump directly to the final target.
+    {
+      // Scan to find trampoline labels
+      const trampolines = new Map<string, string>();  // label → jump target
+      let currentLabel: string | null = null;
+      let instrCount = 0;
+      let singleJmpTarget: string | null = null;
+      for (const line of output) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith(';')) continue;
+        if (trimmed.endsWith(':')) {
+          // Finalize previous label
+          if (currentLabel !== null && instrCount === 1 && singleJmpTarget !== null) {
+            trampolines.set(currentLabel, singleJmpTarget);
+          }
+          currentLabel = trimmed.slice(0, -1);
+          instrCount = 0;
+          singleJmpTarget = null;
+        } else {
+          instrCount++;
+          if (instrCount === 1 && trimmed.startsWith('JMP ')) {
+            singleJmpTarget = trimmed.split(/\s+/)[1];
+          } else {
+            singleJmpTarget = null;
+          }
+        }
+      }
+      // Finalize last label
+      if (currentLabel !== null && instrCount === 1 && singleJmpTarget !== null) {
+        trampolines.set(currentLabel, singleJmpTarget);
+      }
+
+      if (trampolines.size > 0) {
+        // Resolve chains transitively
+        const resolved = new Map<string, string>();
+        for (const label of trampolines.keys()) {
+          let target = trampolines.get(label)!;
+          const visited = new Set<string>([label]);
+          while (trampolines.has(target) && !visited.has(target)) {
+            visited.add(target);
+            target = trampolines.get(target)!;
+          }
+          resolved.set(label, target);
+        }
+
+        // Rewrite all jump operands
+        for (let i = 0; i < output.length; i++) {
+          const trimmed = output[i].trim();
+          if (trimmed === '' || trimmed.startsWith(';') || trimmed.endsWith(':')) continue;
+          const tokens = trimmed.split(/\s+/);
+          const op = tokens[0];
+          if (op === 'JMP' && tokens[1] && resolved.has(tokens[1])) {
+            output[i] = output[i].replace(tokens[1], resolved.get(tokens[1])!);
+            changed = true;
+          } else if (JUMP_OPS.has(op) && tokens[3] && resolved.has(tokens[3])) {
+            output[i] = output[i].replace(tokens[3], resolved.get(tokens[3])!);
+            changed = true;
+          }
+        }
+      }
+    }
+
+    // Pass 1: Tail merging.
     const tmResult = tailMerge(output);
     if (tmResult.changed) {
       output = tmResult.lines;
       changed = true;
     }
 
-    // Pass 1: Dead store elimination.
+    // Pass 2: Dead store elimination.
     // Remove SET rX <val> when the very next non-blank, non-comment, non-label line
     // is also SET rX <val2> (same register).
     let dseChanged = true;
@@ -304,7 +368,7 @@ export function peephole(lines: string[]): string[] {
       }
     }
 
-    // Pass 2: Remove redundant JMP instructions that jump to a label which
+    // Pass 3: Remove redundant JMP instructions that jump to a label which
     // would be reached by fall-through.
     for (let i = 0; i < output.length; i++) {
       const line = output[i].trim();
@@ -328,7 +392,7 @@ export function peephole(lines: string[]): string[] {
       }
     }
 
-    // Pass 3: Dead label elimination.
+    // Pass 4: Dead label elimination.
     // Remove labels that are not referenced by any JMP/JEQ/JNE/JGT/JLT instruction.
     const referencedLabels = new Set<string>();
     for (const line of output) {
