@@ -135,8 +135,14 @@ function runTests() {
          done))
      (skip-if-carrying) (skip-if-carrying)`,
     r => {
-      const doneLabels = r.match(/__tag_done_\d+:/g) || [];
-      return doneLabels.length === 2 && doneLabels[0] !== doneLabels[1];
+      // Each macro invocation must produce freshened labels.
+      // The tagbody done labels may be eliminated by linearization when they
+      // become trivial jmp blocks, but the when-body labels (or any remaining
+      // labels) must still be distinct across the two invocations.
+      const allLabels = r.match(/__\w+_\d+:/g) || [];
+      // Must have at least 2 labels, and no duplicates
+      const unique = new Set(allLabels);
+      return allLabels.length >= 2 && unique.size === allLabels.length;
     });
 
   test('macro called multiple times',

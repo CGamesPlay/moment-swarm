@@ -244,7 +244,7 @@ runSuite('Register Allocation', () => {
     // Models a dotimes loop: header branches to exit (then) or body (else)
     const entry = makeBlock('entry');
     const header = makeBlock('header');
-    const body = makeBlock('body');
+    const body = makeBlock('body', [makeInstr('move', null, '%t0')]);
     const exit = makeBlock('exit');
 
     entry.terminator = { op: 'jmp', target: header };
@@ -667,6 +667,30 @@ runSuite('Register Allocation', () => {
     // After: should be significantly fewer (3 or less)
     assert(setCount <= 3,
       `Expected at most 3 register-to-register SETs, got ${setCount}:\n${asm}`);
+  });
+
+  test('linearizeBlocks: ne prefers non-trivial successor over trivial jmp', () => {
+    // Models dotimes/break: br_cmp ne branches to trivial break block
+    // (just jmp to merge) vs non-trivial continue block (has real work).
+    // The non-trivial block should be fallthrough to avoid extra JMPs.
+    const entry = makeBlock('entry');
+    const breakB = makeBlock('break');  // trivial: just jmp merge
+    const cont = makeBlock('continue', [makeInstr('mod', '%t1', '%t0', 4)]);
+    const merge = makeBlock('merge');
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'ne', a: '%t0', b: 1,
+                          thenBlock: breakB, elseBlock: cont };
+    link(entry, breakB);
+    link(entry, cont);
+    breakB.terminator = { op: 'jmp', target: merge };
+    link(breakB, merge);
+    cont.terminator = { op: 'jmp', target: merge };
+    link(cont, merge);
+
+    const program = makeProgram([entry, breakB, cont, merge]);
+    const order = linearizeBlocks(program);
+    assertEq(order.indexOf(cont), order.indexOf(entry) + 1,
+      'non-trivial continue should be fallthrough, not trivial break block');
   });
 
   test('diamond CFG: exclusive branch temps get non-overlapping intervals', () => {

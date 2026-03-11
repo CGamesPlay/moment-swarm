@@ -6,12 +6,18 @@ import { SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator } from './ssa';
 
 // ─── Linearize Blocks (Reverse Postorder) ───────────────────
 
+function isTrivialJmp(block: BasicBlock): boolean {
+  return block.instrs.length === 0
+    && block.phis.length === 0
+    && block.terminator?.op === 'jmp';
+}
+
 export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
   // Greedy layout: start from entry, always choose the preferred fall-through
   // successor next.  For br_cmp with gt/lt (true-jump only), elseBlock is the
   // preferred fall-through; for ge/le (false-jump only), thenBlock is.
-  // For eq/ne (both jumps available), prefer the lower-indexed successor to
-  // keep loop bodies before exits.
+  // For eq/ne (both jumps available), prefer non-trivial successors over
+  // trivial jmp-only blocks, then fall back to the lower-indexed successor.
   //
   // When the preferred successor is already placed, fall back to the other
   // successor, then to reverse-postorder for the remaining blocks.
@@ -89,11 +95,20 @@ export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
           preferred = thenBlock;
           other = elseBlock;
         } else {
-          // eq/ne: both jumps available, prefer lower-indexed (loop body)
-          const ti = blockIndex.get(thenBlock) ?? 0;
-          const ei = blockIndex.get(elseBlock) ?? 0;
-          preferred = ti < ei ? thenBlock : elseBlock;
-          other = ti < ei ? elseBlock : thenBlock;
+          // eq/ne: both jumps available.
+          // Prefer non-trivial successor (has instructions/phis) over a
+          // trivial jmp-only block.  Fall back to lower-indexed.
+          const tTrivial = isTrivialJmp(thenBlock);
+          const eTrivial = isTrivialJmp(elseBlock);
+          if (tTrivial !== eTrivial) {
+            preferred = tTrivial ? elseBlock : thenBlock;
+            other = tTrivial ? thenBlock : elseBlock;
+          } else {
+            const ti = blockIndex.get(thenBlock) ?? 0;
+            const ei = blockIndex.get(elseBlock) ?? 0;
+            preferred = ti < ei ? thenBlock : elseBlock;
+            other = ti < ei ? elseBlock : thenBlock;
+          }
         }
         if (!placed.has(preferred)) {
           current = preferred;
