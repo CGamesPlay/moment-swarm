@@ -192,6 +192,31 @@ runSuite('Register Allocation', () => {
     assertEq(order[order.length - 1].label, 'merge');
   });
 
+  test('linearizeBlocks: last predecessor falls through to merge block', () => {
+    // Diamond: entry -> left, right; both -> merge
+    // With eq, entry prefers left as fall-through (lower index).
+    // Layout should be: entry, left, right, merge
+    // right->merge JMP should be eliminable because right is the last
+    // predecessor of merge to be placed.
+    const entry = makeBlock('entry');
+    const left = makeBlock('left');
+    const right = makeBlock('right');
+    const merge = makeBlock('merge');
+
+    entry.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 0, thenBlock: left, elseBlock: right };
+    link(entry, left);
+    link(entry, right);
+    left.terminator = { op: 'jmp', target: merge };
+    link(left, merge);
+    right.terminator = { op: 'jmp', target: merge };
+    link(right, merge);
+
+    const program = makeProgram([entry, left, right, merge]);
+    const order = linearizeBlocks(program);
+    assertEq(order.indexOf(merge), order.indexOf(right) + 1,
+      'merge should be fall-through after last-placed predecessor (right)');
+  });
+
   test('linearizeBlocks: gt loop places elseBlock (exit) as fall-through', () => {
     // Models a while loop: header branches to body (then) or exit (else).
     // For `gt`, the only direct jump is JGT (true-jump to body), so exit

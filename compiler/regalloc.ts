@@ -70,10 +70,10 @@ export function linearizeBlocks(program: SSAProgram): BasicBlock[] {
       if (!term) continue;
 
       if (term.op === 'jmp') {
-        // Follow jmp fall-through only for single-predecessor targets
-        // (not merge points), to avoid stealing merge blocks from br_cmp
-        // predecessors that need them as fall-through.
-        if (!placed.has(term.target) && term.target.preds.length <= 1) {
+        // Follow jmp fall-through when all predecessors of the target are
+        // already placed — the last predecessor can safely claim fall-through
+        // without stealing it from br_cmp predecessors that still need it.
+        if (!placed.has(term.target) && term.target.preds.every(p => placed.has(p))) {
           current = term.target;
         }
       } else if (term.op === 'br_cmp') {
