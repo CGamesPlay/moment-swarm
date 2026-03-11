@@ -128,7 +128,13 @@ if (require.main === module) {
         optimize(ssaProgram);
         console.log(printSSA(ssaProgram));
       } else {
-        console.log(compileAntLisp(source, { constOverrides, sourceFile }));
+        const asm = compileAntLisp(source, { constOverrides, sourceFile });
+        console.log(asm);
+        const instrCount = asm.split('\n').filter(l => {
+          l = l.replace(/;.*/, '').trim();
+          return l && !l.endsWith(':') && !l.startsWith('.');
+        }).length;
+        console.error(`Assembled ${instrCount} instructions`);
       }
     } catch (err: any) {
       if (err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError) {

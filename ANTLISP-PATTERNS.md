@@ -255,8 +255,8 @@ algorithm is.
 
 ## Program Size vs Stalls
 
-There is no limit on program size (instruction count), but there IS a
-64-op-per-tick limit. Every `JMP` costs an op. Macros expand inline,
+Program size is limited to 1000 instructions (required for contest
+entries). There IS a 64-op-per-tick limit. Every `JMP` costs an op. Macros expand inline,
 which increases program size but *removes* jump overhead. A macro
 called from two sites generates two copies of the code — larger binary,
 but each copy runs straight-line without jumping to a shared subroutine.
