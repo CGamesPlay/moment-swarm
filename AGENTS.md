@@ -33,26 +33,18 @@ Score: 48/1000  (4.8% avg collection, 12 maps, 0 stalls, 778ms)
 We've built Antlisp, a lisp-based language specifically to solve this challenge.
 
 - ANTLISP.md is the language specification
+- ANTLISP-PATTERNS.md is a programming guide for the lanugage
 - compiler/antlisp.ts is the compiler
 - compiler/antlisp.test.js is the integration test suite
 
-To compile an alisp file to antssembly, use `argc compile file.alisp`. To compile and test, use `argc test file.alisp`. Same output format as testing the compiled antssembly directly.
-
-The language is very limited, due to only having 8 registers and no stack. We may wish to improve compiler optimizations if it becomes difficult to create the kinds of programs we want to.
-
-The 64-op limit is particularly concerning for our compiled language. The "stalls" display indicates the number of times the op limit was hit during the run, and the tag of each ant when the stall happened. Before optimizing for stalls, verify that stalls are actually causing problems by `argc test file.alisp -o 1000`.
-
-Interestingly, there is no limit on program size. This means that unrolled loops and duplicating code (via macros) results in larger instruction counts but fewer stalls due to fewer JMP instructions. Use this to your advantage.
-
-If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No exceptions.
-
-## ISA notes
-
-- SMELL, SNIFF, and SENSE work at a distance of 1 cell only. A wall never has pheremone. Pheremone on the other side of a wall doesn't matter, because it's further than 1 cell away.
-- Actions (MOVE, DROP, PICKUP) and the 64-op limit end the ant's tick, but this is invisible to the program: PC advances past the action, all registers are preserved, and execution resumes at the next instruction on the following tick. There is no reset or re-entry — from the program's perspective, actions are ordinary instructions. Code after a MOVE runs normally (on the next tick).
-- Hitting the 64-op limit without an action is a "stall" — the ant wastes a tick doing nothing visible. The goal is to reach an action within budget every tick.
-- The program restarts automatically if it reaches the end.
-- Pheremone decays at a rate of 1 per tick, independently between all channels. The decay happens after all ants mark the cell.
+The key things to note:
+- The target machine has 8 registers, no stack, a 64-instruction limit per "tick", and no limit on program size.
+- Since there's no call/return mechanism, macros are the only form of code reuse — they expand inline at every call site. Use `dotimes`/`dolist` for unrolled loops and callback-style macro parameters for reusable control flow.
+- Actions (`move`, `pickup`, `drop`) end the ant's turn but don't reset the program counter — execution resumes at the next instruction on the next tick. Bookkeeping after a move runs normally.
+- Scope variables to the states where they're needed. Variables with non-overlapping lifetimes share the same physical register automatically via liveness analysis. Don't manually reuse registers; let the compiler do it.
+- Use `argc test file.alisp -o 1000` to test with an inflated op limit. If the score barely changes, the algorithm is the bottleneck — not op efficiency or stalls.
+- `--no-debug` causes the assembler to reject any `ABORT` opcode, acting as a production safety check that fails loudly if a debug guard was accidentally omitted.
+- The simulator is fully deterministic. Small score differences (±5-10 points) from pure refactoring are real but reflect code-layout effects on op budget, not algorithmic changes — don't chase them.
 
 ## Development commands
 
@@ -85,6 +77,8 @@ To run compiler tests (required when modifying the compiler). This runs all inte
 ```bash
 argc selftest
 ```
+
+If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No exceptions.
 
 ## Agent-User Relationship
 
