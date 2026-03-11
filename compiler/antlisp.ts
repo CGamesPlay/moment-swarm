@@ -131,7 +131,7 @@ if (require.main === module) {
         console.log(compileAntLisp(source, { constOverrides, sourceFile }));
       }
     } catch (err: any) {
-      console.error(`error: ${err.message}`);
+      console.error(err.message);
       process.exit(1);
     }
   }

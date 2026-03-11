@@ -150,6 +150,15 @@ export class SSALowering {
     this.currentBlock = this.makeBlock('entry');
   }
 
+  private formatError(node: ASTNode, message: string): string {
+    const file = node.file || this.sourceFile;
+    if (file) {
+      return `${file}:${node.line}:${node.col}: error: ${message}`;
+    } else {
+      return `line ${node.line}:${node.col}: error: ${message}`;
+    }
+  }
+
   private freshTemp(node?: ASTNode): string {
     const temp = `%t${this.nextTemp++}`;
     if (node && node.file) {
@@ -198,8 +207,7 @@ export class SSALowering {
       // Try to resolve as a known constant/direction/channel
       return resolveAssemblyAtom(name, this.consts, this.tags);
     }
-    const loc = node.file ? `${node.file}:${node.line}:${node.col}: ` : `line ${node.line}:${node.col}: `;
-    throw new Error(`${loc}expected a simple value (number or variable), got expression: ${formatNode(node)}`);
+    throw new Error(this.formatError(node, `expected a simple value (number or variable), got expression: ${formatNode(node)}`));
   }
 
   // Resolve operand, compiling compound expressions into temps
@@ -264,7 +272,7 @@ export class SSALowering {
     const list = node.value;
     const head = list[0];
     if (head.type !== 'symbol') {
-      throw new Error(`Expected symbol at head of expression, got ${head.type} at line ${node.line}:${node.col}`);
+      throw new Error(this.formatError(node, `Expected symbol at head of expression, got ${head.type}`));
     }
     const op = head.value;
 
@@ -322,7 +330,7 @@ export class SSALowering {
       case 'defmacro': return '';  // should have been removed by expand phase
 
       default:
-        throw new Error(`Unknown form: ${op} at line ${node.line}:${node.col}`);
+        throw new Error(this.formatError(node, `Unknown form: ${op}`));
     }
   }
 
@@ -986,7 +994,7 @@ export class SSALowering {
     const varName = (pair[0] as any).value as string;
     const valuesForm = (pair[1] as ListNode).value;
     if (valuesForm[0].type !== 'symbol' || valuesForm[0].value !== 'values') {
-      throw new Error(`dolist expects (values ...) as second element at line ${node.line}:${node.col}`);
+      throw new Error(this.formatError(node, `dolist expects (values ...) as second element`));
     }
 
     // Resolve all values as compile-time constants
@@ -994,7 +1002,7 @@ export class SSALowering {
     for (let i = 1; i < valuesForm.length; i++) {
       const v = tryEvalConst(valuesForm[i], this.consts);
       if (v === null) {
-        throw new Error(`dolist value is not a compile-time constant at line ${valuesForm[i].line}:${valuesForm[i].col}`);
+        throw new Error(this.formatError(valuesForm[i], `dolist value is not a compile-time constant`));
       }
       values.push(v);
     }
@@ -1157,7 +1165,7 @@ export class SSALowering {
       if (item.type === 'symbol') {
         const name = item.value;
         if (tags.has(name)) {
-          throw new Error(`Duplicate tag '${name}' in tagbody at line ${item.line}:${item.col}`);
+          throw new Error(this.formatError(item, `Duplicate tag '${name}' in tagbody`));
         }
         tags.set(name, this.makeBlock(`tag_${name}`));
       }
@@ -1244,7 +1252,7 @@ export class SSALowering {
         return '';
       }
     }
-    throw new Error(`(go ${tagName}): no such tag in any enclosing tagbody at line ${list[1].line}:${list[1].col}`);
+    throw new Error(this.formatError(list[1], `(go ${tagName}): no such tag in any enclosing tagbody`));
   }
 
   // ── Arithmetic ──
@@ -1362,13 +1370,13 @@ export class SSALowering {
 
   private lowerReg(list: ASTNode[], node: ASTNode): string {
     if (list.length !== 2 || list[1].type !== 'symbol') {
-      throw new Error(`(reg <name>) requires exactly one symbol argument at line ${node.line}:${node.col}`);
+      throw new Error(this.formatError(node, `(reg <name>) requires exactly one symbol argument`));
     }
     const name = (list[1] as any).value as string;
     const idx = SSALowering.MAGIC_REG_MAP[name];
     if (idx === undefined) {
       const valid = Object.keys(SSALowering.MAGIC_REG_MAP).join(', ');
-      throw new Error(`Unknown magic register "${name}" at line ${node.line}:${node.col}. Valid: ${valid}`);
+      throw new Error(this.formatError(node, `Unknown magic register "${name}". Valid: ${valid}`));
     }
     const temp = this.freshTemp(node);
     this.emit('reg', temp, idx);
