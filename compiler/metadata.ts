@@ -33,8 +33,9 @@ function collectTagsFromNode(node: ASTNode, seen: Set<string>, tags: TagDef[]): 
       }
     }
   }
-  // Recurse into sub-expressions
-  for (let i = 1; i < node.value.length; i++) {
+  // Recurse into all sub-expressions (including child 0, which may be a
+  // nested list rather than a simple head symbol — e.g. let binding pairs)
+  for (let i = 0; i < node.value.length; i++) {
     collectTagsFromNode(node.value[i], seen, tags);
   }
 }

@@ -45,6 +45,15 @@ runSuite('Metadata', () => {
     assertEq(meta.tags[2].id, 2);
   });
 
+  test('set-tag inside let binding init expression', () => {
+    const meta = collectMeta(`
+      (let ((x (begin (set-tag inner) 42)))
+        (move random))
+    `);
+    assertEq(meta.tags.length, 1);
+    assertEq(meta.tags[0].name, 'inner');
+  });
+
   test('duplicate set-tag: only one TagDef', () => {
     const meta = collectMeta('(set-tag foo) (set-tag foo)');
     assertEq(meta.tags.length, 1);
