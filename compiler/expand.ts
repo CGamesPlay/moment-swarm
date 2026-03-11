@@ -12,6 +12,8 @@ export interface MacroDef {
   name: string;
   params: string[];
   body: ASTNode[];
+  localConsts?: Set<string>;  // const names in scope at definition time (include macros only)
+  sourceFile?: string;        // include file path (for error messages)
 }
 
 export interface ConstDef {
@@ -159,6 +161,32 @@ function substituteConsts(node: ASTNode, consts: Map<string, string>): ASTNode {
   return node;
 }
 
+// ─── Non-Hygienic Const Detection ───────────────────────────
+
+function checkMacroBodyConsts(
+  node: ASTNode,
+  macro: MacroDef,
+  consts: Map<string, string>,
+  paramNames: Set<string>
+): void {
+  if (node.type === 'symbol') {
+    const name = node.value;
+    if (!paramNames.has(name) && consts.has(name) && !macro.localConsts!.has(name)) {
+      const file = macro.sourceFile ? path.basename(macro.sourceFile) : 'unknown';
+      throw new Error(
+        `Macro "${macro.name}" in "${file}" references const "${name}" which is not ` +
+        `defined in the include file — pass it as a macro parameter instead`
+      );
+    }
+    return;
+  }
+  if (node.type === 'list') {
+    for (const child of node.value) {
+      checkMacroBodyConsts(child, macro, consts, paramNames);
+    }
+  }
+}
+
 // ─── Macro Expansion in AST ─────────────────────────────────
 
 let expansionCounter = 0;
@@ -191,6 +219,14 @@ function expandNode(
     const substitutions = new Map<string, ASTNode>();
     for (let i = 0; i < macro.params.length; i++) {
       substitutions.set(macro.params[i], args[i]);
+    }
+
+    // Check for non-hygienic const references in include macros
+    if (macro.localConsts !== undefined) {
+      const paramNames = new Set(macro.params);
+      for (const bodyNode of macro.body) {
+        checkMacroBodyConsts(bodyNode, macro, consts, paramNames);
+      }
     }
 
     // Substitute, freshen, wrap in begin if multi-form
@@ -301,7 +337,12 @@ function collectDefinitions(
       const name = (list[1] as any).value as string;
       const params = (list[2] as ListNode).value.map((p: ASTNode) => (p as any).value as string);
       const body = list.slice(3);
-      macros.set(name, { name, params, body });
+      const macroDef: MacroDef = { name, params, body };
+      if (isInclude) {
+        macroDef.localConsts = new Set(consts.keys());
+        macroDef.sourceFile = options.sourceFile;
+      }
+      macros.set(name, macroDef);
     } else if (head.value === 'const') {
       const list = form.value;
       const name = (list[1] as any).value as string;

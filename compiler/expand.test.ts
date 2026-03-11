@@ -296,4 +296,24 @@ runSuite('Expand', () => {
     assertEq(constValues.get('BASE_VAL'), '100');
     assertEq(constValues.get('DERIVED_VAL'), '150');
   });
+
+  test('include macro referencing caller-defined const errors', () => {
+    assertThrows(
+      () => expandSource(
+        '(include "nonhygienic.inc.alisp")\n(const CALLER_CONST 3)\n(use-caller-const)',
+        { sourceFile: FIXTURE_SOURCE }
+      ),
+      'references const "CALLER_CONST"'
+    );
+  });
+
+  test('main-program macro referencing caller const is allowed', () => {
+    const { forms } = expandSource(`
+      (const X 5)
+      (defmacro use-x () (move X))
+      (use-x)
+    `);
+    assertEq(forms.length, 1);
+    assertEq(astHead(forms[0]), 'move');
+  });
 });

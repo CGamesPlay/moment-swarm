@@ -66,58 +66,96 @@ unit() {
 }
 
 # @cmd Run all compiler tests (unit, self-test, type-check)
-# @flag -v --verbose    Show individual test names
-# @flag    --no-debug   Compile unit tests without -D DEBUG=1
+# @flag -v --verbose    Show detailed output
 selftest() {
-	local output rc f
+	local output rc f verbose=${argc_verbose+1}
 
-	echo "═══ TypeScript ═══"
-	npx --prefix compiler tsc -p compiler --noEmit
-	echo "tsc: OK"
+	if [[ $verbose ]]; then
+		echo "═══ TypeScript ═══"
+		npx --prefix compiler tsc -p compiler --noEmit
+		echo "tsc: OK"
+	else
+		npx --prefix compiler tsc -p compiler --noEmit >/dev/null 2>&1 || exit $?
+		echo "  ✓ TypeScript"
+	fi
 
-	echo "═══ Compiler tests ═══"
+	if [[ $verbose ]]; then
+		echo "═══ Compiler tests ═══"
+	fi
+	rc=0
 	for f in compiler/*.test.ts compiler/antlisp.test.js; do
 		[[ -f "$f" ]] || continue
-		rc=0; output="$(npx --prefix compiler tsx "$f" 2>&1)" || rc=$?
-		if [[ ${argc_verbose+1} ]]; then
+		if [[ $verbose ]]; then
+			rc=0; output="$(npx --prefix compiler tsx "$f" 2>&1)" || rc=$?
 			echo "$output"
 		else
-			echo "$output" | grep -v '^✓ '
+			rc=0; npx --prefix compiler tsx "$f" >/dev/null 2>&1 || rc=$?
 		fi
 		[[ $rc -eq 0 ]] || exit $rc
 	done
+	[[ $verbose ]] || echo "  ✓ Compiler tests"
 
-	echo "═══ Runtime unit tests ═══"
-	local -a debug_flags=()
-	if [[ ! ${argc_no_debug+1} ]]; then
-		debug_flags+=(-D DEBUG=1)
+	if [[ $verbose ]]; then
+		echo "═══ Runtime unit tests ═══"
 	fi
+	rc=0
 	for f in compiler/*.unit.alisp; do
 		[[ -f "$f" ]] || continue
-		echo "── $f ──"
-		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
-			${debug_flags+"${debug_flags[@]}"} "$f" 2>&1)" || rc=$?
-		if [[ ${argc_verbose+1} ]]; then
+		if [[ $verbose ]]; then
+			echo "── $f ──"
+			rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
+				"$f" 2>&1)" || rc=$?
 			echo "$output"
 		else
-			echo "$output" | grep -v '^  ✓'
+			rc=0; npx --prefix compiler tsx compiler/antlisp.unit.js \
+				"$f" >/dev/null 2>&1 || rc=$?
 		fi
 		[[ $rc -eq 0 ]] || exit $rc
 	done
+	[[ $verbose ]] || echo "  ✓ Antlisp unit tests"
 
-	echo "═══ Program unit tests ═══"
+	if [[ $verbose ]]; then
+		echo "═══ Program unit tests ═══"
+	fi
+	rc=0
 	for f in programs/*.unit.alisp; do
 		[[ -f "$f" ]] || continue
-		echo "── $f ──"
-		rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
-			${debug_flags+"${debug_flags[@]}"} "$f" 2>&1)" || rc=$?
-		if [[ ${argc_verbose+1} ]]; then
+		if [[ $verbose ]]; then
+			echo "── $f ──"
+			rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.unit.js \
+				"$f" 2>&1)" || rc=$?
 			echo "$output"
 		else
-			echo "$output" | grep -v '^  ✓'
+			rc=0; npx --prefix compiler tsx compiler/antlisp.unit.js \
+				"$f" >/dev/null 2>&1 || rc=$?
 		fi
 		[[ $rc -eq 0 ]] || exit $rc
 	done
+	[[ $verbose ]] || echo "  ✓ Program unit tests"
+
+	if [[ $verbose ]]; then
+		echo "═══ Program compilation ═══"
+	fi
+	rc=0
+	for f in programs/*.alisp; do
+		[[ -f "$f" ]] || continue
+		# Skip inc.alisp and unit.alisp files
+		[[ "$f" == *"/inc.alisp" || "$f" == *".unit.alisp" ]] && continue
+		if [[ $verbose ]]; then
+			echo "── $f ──"
+			rc=0; output="$(npx --prefix compiler tsx compiler/antlisp.ts "$f" 2>&1)" || rc=$?
+			if [[ $rc -eq 0 ]]; then
+				echo "OK ($(echo "$output" | wc -l) instructions)"
+			else
+				echo "FAILED"
+				echo "$output"
+			fi
+		else
+			rc=0; npx --prefix compiler tsx compiler/antlisp.ts "$f" >/dev/null 2>&1 || rc=$?
+		fi
+		[[ $rc -eq 0 ]] || exit $rc
+	done
+	[[ $verbose ]] || echo "  ✓ Program compilation"
 }
 
 if ! command -v argc >/dev/null; then

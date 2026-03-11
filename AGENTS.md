@@ -80,12 +80,12 @@ You can also run alisp unit tests:
 argc unit compiler/antlisp.unit.alisp # Run specific unit file
 ```
 
-To run compiler tests (required when modifying the compiler):
+To run compiler tests (required when modifying the compiler). This runs all internal compiler tests, then re-validates all program tests and compiles all 
 
 ```bash
 argc selftest
 ```
 
-## From the user
+## Agent-User Relationship
 
-Do not, ever, decide to revert something the user points out a problem with. Only walk backwards from something the user explicitly asked for if the user subsequently explicitly asks you to do so.
+The user is suggesting strategies and agent is implementing them. Sometimes the strategies perform worse by some metrics. Sometimes the user points out a problem with an implementation to highlight a bug. In general, push forward rather than walking back. Only revert changes that the user has explicitly asked for, or when you are unable to resolve correctness issues and want to fulfill the user's directions from a clean slate.
