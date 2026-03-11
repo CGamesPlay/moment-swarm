@@ -187,6 +187,58 @@ function checkMacroBodyConsts(
   }
 }
 
+// ─── Go-Label Hygiene in Macros ─────────────────────────────
+
+// Collect all tagbody label symbols defined anywhere in a list of AST nodes.
+function collectLocalGoLabels(nodes: ASTNode[]): Set<string> {
+  const labels = new Set<string>();
+  for (const node of nodes) {
+    walkForTagbodyLabels(node, labels);
+  }
+  return labels;
+}
+
+function walkForTagbodyLabels(node: ASTNode, labels: Set<string>): void {
+  if (node.type !== 'list') return;
+  const list = node.value;
+  if (list.length > 0 && list[0].type === 'symbol' && list[0].value === 'tagbody') {
+    // Bare symbols inside tagbody are label definitions
+    for (let i = 1; i < list.length; i++) {
+      if (list[i].type === 'symbol') labels.add(list[i].value as string);
+    }
+  }
+  // Recurse into all children (handles nested tagbodies and other forms)
+  for (const child of list) {
+    walkForTagbodyLabels(child, labels);
+  }
+}
+
+// Check macro body for (go label) references to labels not in the macro's own tagbody(ies).
+function checkMacroBodyGoLabels(
+  node: ASTNode,
+  macro: MacroDef,
+  localLabels: Set<string>,
+  paramNames: Set<string>
+): void {
+  if (node.type !== 'list') return;
+  const list = node.value;
+  if (list.length >= 2
+      && list[0].type === 'symbol' && list[0].value === 'go'
+      && list[1].type === 'symbol') {
+    const labelName = list[1].value;
+    if (!localLabels.has(labelName) && !paramNames.has(labelName)) {
+      const file = macro.sourceFile ? ` in "${path.basename(macro.sourceFile)}"` : '';
+      throw new Error(
+        `Macro "${macro.name}"${file} uses (go ${labelName}) which is not defined ` +
+        `in the macro body — pass the jump target as a parameter instead`
+      );
+    }
+  }
+  for (const child of list) {
+    checkMacroBodyGoLabels(child, macro, localLabels, paramNames);
+  }
+}
+
 // ─── Macro Expansion in AST ─────────────────────────────────
 
 let expansionCounter = 0;
@@ -221,12 +273,19 @@ function expandNode(
       substitutions.set(macro.params[i], args[i]);
     }
 
+    const paramNames = new Set(macro.params);
+
     // Check for non-hygienic const references in include macros
     if (macro.localConsts !== undefined) {
-      const paramNames = new Set(macro.params);
       for (const bodyNode of macro.body) {
         checkMacroBodyConsts(bodyNode, macro, consts, paramNames);
       }
+    }
+
+    // Check for non-hygienic go-label references in ALL macros
+    const localLabels = collectLocalGoLabels(macro.body);
+    for (const bodyNode of macro.body) {
+      checkMacroBodyGoLabels(bodyNode, macro, localLabels, paramNames);
     }
 
     // Substitute, freshen, wrap in begin if multi-form

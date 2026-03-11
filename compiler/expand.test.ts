@@ -316,4 +316,53 @@ runSuite('Expand', () => {
     assertEq(forms.length, 1);
     assertEq(astHead(forms[0]), 'move');
   });
+
+  // ── Go-label hygiene tests ──
+
+  test('macro with (go label) referencing caller tagbody label errors', () => {
+    assertThrows(
+      () => expandSource(`
+        (defmacro jump-out () (go outer-label))
+        (tagbody
+          outer-label
+          (jump-out))
+      `),
+      'uses (go outer-label)'
+    );
+  });
+
+  test('include macro with (go label) referencing caller tagbody label errors', () => {
+    assertThrows(
+      () => expandSource(
+        `(include "go-nonhygienic.inc.alisp")
+         (tagbody top (jump-to-top))`,
+        { sourceFile: FIXTURE_SOURCE }
+      ),
+      'uses (go top)'
+    );
+  });
+
+  test('macro with (go label) to own tagbody label is allowed', () => {
+    const { forms } = expandSource(`
+      (defmacro loop-forever ()
+        (tagbody
+          top
+          (move n)
+          (go top)))
+      (loop-forever)
+    `);
+    assertEq(forms.length, 1);
+  });
+
+  test('macro with then-do parameter: caller passes (go label) as compound expression', () => {
+    const { forms } = expandSource(`
+      (defmacro do-thing (then-do)
+        (move n)
+        (then-do))
+      (tagbody
+        done
+        (do-thing (go done)))
+    `);
+    assertEq(forms.length, 1);
+  });
 });
