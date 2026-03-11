@@ -1,0 +1,469 @@
+; ── OPEN4 FORAGER — gradient trail + packed path hybrid ──────────────────────
+;
+; Combines nest gradient trail with packed 8-direction path for exploration.
+;
+; Near the nest (gradient strong), ants explore freely without recording a
+; path, propagating the nest gradient outward. Once the gradient drops below
+; TRAIL_THRESHOLD, the packed path activates to record the frontier portion
+; of the route. On return, ants backtrack the packed path until they reach
+; the gradient zone, then follow the gradient home.
+;
+; Pheromone channels:
+;   ch_red   = nest trail    — gradient seeded from nest
+;   ch_green = food trail    — gradient seeded from food (delivery routes)
+;   ch_blue  = food nearby   — beacon marking recent food pickups
+;
+; States: EXPLORING → (scanning inline) → SPIRALING → RETURNING
+
+(include "./packed-path.inc.alisp")
+(include "./packed-dr.inc.alisp")     ; for invert-dir, mark-gradient, turn-right
+(include "./spread.inc.alisp")
+
+; ── Constants ──
+(const ABORT_WHEN_LOST 0)       ; abort when completely lost
+(const NEST_TRAIL ch_red)       ; gradient trail seeded from nest
+(const FOOD_TRAIL ch_green)     ; food-delivery breadcrumb channel
+(const FOOD_NEARBY ch_blue)     ; "food was here" beacon channel
+
+; gradient level below which we start recording a packed path
+; @hp min=16 max=128 step=16
+(const TRAIL_THRESHOLD 48)
+; minimum gradient for gradient homing in returning phase
+(const TRAIL_GO_HOME 2)
+; wall-follow budget in SCANNING
+; @hp min=20 max=80 step=10
+(const SCAN_STEPS 32)
+; max steps before picking a new direction
+; @hp min=16 max=32 step=4
+(const HEADING_STEPS 32)
+; explorer follows food trail if signal >= this
+(const DELIVERY_GO_TOWARD 2)
+; pickup signal threshold to trigger spiraling
+(const PICKUP_SIGNAL 10)
+; outward spiral radius
+; @hp min=1 max=7 step=1
+(const SPIRAL_RADIUS 3)
+; steps before allowing re-spiral
+; @hp min=1 max=7 step=1
+(const SPIRAL_COOLDOWN 3)
+
+; ── Scanning macro ──────────────────────────────────────────────────────────
+;
+; Walk along a wall, probing for a gap in the blocked direction.
+; If path recording is active (path != 0 or in path zone), records steps.
+; Marks nest gradient on every tick.
+;
+; Returns: 1 = gap found, 0 = path full, 2 = budget expired
+
+(defmacro scan-wall! (path dir8 blocked budget)
+  (let ((remaining budget))
+    (set-tag scanning)
+    (while (> remaining 0)
+      ; Mark nest gradient every tick during scanning
+      (mark-gradient NEST_TRAIL nest)
+
+      ; Check if gap opened
+      (if (!= (probe blocked) 1)
+        ; Gap found
+        (begin
+          (set! dir8 (- blocked 1))
+          (set! remaining -1))
+        ; No gap — try to move along wall
+        (if (= (move-forward! path dir8 (begin)) 1)
+          ; Moved successfully
+          (set! remaining (- remaining 1))
+          ; Failed — check wall vs path overflow
+          ; For diagonals, must check both cardinal components.
+          (let ((m1 0) (m2 0))
+            (dir8-move1! m1 dir8)
+            (dir8-move2! m2 dir8)
+            (if (and (!= (probe m1) 1)
+                     (or (= m2 0) (!= (probe m2) 1)))
+              ; Neither cardinal is a wall — path is full
+              (set! remaining -2)
+              ; Wall — turn around
+              (begin
+                (set! dir8 (xor dir8 2))
+                ; If reversed is also blocked, pick anything
+                (dir8-move1! m1 dir8)
+                (when (= (probe m1) 1)
+                  (random-nonwall-heading! dir8))
+                (set! remaining (- remaining 1))))))))
+    (set-tag exploring)
+    (if (= remaining -2) 0
+      (if (= remaining -1) 1
+        2))))
+
+
+
+; ── Grab food macro ──────────────────────────────────────────────────────────
+; Sense food adjacent, step onto it, mark food trail, pickup, step back.
+; Returns 1 if food was grabbed, 0 otherwise.
+; Does NOT modify path (the +1 range trick).
+
+(defmacro grab-food! ()
+  (let ((food-dir (sense food)))
+    (if (!= food-dir 0)
+      (begin
+        (move food-dir)
+        (mark-gradient FOOD_TRAIL food)
+        (pickup)
+        (mark FOOD_NEARBY 255)
+        (move (invert-dir food-dir))
+        1)
+      0)))
+
+; ══════════════════════════════════════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════════════════════════════════════
+
+; Register budget (8 total):
+;   path      = 1 persistent (packed 8-dir RLE path; 0 in gradient zone)
+;   dir8      = 1 (current 8-way heading, 0-7)
+;   spiral-cd = 1 (cooldown counter)
+;   ── 5 remaining for local variables + macro temps ──
+
+(let ((path 0)           ; packed path register — 0 in gradient zone
+      (dir8 (random 8))   ; current 8-way direction (0-7), randomized
+      (spiral-cd 0))      ; cooldown counter: >0 = suppress spiral entry
+
+  ; Initial dispersion (safe — nest is 3×3, spread moves 1-2 cells)
+  (spread)
+
+  (tagbody
+    ; ────────────────────────────────────────
+    ; EXPLORING — gradient zone (nest trail >= TRAIL_THRESHOLD)
+    ;
+    ; Multi-step per tick: mark gradient once, then step+check loop.
+    ; ────────────────────────────────────────
+    exploring
+    (set-tag exploring)
+
+    ; Mark nest gradient (once per tick)
+    (mark-gradient NEST_TRAIL nest)
+
+    ; Food adjacent? Grab it with +1 range trick
+    (let ((food-dir (sense food)))
+      (when (!= food-dir 0)
+        (move food-dir)
+        (mark-gradient FOOD_TRAIL food)
+        (pickup)
+        (mark FOOD_NEARBY 255)
+        (move (invert-dir food-dir))
+        (set! spiral-cd 0)
+        (go returning)))
+
+    ; Pickup beacon → spiral
+    (when (and (= spiral-cd 0)
+              (>= (sniff FOOD_NEARBY here) PICKUP_SIGNAL)
+              (= (sense food) 0))
+      (go spiraling))
+
+    ; Crossed into frontier? Start recording path
+    (when (< (sniff NEST_TRAIL here) TRAIL_THRESHOLD)
+      (set! path 0)
+      (go exploring-path))
+
+    ; Decrement spiral cooldown
+    (when (> spiral-cd 0)
+      (set! spiral-cd (- spiral-cd 1)))
+
+    ; Follow food trail gradient if present
+    (when (>= (sniff FOOD_TRAIL here) DELIVERY_GO_TOWARD)
+      (let ((del-dir (smell FOOD_TRAIL)))
+        (when (!= del-dir 0)
+          (set! dir8 (- del-dir 1)))))
+
+    ; Try to move in dir8 direction
+    (let ((m1 0))
+      (dir8-move1! m1 dir8)
+      (if (!= (probe m1) 1)
+        (let ((m2 0))
+          (dir8-move2! m2 dir8)
+          (if (and (!= m2 0) (= (probe m2) 1))
+            ; Diagonal blocked — pick new heading
+            (random-nonwall-heading! dir8)
+            ; Clear — move
+            (begin
+              (move m1)
+              ; Mark gradient at intermediate cell so diagonals
+              ; don't leave gaps in the nest trail.
+              (mark-gradient NEST_TRAIL nest)
+              ; Re-probe m2 after first move — position changed,
+              ; wall map may differ. Without this, a stall after
+              ; (move m1) resumes (move m2) with a stale probe.
+              (when (!= m2 0)
+                (if (!= (probe m2) 1)
+                  (move m2)
+                  (random-nonwall-heading! dir8))))))
+        ; Wall — pick new heading
+        (random-nonwall-heading! dir8)))
+
+    ; Periodically pick new direction
+    (when (= (random HEADING_STEPS) 0)
+      (random-nonwall-heading! dir8))
+
+    (go exploring)
+
+    ; ────────────────────────────────────────
+    ; EXPLORING-PATH — path zone (nest trail < TRAIL_THRESHOLD)
+    ;
+    ; 8-direction movement with packed path recording.
+    ; One step per tick to stay within op budget.
+    ; ────────────────────────────────────────
+    exploring-path
+
+    ; Mark nest gradient (extend frontier)
+    (mark-gradient NEST_TRAIL nest)
+
+    ; Food adjacent? Grab it
+    (when (= (grab-food!) 1)
+      (set! spiral-cd 0)
+      ; If path is empty we're still near the gradient edge.
+      ; Follow nest trail smell to get back into gradient zone
+      ; before entering returning (otherwise Phase B has nothing).
+      (when (= path 0)
+        (let ((trail-dir (smell NEST_TRAIL)))
+          (when (and (!= trail-dir 0) (!= (probe trail-dir) 1))
+            (move trail-dir))))
+      (go returning))
+
+    ; Follow food trail gradient if present
+    (when (>= (sniff FOOD_TRAIL here) DELIVERY_GO_TOWARD)
+      (let ((del-dir (smell FOOD_TRAIL)))
+        (when (!= del-dir 0)
+          (set! dir8 (- del-dir 1)))))
+
+    ; Try to move forward WITH path recording
+    (if (= (move-forward! path dir8 (mark-gradient NEST_TRAIL nest)) 1)
+      (begin) ; Success — check post-move conditions
+      ; Failed — check wall vs path overflow
+      ; For diagonals, move-forward! fails if EITHER cardinal is a wall.
+      ; We must check both components to distinguish wall from path-full.
+      (let ((m1 0) (m2 0))
+        (dir8-move1! m1 dir8)
+        (dir8-move2! m2 dir8)
+        (if (and (!= (probe m1) 1)
+                 (or (= m2 0) (!= (probe m2) 1)))
+          ; Neither cardinal is a wall — path is full.
+          ; Reset path and re-enter exploring (gradient zone)
+          ; rather than wandering pathless in the frontier.
+          (begin
+            (set! path 0)
+            (random-nonwall-heading! dir8)
+            (go exploring))
+          ; At least one cardinal is a wall — scan along it.
+          ; Use whichever cardinal is the wall for scan direction.
+          (begin
+            (when (and (!= m2 0) (= (probe m2) 1) (!= (probe m1) 1))
+              (set! m1 m2))  ; m2 is the wall, use it for scanning
+            (if (= (scan-wall! path dir8 m1 SCAN_STEPS) 0)
+              ; Path full during scan — reset and go to gradient zone.
+              (begin
+                (set! path 0)
+                (random-nonwall-heading! dir8)
+                (go exploring))
+              (random-nonwall-heading! dir8))
+            (go exploring-path)))))
+
+    ; Wandered back into gradient zone? Drop the path
+    (when (>= (sniff NEST_TRAIL here) TRAIL_THRESHOLD)
+      (set! path 0)
+      (go exploring))
+
+    ; Periodically pick new direction
+    (when (= (random HEADING_STEPS) 0)
+      (random-nonwall-heading! dir8))
+
+    (go exploring-path)
+
+    ; ────────────────────────────────────────
+    ; SPIRALING — outward spiral (from open2)
+    ;
+    ; Uses ISA cardinal directions, gradient-checked.
+    ; Does NOT record into path. No displacement tracking needed —
+    ; the gradient handles navigation after the spiral.
+    ; ────────────────────────────────────────
+    spiraling
+    (set-tag spiraling)
+
+    ; Reuse dir8 as ISA spiral direction
+    (set! dir8 (+ (random 4) 1))
+
+    (let ((leg-steps 1)
+          (legs 0))
+
+      (tagbody
+        spiral-top
+        (set-tag spiraling)
+
+        ; Mark gradient
+        (mark-gradient NEST_TRAIL nest)
+
+        ; Gradient too weak — abort spiral before picking up food
+        ; (if we grab food here, we can't navigate home)
+        (when (< (sniff NEST_TRAIL here) TRAIL_GO_HOME)
+          (go spiral-done))
+
+        ; Check for food adjacent
+        (let ((food-dir (sense food)))
+          (when (!= food-dir 0)
+            (move food-dir)
+            (pickup)
+            (mark FOOD_NEARBY 255)
+            (set! spiral-cd 0)
+            (go returning)))
+
+        ; Spiral complete?
+        (when (>= legs (* 2 SPIRAL_RADIUS))
+          (go spiral-done))
+
+        ; Wall check — if blocked, pick perpendicular direction
+        (when (= (probe dir8) 1)
+          (let ((wall-dir dir8))
+            (if (< (random 2) 1)
+              (set! dir8 (turn-right wall-dir))
+              (set! dir8 (invert-dir (turn-right wall-dir))))
+            (when (= (probe dir8) 1)
+              (set! dir8 (invert-dir dir8))
+              (when (= (probe dir8) 1)
+                (set! dir8 (invert-dir wall-dir))
+                (when (= (probe dir8) 1)
+                  (pick-random-nonwall dir8))))))
+
+        ; Take a step (dir8 is known clear or best effort)
+        (when (!= (probe dir8) 1)
+          (move dir8)
+          (set! leg-steps (- leg-steps 1)))
+
+        ; If leg finished, turn right and start next leg
+        (when (<= leg-steps 0)
+          (set! legs (+ legs 1))
+          (set! leg-steps (+ (/ legs 2) 1 (random 2)))
+          (set! dir8 (turn-right dir8)))
+
+        (go spiral-top)
+
+        spiral-done)
+
+    (if (= (carrying?) 1)
+      (begin
+        (set! spiral-cd 0)
+        (go returning))
+      (begin
+        (set! spiral-cd SPIRAL_COOLDOWN)
+        (go exploring))))
+
+    ; ────────────────────────────────────────
+    ; RETURNING — hybrid: backtrack path, then follow gradient
+    ; ────────────────────────────────────────
+    returning
+    (set-tag returning)
+
+    ; ── Phase A: Backtrack packed path ──
+    ; If we have a path, backtrack it. After each step, check if
+    ; we've entered the gradient zone — if so, discard path and
+    ; switch to gradient homing.
+    (when (!= path 0)
+      ; Mark food trail if carrying
+      (when (= (carrying?) 1)
+        (mark-gradient FOOD_TRAIL food))
+
+      ; Mark nest gradient (reinforce on way home)
+      (mark-gradient NEST_TRAIL nest)
+
+      ; Update dir8 to the backtrack (homeward) direction before stepping.
+      ; This ensures dir8 is valid for Phase B if path runs out.
+      (let ((top-dir 0))
+        (seg-dir! top-dir path)
+        (set! dir8 (xor top-dir 2)))  ; reverse of forward = homeward
+
+      ; Backtrack one step
+      (backtrack! path
+        (begin
+          (when (= (carrying?) 1)
+            (mark-gradient FOOD_TRAIL food))
+          (mark-gradient NEST_TRAIL nest)))
+
+      ; Check if we've reached the gradient zone
+      (when (>= (sniff NEST_TRAIL here) TRAIL_THRESHOLD)
+        (set! path 0))  ; discard remaining path, switch to gradient
+
+      (go returning))
+
+    ; ── Phase B: Gradient homing (path == 0) ──
+
+    ; At nest — drop and explore
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (move nest-dir)
+        (drop)
+        (set! spiral-cd 0)
+        (go exploring)))
+
+    ; Not carrying — just explore from here
+    (when (= (carrying?) 0)
+      (go exploring))
+
+    ; ── Carrying, path exhausted, need gradient to get home ──
+
+    ; Mark food trail while carrying
+    (mark-gradient FOOD_TRAIL food)
+
+    ; Mark nest gradient to reinforce return path (if gradient exists here).
+    (when (> (sniff NEST_TRAIL here) 0)
+      (mark-gradient NEST_TRAIL nest))
+
+    ; Follow nest gradient: SMELL looks at neighbors even when HERE is 0
+    (let ((trail-dir (smell NEST_TRAIL)))
+      (when (!= trail-dir 0)
+        (when (!= (probe trail-dir) 1)
+          (set! dir8 (- trail-dir 1))
+          (move trail-dir)
+          (go returning))))
+
+    ; No nest trail nearby — try food trail backwards (toward nest)
+    (let ((food-dir (smell FOOD_TRAIL)))
+      (when (!= food-dir 0)
+        (let ((nest-dir (invert-dir food-dir)))
+          (if (!= (probe nest-dir) 1)
+            (begin
+              (set! dir8 (- nest-dir 1))
+              (move nest-dir)
+              (go returning))
+            ; Food trail inverse blocked — try perpendicular directions
+            ; (still moving generally away from food)
+            (let ((perp-dir (turn-right food-dir)))
+              (when (!= (probe perp-dir) 1)
+                (set! dir8 (- perp-dir 1))
+                (move perp-dir)
+                (go returning))
+              ; Try opposite perpendicular
+              (set! perp-dir (invert-dir perp-dir))
+              (when (!= (probe perp-dir) 1)
+                (set! dir8 (- perp-dir 1))
+                (move perp-dir)
+                (go returning)))))))
+
+    ; No usable gradient at all — truly lost.
+    (set-tag lost)
+    (when (and ABORT_WHEN_LOST DEBUG) (abort! 1))
+
+    ; Walk in dir8 with momentum — only re-randomize on wall.
+    (let ((m1 0))
+      (dir8-move1! m1 dir8)
+      (if (!= (probe m1) 1)
+        (let ((m2 0))
+          (dir8-move2! m2 dir8)
+          (if (and (!= m2 0) (= (probe m2) 1))
+            (random-nonwall-heading! dir8)
+            (begin
+              (move m1)
+              (when (!= m2 0)
+                (if (!= (probe m2) 1)
+                  (move m2)
+                  (random-nonwall-heading! dir8))))))
+        (random-nonwall-heading! dir8))
+      (go returning))))
+
+; vim:ft=lisp:sw=2

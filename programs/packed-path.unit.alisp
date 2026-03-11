@@ -60,14 +60,14 @@
       (dir8-move2! out DIR_N)
       (assert! (= out 0) 1))))
 
-(test "dir8-move1: SE → ISA S(3), move2: SE → ISA E(2)"
+(test "dir8-move1: SE → ISA E(2), move2: SE → ISA S(3)"
   :run-once
   (begin
     (let ((m1 0) (m2 0))
       (dir8-move1! m1 DIR_SE)
       (dir8-move2! m2 DIR_SE)
-      (assert! (= m1 3) 1)
-      (assert! (= m2 2) 2))))
+      (assert! (= m1 2) 1)
+      (assert! (= m2 3) 2))))
 
 (test "dir8-move1: SW → ISA S(3), move2: SW → ISA W(4)"
   :run-once
@@ -78,14 +78,14 @@
       (assert! (= m1 3) 1)
       (assert! (= m2 4) 2))))
 
-(test "dir8-move1: NW → ISA N(1), move2: NW → ISA W(4)"
+(test "dir8-move1: NW → ISA W(4), move2: NW → ISA N(1)"
   :run-once
   (begin
     (let ((m1 0) (m2 0))
       (dir8-move1! m1 DIR_NW)
       (dir8-move2! m2 DIR_NW)
-      (assert! (= m1 1) 1)
-      (assert! (= m2 4) 2))))
+      (assert! (= m1 4) 1)
+      (assert! (= m2 1) 2))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 2 — reverse-dir8!
@@ -204,7 +204,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0) (d 0))
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_E (begin))
       (seg-dir! d path)
       (seg-len! l path)
       (assert! (= d DIR_E) 1)
@@ -216,8 +216,8 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0))
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
       (seg-len! l path)
       (assert! (= l 2) 1))))
 
@@ -226,8 +226,8 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
       (seg-dir! d path)
       (assert! (= d DIR_E) 1))))
 
@@ -236,10 +236,10 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_W)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_W (begin))
       ; All 4 slots occupied
       (assert! (!= (and path 0xFF000000) 0) 1))))
 
@@ -248,11 +248,11 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (res 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_W)
-      (set! res (move-forward! path DIR_NE))
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_W (begin))
+      (set! res (move-forward! path DIR_NE (begin)))
       (assert! (= res 0) 1))))
 
 (test "move-forward same dir on full path: extends top segment"
@@ -260,11 +260,11 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (res 0) (l 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_W)
-      (set! res (move-forward! path DIR_W))
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_W (begin))
+      (set! res (move-forward! path DIR_W (begin)))
       (assert! (= res 1) 1)
       (seg-len! l path)
       (assert! (= l 2) 2))))
@@ -278,7 +278,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0))
-      (move-forward! path DIR_N)
+      (move-forward! path DIR_N (begin))
       (seg-len! l path)
       (assert! (= l 1) 1))))
 
@@ -287,15 +287,15 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_E))))
+      (move-forward! path DIR_E (begin)))))
 
 (test "move-forward twice same dir: length increments to 2"
   :ticks 3
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0))
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
       (seg-len! l path)
       (assert! (= l 2) 1))))
 
@@ -305,7 +305,7 @@
   :ant-x 1 :ant-y 16
   (begin
     (let ((path 0) (res 0))
-      (set! res (move-forward! path DIR_W))
+      (set! res (move-forward! path DIR_W (begin)))
       (assert! (= res 0) 1)
       (assert! (= path 0) 2))))
 
@@ -318,7 +318,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0))
-      (move-forward! path DIR_NE)
+      (move-forward! path DIR_NE (begin))
       (seg-len! l path)
       (assert! (= l 1) 1))))
 
@@ -327,7 +327,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_SE)
+      (move-forward! path DIR_SE (begin))
       (current-heading! d path)
       (assert! (= d DIR_SE) 1))))
 
@@ -340,7 +340,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_N)
+      (move-forward! path DIR_N (begin))
       (backtrack! path (begin))
       (assert! (= path 0) 1))))
 
@@ -349,8 +349,8 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (l 0))
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_E (begin))
       (backtrack! path (begin))
       (seg-len! l path)
       (assert! (= l 1) 1)
@@ -363,8 +363,8 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
       (backtrack! path (begin))
       (assert! (!= path 0) 1)
       (current-heading! d path)
@@ -381,7 +381,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_NE)
+      (move-forward! path DIR_NE (begin))
       (backtrack! path (begin))
       (assert! (= path 0) 1))))
 
@@ -394,7 +394,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_N)
+      (move-forward! path DIR_N (begin))
       (current-heading! d path)
       (assert! (= d DIR_N) 1))))
 
@@ -403,8 +403,8 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_SE)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_SE (begin))
       (current-heading! d path)
       (assert! (= d DIR_SE) 1))))
 
@@ -464,11 +464,54 @@
   (begin
     (let ((dir DIR_SE))
       (random-nonwall-heading! dir)
-      ; Should not pick N(0), W(6), NW(7) — all walled at (1,1)
-      ; N is walled, W is walled, and NW first component is N which is walled
+      ; Should not pick N(0), W(3), NE(4), NW(7) — all have walled move1
+      ; N(0): move1=N, walled.  W(3): move1=W, walled.
+      ; NE(4): move1=N, walled. NW(7): move1=W, walled.
       (assert! (!= dir DIR_N) 1)
       (assert! (!= dir DIR_W) 2)
-      (assert! (!= dir DIR_NW) 3))))
+      (assert! (!= dir DIR_NE) 3)
+      (assert! (!= dir DIR_NW) 4))))
+
+(test "random-nonwall-heading: move1 of result is always non-wall"
+  :ticks 100
+  :ant-x 16 :ant-y 16
+  (begin
+    ; The critical invariant: after picking a heading, the first cardinal
+    ; move (dir8-move1!) must always be the probed-clear direction.
+    ; Run 100 times and verify move1 is never a wall.
+    (let ((dir DIR_N) (m1 0) (i 0))
+      (while (< i 100)
+        (set! dir DIR_N)
+        (random-nonwall-heading! dir)
+        (dir8-move1! m1 dir)
+        (assert! (!= (probe m1) 1) 1)
+        (set! i (+ i 1))))))
+
+(test "random-nonwall-heading: move1 non-wall at west wall"
+  :ticks 100
+  :ant-x 1 :ant-y 16
+  (begin
+    ; At x=1, W is a wall. Any heading picked must have non-wall move1.
+    (let ((dir DIR_E) (m1 0) (i 0))
+      (while (< i 100)
+        (set! dir DIR_E)
+        (random-nonwall-heading! dir)
+        (dir8-move1! m1 dir)
+        (assert! (!= (probe m1) 1) 1)
+        (set! i (+ i 1))))))
+
+(test "random-nonwall-heading: move1 non-wall at NW corner"
+  :ticks 100
+  :ant-x 1 :ant-y 1
+  (begin
+    ; At (1,1), both N and W are walls. Verify move1 is always clear.
+    (let ((dir DIR_SE) (m1 0) (i 0))
+      (while (< i 100)
+        (set! dir DIR_SE)
+        (random-nonwall-heading! dir)
+        (dir8-move1! m1 dir)
+        (assert! (!= (probe m1) 1) 1)
+        (set! i (+ i 1))))))
 
 ; ─────────────────────────────────────────────────────────────
 ; SECTION 11 — Integration: explore then backtrack to start
@@ -479,9 +522,9 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_E (begin))
       (backtrack! path (begin))
       (backtrack! path (begin))
       (backtrack! path (begin))
@@ -492,10 +535,10 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
+      (move-forward! path DIR_E (begin))
       (backtrack! path (begin))
       (backtrack! path (begin))
       (backtrack! path (begin))
@@ -507,9 +550,9 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_NE)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
+      (move-forward! path DIR_NE (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
       (backtrack! path (begin))
       (backtrack! path (begin))
       (assert! (!= path 0) 1)
@@ -525,11 +568,11 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
-      (move-forward! path DIR_S)
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
+      (move-forward! path DIR_S (begin))
       (assert! (= (and path 0x1F) 5) 1))))
 
 ; ─────────────────────────────────────────────────────────────
@@ -542,7 +585,7 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0) (l 0))
-      (move-forward! path DIR_N)
+      (move-forward! path DIR_N (begin))
       (assert! (!= path 0) 1)
       (seg-dir! d path)
       (assert! (= d DIR_N) 2)
@@ -554,9 +597,9 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0) (d 0))
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_N)
-      (move-forward! path DIR_E)
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_N (begin))
+      (move-forward! path DIR_E (begin))
       (seg-dir! d path)
       (assert! (= d DIR_E) 1))))
 
@@ -565,6 +608,6 @@
   :ant-x 16 :ant-y 16
   (begin
     (let ((path 0))
-      (move-forward! path DIR_N)
+      (move-forward! path DIR_N (begin))
       (backtrack! path (begin))
       (assert! (= path 0) 1))))
