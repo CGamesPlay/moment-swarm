@@ -5,7 +5,11 @@
 ; and marks its own cell one less, creating a gradient that always
 ; points toward the nest. SMELL TRAIL then gives the home direction.
 ;
-; States: EXPLORING → SCANNING → SPIRALING → RETURNING (no backtracking/lost)
+; Exploring uses inline wall retry (pick-random-nonwall on wall hit)
+; instead of the heavier scan-wall state machine. Scan-wall is still
+; used by the spiral search for gap-finding along walls.
+;
+; States: EXPLORING → SPIRALING → RETURNING (scan-wall only inside spiral)
 
 (include "./packed-dr.inc.alisp")
 (include "./spread.inc.alisp")
@@ -15,13 +19,26 @@
 (const DELIVERING_PH ch_green)   ; food-delivery breadcrumb channel
 (const PICKUP_PH ch_blue)        ; "food was here" beacon channel
 
-(const SCAN_STEPS 35)            ; wall-follow budget in SCANNING
-(const HEADING_STEPS 28)         ; max steps before picking a new direction
-(const GRADIENT_GO_HOME 2)       ; explorer turns back if gradient here < this
-(const GRADIENT_NEAR_HOME 32)    ; returner resumes exploring once gradient >= this
-(const DELIVERY_GO_TOWARD 2)     ; explorer follows delivery trail if signal >= this
-(const SPIRAL_RADIUS 3)          ; outward spiral radius after losing delivery trail
-(const PICKUP_SIGNAL 10)         ; pickup signal threshold to trigger spiraling
+; Enables the spread action at the start of the program
+; worth ~2.5 points
+(const USE_SPREAD 1)
+; wall-follow budget in SCANNING
+; @hp min=50 max=60 step=2
+(const SCAN_STEPS 50)
+; max steps before picking a new direction
+; @hp min=32 max=64 step=4
+(const HEADING_STEPS 52)
+; explorer turns back if gradient here < this
+(const GRADIENT_GO_HOME 2)
+; returner resumes exploring once gradient >= this
+(const GRADIENT_NEAR_HOME 32)
+; explorer follows delivery trail if signal >= this
+(const DELIVERY_GO_TOWARD 2)
+; outward spiral radius after losing delivery trail
+; @hp min=1 max=7 step=1
+(const SPIRAL_RADIUS 3)
+; pickup signal threshold to trigger spiraling
+(const PICKUP_SIGNAL 10)
 
 
 ; ── Local macros ──────────────────────────────────────────────────────────────
@@ -156,20 +173,20 @@
 
 ; Register budget (8 total):
 ;   dir, homepos = 2 persistent (all states)
-;   steps, age   = 2 per-state scratch (reinitialized on each state entry)
-;   ── 4 remaining for macro temps ──
+;   steps        = 1 per-state scratch (exploring only)
+;   ── 5 remaining for macro temps ──
 
-(let ((dir     0)    ; current movement direction
+(let ((dir     (+ (random 4) 1))    ; current movement direction (1-4)
       (homepos 0))   ; packed dx/dy displacement from nest
   ; Initial dispersion: spread ants out using their IDs
-  (spread)
+  (when USE_SPREAD (spread))
   
   (tagbody
     ; ────────────────────────────────────────
     ; EXPLORING
     ; ────────────────────────────────────────
     exploring
-    (let ((steps 0) (age 0))
+    (let ((steps 0))
       (loop
         (set-tag exploring)
 
@@ -201,26 +218,15 @@
             (pick-nonwall-no-reverse dir back))
           (set! steps (+ (random HEADING_STEPS) 1)))
 
-        ; Wall check — if blocked, enter SCANNING state
+        ; Wall check — if blocked, pick a new non-wall direction
+        ; and retry immediately (cheap ~8 ops vs ~40 for scan-wall).
         (when (= (probe dir) 1)
-          ; Borrow steps/age as scratch for scan-wall
-          (set! steps dir)
-          ; Pick perpendicular direction (random left or right turn)
-          (if (< (random 2) 1)
-            (set! dir (turn-right steps))
-            (set! dir (invert-dir (turn-right steps))))
-          ; If perpendicular is also blocked, try the other one
-          (when (= (probe dir) 1)
-            (set! dir (invert-dir dir))
-            (when (= (probe dir) 1)
-              (set! dir (invert-dir steps))))
-          (set! age SCAN_STEPS)
-          (scan-wall dir homepos steps age (go returning) (continue)))
+          (pick-random-nonwall dir)
+          (set! steps 1))
 
-        ; dir is known clear (wall case jumped to scanning above)
+        ; dir is known clear (wall case picked non-wall above)
         (move-track-unsafe dir homepos)
-        (set! steps (- steps 1))
-        (set! age (+ age 1))))
+        (set! steps (- steps 1))))
 
     ; ────────────────────────────────────────
     ; SPIRALING — outward spiral after losing delivery trail

@@ -166,7 +166,7 @@
       (spiral-cd 0))      ; cooldown counter: >0 = suppress spiral entry
 
   ; Initial dispersion (safe — nest is 3×3, spread moves 1-2 cells)
-  (spread)
+  (when USE_SPREAD (spread))
 
   (tagbody
     ; ────────────────────────────────────────
