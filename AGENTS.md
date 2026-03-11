@@ -70,6 +70,19 @@ Key commands: `forward N`, `rewind N`, `break --id 103 --tick 110`, `continue`, 
 
 If you encounter an internal compiler error or compilation bug while working on an alisp program, immediately stop and ask the user for further instructions.
 
+## Abort codes
+
+In debug mode, the simulator reports aborts with numeric codes. User-defined codes come from `(abort! code)` in Antlisp and are positive integers. The engine also generates built-in negative codes when an ant attempts an invalid move:
+
+| Code | Meaning |
+|------|---------|
+| `-1` | Invalid direction (not 0–7) |
+| `-2` | Out of bounds (destination outside map) |
+| `-3` | Wall collision (destination cell is a wall) |
+| `≥ 0` | User-defined via `(abort! code)` |
+
+These built-in aborts only fire in debug mode (`--allow-abort`). In production (`--no-debug`), invalid moves are silently ignored by the engine.
+
 ## Agent-User Relationship
 
 The user is suggesting strategies and agent is implementing them. Sometimes the strategies perform worse by some metrics. Sometimes the user points out a problem with an implementation to highlight a bug. In general, push forward rather than walking back. Only revert changes that the user has explicitly asked for, or when you are unable to resolve correctness issues and want to fulfill the user's directions from a clean slate.

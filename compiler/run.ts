@@ -178,7 +178,7 @@ if (!quiet) {
 
 // ─── Generate maps ───────────────────────────────────────────────────────────
 
-const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick };
+const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick, allowAbort };
 const allMaps: EvalMap[] = engine.generateEvalMaps(config.mapWidth, config.mapHeight, seed, numMaps);
 
 let maps: EvalMap[];

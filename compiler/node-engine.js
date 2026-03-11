@@ -516,7 +516,7 @@ const _tickRng = new RNG(1);
  * Execute one ant's turn (up to maxOps instructions or one action).
  * Returns true if the ant successfully dropped food at the nest.
  */
-function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps, antGrid, senseRange = 1, stopAtPc = -1) {
+function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps, antGrid, senseRange = 1, stopAtPc = -1, debugAbortOnInvalidMove = false) {
   ant._stalled = false;
   if (instrCount === 0) return false;
 
@@ -716,12 +716,26 @@ function stepAnt(ant, antIndex, bytecode, instrCount, map, _unused, rng, maxOps,
         if (dir >= 1 && dir <= 4) {
           const nx = ant.x + DIR_DX[dir];
           const ny = ant.y + DIR_DY[dir];
-          if (nx >= 0 && nx < mapW && ny >= 0 && ny < mapH && cells[ny * mapW + nx] !== CellType.WALL) {
-            antGrid[ant.y * mapW + ant.x]--;
-            antGrid[ny * mapW + nx]++;
-            ant.x = nx;
-            ant.y = ny;
+          if (nx >= 0 && nx < mapW && ny >= 0 && ny < mapH) {
+            if (cells[ny * mapW + nx] !== CellType.WALL) {
+              antGrid[ant.y * mapW + ant.x]--;
+              antGrid[ny * mapW + nx]++;
+              ant.x = nx;
+              ant.y = ny;
+            } else if (debugAbortOnInvalidMove) {
+              ant._aborted = -3;  // wall collision
+              ant.pc = pc;
+              return false;
+            }
+          } else if (debugAbortOnInvalidMove) {
+            ant._aborted = -2;  // out of bounds
+            ant.pc = pc;
+            return false;
           }
+        } else if (debugAbortOnInvalidMove) {
+          ant._aborted = -1;  // invalid direction
+          ant.pc = pc;
+          return false;
         }
         ant.pc = ++pc;
         return false;
@@ -904,7 +918,7 @@ function runTick(world, config = DEFAULT_CONFIG) {
     ant.regs[REG_PX] = ant.x;
     ant.regs[REG_PY] = ant.y;
     ant.regs[REG_PC] = ant.pc;
-    const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange);
+    const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange, -1, config.allowAbort);
     if (delivered) world.foodCollected++;
     map.visitCounts[ant.y * map.width + ant.x]++;
 
