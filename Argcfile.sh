@@ -71,6 +71,29 @@ unit() {
 		${flags+"${flags[@]}"} "${argc_file:?}" ${argc_verbose+--verbose}
 }
 
+# @cmd Launch interactive debugger for an alisp file
+# @arg  file!           alisp file
+# @option -m --map      Run only a specific map (type like "gauntlet" or full name like "gauntlet-41jczs")
+# @option -s --seed     Global map seed (default: 42)
+# @option -o --max-ops  Max ops per ant per tick (default: 64)
+# @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
+debug() {
+	local -a flags=()
+	for d in ${argc_define+"${argc_define[@]}"}; do
+		flags+=(-D "$d")
+	done
+	flags+=(-D DEBUG=1)
+	local asm
+	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
+	local tmpant
+	tmpant="$(mktemp /tmp/debug-XXXXXXXX).ant"
+	echo "$asm" > "$tmpant"
+	npx --prefix compiler tsx compiler/debug.ts \
+		${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
+		--allow-abort "$tmpant"
+	rm -f "$tmpant"
+}
+
 # @cmd Run hyperparameter optimization dashboard
 optimize() {
 	exec marimo run --sandbox --watch hyperparameters.py

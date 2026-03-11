@@ -848,17 +848,37 @@ function createWorld(map, program, config = DEFAULT_CONFIG) {
 }
 
 /**
+ * Set up module-level tick state from the world (RNG + pheromone tracking).
+ * Called at the start of a tick before stepping any ants.
+ */
+function beginTick(world) {
+  _tickRng.state = world.rngState;
+  _pheroActive = world.pheroActive;
+  _pheroList = world.pheroList;
+  _pheroListLen = world.pheroListLen;
+}
+
+/**
+ * Finalize a tick: decay pheromones and advance the tick counter.
+ * Called after all ants have been stepped.
+ */
+function endTick(world) {
+  world.pheroListLen = decayPheromones(world.map, world.pheroList, world.pheroActive, _pheroListLen);
+  world.rngState = _tickRng.state;
+  world.tick++;
+}
+
+/** Return the shared per-tick RNG instance (valid between beginTick/endTick). */
+function getTickRng() { return _tickRng; }
+
+/**
  * Run one tick of the simulation: step all ants, then decay pheromones.
  */
 function runTick(world, config = DEFAULT_CONFIG) {
   const { map, ants, bytecode, antGrid } = world;
   const instrCount = world.program.instructions.length;
 
-  // Restore RNG and pheromone tracking state
-  _tickRng.state = world.rngState;
-  _pheroActive = world.pheroActive;
-  _pheroList = world.pheroList;
-  _pheroListLen = world.pheroListLen;
+  beginTick(world);
 
   const tickFoodCollected = world.foodCollected;
   const currentTick = world.tick;
@@ -901,9 +921,7 @@ function runTick(world, config = DEFAULT_CONFIG) {
   if (!world.stallCounts) world.stallCounts = 0;
   world.stallCounts += stallCount;
 
-  world.pheroListLen = decayPheromones(map, world.pheroList, world.pheroActive, _pheroListLen);
-  world.rngState = _tickRng.state;
-  world.tick++;
+  endTick(world);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1981,6 +1999,10 @@ module.exports = {
   EVAL_MAP_COUNT,
   DEFAULT_CONFIG,
 
+  // Name tables
+  DIRECTION_NAMES,
+  CHANNEL_NAMES,
+
   // Core classes
   RNG,
   AssemblyError,
@@ -1992,6 +2014,9 @@ module.exports = {
   // VM
   createWorld,
   runTick,
+  beginTick,
+  endTick,
+  getTickRng,
   stepAnt,
 
   // Map utilities
