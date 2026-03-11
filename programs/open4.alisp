@@ -26,19 +26,21 @@
 (const FOOD_NEARBY ch_blue)     ; "food was here" beacon channel
 
 ; Enables the spread action at the start of the program
-; @hp min=0 max=1 step=1
+; Does not have any impact on score, but looks pretty.
 (const USE_SPREAD 1)
 ; gradient level below which we start recording a packed path
 ; @hp min=16 max=64 step=4
-(const TRAIL_THRESHOLD 48)
+(const TRAIL_THRESHOLD 16)
 ; minimum gradient for gradient homing in returning phase
 (const TRAIL_GO_HOME 2)
 ; wall-follow budget in SCANNING
-; @hp min=20 max=80 step=10
-(const SCAN_STEPS 32)
+; Vanishingly little impact on score.
+; @hp min=50 max=60 step=2
+(const SCAN_STEPS 50)
 ; max steps before picking a new direction
-; @hp min=16 max=32 step=4
-(const HEADING_STEPS 32)
+; Vanishingly little impact on score.
+; @hp min=32 max=64 step=4
+(const HEADING_STEPS 56)
 ; explorer follows food trail if signal >= this
 (const DELIVERY_GO_TOWARD 2)
 ; pickup signal threshold to trigger spiraling
