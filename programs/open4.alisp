@@ -25,8 +25,11 @@
 (const FOOD_TRAIL ch_green)     ; food-delivery breadcrumb channel
 (const FOOD_NEARBY ch_blue)     ; "food was here" beacon channel
 
+; Enables the spread action at the start of the program
+; @hp min=0 max=1 step=1
+(const USE_SPREAD 1)
 ; gradient level below which we start recording a packed path
-; @hp min=16 max=128 step=16
+; @hp min=16 max=64 step=4
 (const TRAIL_THRESHOLD 48)
 ; minimum gradient for gradient homing in returning phase
 (const TRAIL_GO_HOME 2)
@@ -54,44 +57,77 @@
 ; Marks nest gradient on every tick.
 ;
 ; Returns: 1 = gap found, 0 = path full, 2 = budget expired
+;
+; Op budget concern: when move-forward! fails due to a wall, the entire
+; loop body (~56 ops) executes without any action. On brush maps with
+; dense walls, consecutive failures can stall even at high op limits.
+; The loop relies on `remaining` to bound iterations, but each no-action
+; iteration burns: mark-gradient (~11 ops) + probe blocked (~2 ops) +
+; move-forward! fail (~11 ops) + wall/path-full check (~8 ops) +
+; turn-around + random-nonwall-heading! (~19 ops) + bookkeeping (~5 ops).
 
 (defmacro scan-wall! (path dir8 blocked budget)
   (let ((remaining budget))
     (set-tag scanning)
+    ; Force dir8 cardinal — walls are axis-aligned, so scanning
+    ; diagonally is nonsensical (zigzags instead of tracing the edge,
+    ; and "gap in a diagonal direction" is meaningless). Stripping
+    ; the diagonal bit (bit 2) also makes move-forward! cheaper:
+    ; no m2 computation, no second probe, no second move.
+    (set! dir8 (and dir8 3))
     (while (> remaining 0)
-      ; Mark nest gradient every tick during scanning
+      ; ~11 ops: sniff + sense/smell + branch + mark
       (mark-gradient NEST_TRAIL nest)
 
-      ; Check if gap opened
+      ; ~2 ops: probe + branch
+      ; Check if the wall we're tracking has a gap
       (if (!= (probe blocked) 1)
-        ; Gap found
+        ; Gap found — face the gap direction and exit
         (begin
           (set! dir8 (- blocked 1))
-          (set! remaining -1))
-        ; No gap — try to move along wall
+          (set! remaining -1)        ; sentinel: "gap found"
+          (break))
+
+        ; Still walled — try to step along the wall via move-forward!
+        ; dir8 is always cardinal here, so move-forward! only computes
+        ; m1 (no m2), does one probe, and one move on success.
+        ; Failure costs ~8 ops; success ends the tick.
         (if (= (move-forward! path dir8 (begin)) 1)
-          ; Moved successfully
+          ; Moved — action happened, tick ends. Decrement budget for
+          ; next tick's iteration.
           (set! remaining (- remaining 1))
-          ; Failed — check wall vs path overflow
-          ; For diagonals, must check both cardinal components.
-          (let ((m1 0) (m2 0))
+
+          ; move-forward! returned 0 — no action this iteration.
+          ; Since dir8 is cardinal, m2 is always 0, so failure means
+          ; m1 is a wall or the path is full.
+          (let ((m1 0))
             (dir8-move1! m1 dir8)
-            (dir8-move2! m2 dir8)
-            (if (and (!= (probe m1) 1)
-                     (or (= m2 0) (!= (probe m2) 1)))
-              ; Neither cardinal is a wall — path is full
-              (set! remaining -2)
-              ; Wall — turn around
+            (if (!= (probe m1) 1)
+              ; m1 is not a wall — path is full (all 4 segments occupied).
+              (begin
+                (set! remaining -2)  ; sentinel: "path full"
+                (break))
+
+              ; m1 is a wall. Reverse direction and try the other way
+              ; along the wall.
               (begin
                 (set! dir8 (xor dir8 2))
-                ; If reversed is also blocked, pick anything
                 (dir8-move1! m1 dir8)
                 (when (= (probe m1) 1)
-                  (random-nonwall-heading! dir8))
-                (set! remaining (- remaining 1))))))))
+                  ; Reversed direction also blocked — try perpendicular
+                  ; to the wall we're tracking
+                  (set! dir8 (- (turn-right blocked) 1))
+                  (dir8-move1! m1 dir8)
+                  (when (= (probe m1) 1)
+                    ; Both perpendiculars blocked — try the other one
+                    (set! dir8 (- (invert-dir (turn-right blocked)) 1))))
+                (set! remaining (- remaining 1)))))))) ; budget tick used
+
+    ; Loop exited. Restore tag (scan-wall is called from exploring-path).
     (set-tag exploring)
-    (if (= remaining -2) 0
-      (if (= remaining -1) 1
+    ; Decode exit reason from remaining sentinel value.
+    (if (= remaining -2) 0           ; path full
+      (if (= remaining -1) 1         ; gap found
         2))))
 
 
@@ -151,13 +187,13 @@
         (mark FOOD_NEARBY 255)
         (move (invert-dir food-dir))
         (set! spiral-cd 0)
-        (go returning)))
+        (go returning))
 
-    ; Pickup beacon → spiral
-    (when (and (= spiral-cd 0)
-              (>= (sniff FOOD_NEARBY here) PICKUP_SIGNAL)
-              (= (sense food) 0))
-      (go spiraling))
+      ; Pickup beacon → spiral
+      (when (and (= spiral-cd 0)
+                (>= (sniff FOOD_NEARBY here) PICKUP_SIGNAL)
+                (= (sense food) 0))
+        (go spiraling)))
 
     ; Crossed into frontier? Start recording path
     (when (< (sniff NEST_TRAIL here) TRAIL_THRESHOLD)
@@ -174,34 +210,48 @@
         (when (!= del-dir 0)
           (set! dir8 (- del-dir 1)))))
 
-    ; Try to move in dir8 direction
-    (let ((m1 0))
-      (dir8-move1! m1 dir8)
-      (if (!= (probe m1) 1)
-        (let ((m2 0))
-          (dir8-move2! m2 dir8)
-          (if (and (!= m2 0) (= (probe m2) 1))
-            ; Diagonal blocked — pick new heading
-            (random-nonwall-heading! dir8)
-            ; Clear — move
-            (begin
-              (move m1)
-              ; Mark gradient at intermediate cell so diagonals
-              ; don't leave gaps in the nest trail.
-              (mark-gradient NEST_TRAIL nest)
-              ; Re-probe m2 after first move — position changed,
-              ; wall map may differ. Without this, a stall after
-              ; (move m1) resumes (move m2) with a stale probe.
-              (when (!= m2 0)
-                (if (!= (probe m2) 1)
-                  (move m2)
-                  (random-nonwall-heading! dir8))))))
-        ; Wall — pick new heading
-        (random-nonwall-heading! dir8)))
-
-    ; Periodically pick new direction
+    ; Periodically pick new direction (before move attempt so the
+    ; budget is fresh — avoids stalling when combined with post-move
+    ; overhead from diagonal m2 re-heading).
     (when (= (random HEADING_STEPS) 0)
       (random-nonwall-heading! dir8))
+
+    ; Try to move in dir8 direction.
+    ; On wall, re-head and retry immediately to avoid wasting the
+    ; tick looping back through sensing/marking.
+    ; Note: ants can never be completely boxed in — the map guarantees
+    ; at least one non-wall cardinal neighbor, so this always terminates.
+    (let ((m1 0) (m2 0))
+      (tagbody
+        try-move
+        (dir8-move1! m1 dir8)
+        (if (!= (probe m1) 1)
+          (begin
+            (dir8-move2! m2 dir8)
+            (if (and (!= m2 0) (= (probe m2) 1))
+              ; Diagonal blocked — just move the cardinal component.
+              ; Re-heading could loop (dense walls), so take m1 which
+              ; is already known clear and make progress.
+              (begin
+                (random-nonwall-heading! dir8)
+                (move m1))
+              ; Clear — move
+              (begin
+                (move m1)
+                ; For diagonals: mark gradient at intermediate cell
+                ; so they don't leave gaps, then re-probe m2.
+                ; For cardinals (m2=0): skip — the next tick's loop-start
+                ; gradient mark covers the new position. Skipping saves
+                ; ~14 ops, avoiding stalls on the post-move path.
+                (when (!= m2 0)
+                  (mark-gradient NEST_TRAIL nest)
+                  (if (!= (probe m2) 1)
+                    (move m2)
+                    (random-nonwall-heading! dir8))))))
+          ; Wall — pick new heading and retry
+          (begin
+            (random-nonwall-heading! dir8)
+            (go try-move)))))
 
     (go exploring)
 
@@ -257,6 +307,15 @@
           (begin
             (when (and (!= m2 0) (= (probe m2) 1) (!= (probe m1) 1))
               (set! m1 m2))  ; m2 is the wall, use it for scanning
+            ; Force dir8 to a cardinal perpendicular to the wall.
+            ; Walls are axis-aligned, so scanning diagonally is
+            ; nonsensical — it zigzags instead of tracing the edge,
+            ; and "gap in a diagonal direction" is meaningless.
+            (let ((perp (turn-right m1)))
+              (if (!= (probe perp) 1)
+                (set! dir8 (- perp 1))
+                ; Perpendicular blocked — try the other side
+                (set! dir8 (- (invert-dir perp) 1))))
             (if (= (scan-wall! path dir8 m1 SCAN_STEPS) 0)
               ; Path full during scan — reset and go to gradient zone.
               (begin
@@ -449,21 +508,28 @@
     (set-tag lost)
     (when (and ABORT_WHEN_LOST DEBUG) (abort! 1))
 
-    ; Walk in dir8 with momentum — only re-randomize on wall.
-    (let ((m1 0))
-      (dir8-move1! m1 dir8)
-      (if (!= (probe m1) 1)
-        (let ((m2 0))
-          (dir8-move2! m2 dir8)
-          (if (and (!= m2 0) (= (probe m2) 1))
+    ; Walk in dir8 with momentum — on wall, re-head and retry immediately.
+    ; Note: ants can never be completely boxed in, so this always terminates.
+    (let ((m1 0) (m2 0))
+      (tagbody
+        try-move-lost
+        (dir8-move1! m1 dir8)
+        (if (!= (probe m1) 1)
+          (begin
+            (dir8-move2! m2 dir8)
+            (if (and (!= m2 0) (= (probe m2) 1))
+              (begin
+                (random-nonwall-heading! dir8)
+                (go try-move-lost))
+              (begin
+                (move m1)
+                (when (!= m2 0)
+                  (if (!= (probe m2) 1)
+                    (move m2)
+                    (random-nonwall-heading! dir8))))))
+          (begin
             (random-nonwall-heading! dir8)
-            (begin
-              (move m1)
-              (when (!= m2 0)
-                (if (!= (probe m2) 1)
-                  (move m2)
-                  (random-nonwall-heading! dir8))))))
-        (random-nonwall-heading! dir8))
+            (go try-move-lost))))
       (go returning))))
 
 ; vim:ft=lisp:sw=2
