@@ -5,6 +5,11 @@ description: Resolves compiler-level bugs in Antlisp. Use when you can see bugs 
 
 # Debugging Compiler Failures
 
+- compiler/antlisp.ts is the compiler
+- compiler/antlisp.test.js is the integration test suite
+- compiler/node-engine.js is the virtual machine, ported to node.
+- compiler/run.ts is a CLI for the node engine.
+
 Once we have identified a compiler bug, we need to follow a strict process to resolve it. Compiler bugs are notoriously difficult to diagnose and resolve, and a false fix can cause failures elsewhere. As a result, we always use this pattern:
 
 ## 1. Create a minimal end-to-end demonstration of the failure
@@ -26,6 +31,8 @@ Once the unit test is passing, stop and reflect. You have identified and fixed a
 ## 4. Run the end-to-end test again
 
 Run the end-to-end test again. If the tests do not pass, you should return to step 2. Do not revert your code: the last time you were in step 2 you identified a real compiler bug and fixed it. If the tests pass, continue.
+
+At this point you should run `argc selftest`. This must ALWAYS pass before finishing. No exceptions.
 
 ## 5. Test with the original bug report alisp
 

@@ -122,7 +122,7 @@ if (require.main === module) {
         const tokens = tokenize(source);
         const ast = parse(tokens, { source, sourceFile });
         const constMap = constOverrides ? new Map(Object.entries(constOverrides)) : undefined;
-        const expanded = expandMacros(ast.body, { constOverrides: constMap, sourceFile });
+        const expanded = expandMacros(ast.body, { constOverrides: constMap, impliedConsts: new Map([['DEBUG', '0']]), sourceFile });
         const metadata = collectMetadata(expanded.forms);
         const ssaProgram = lowerToSSA(metadata.forms, metadata.tags, expanded.constValues, sourceFile);
         optimize(ssaProgram);
@@ -131,7 +131,13 @@ if (require.main === module) {
         console.log(compileAntLisp(source, { constOverrides, sourceFile }));
       }
     } catch (err: any) {
-      console.error(err.message);
+      if (err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError) {
+        // Internal compiler error — dump stack trace for debugging
+        console.error('Internal compiler error:');
+        console.error(err.stack);
+      } else {
+        console.error(err.message);
+      }
       process.exit(1);
     }
   }

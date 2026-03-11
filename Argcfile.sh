@@ -8,12 +8,18 @@ set -eu
 # @arg    file!           alisp file
 # @flag   --copy          Copy the result
 # @flag   --dump-ssa      Dump the SSA of the program
+# @flag   --no-debug      Compile with DEBUG=0 (production mode)
 # @option -D --define*    Override a const value, e.g. -D EXPLORE_TIMEOUT=400
 compile() {
 	local -a flags=()
 	for d in ${argc_define+"${argc_define[@]}"}; do
 		flags+=(-D "$d")
 	done
+	if [[ ${argc_no_debug+1} ]]; then
+		flags+=(-D DEBUG=0)
+	else
+		flags+=(-D DEBUG=1)
+	fi
 	if [[ ${argc_dump_ssa+1} ]]; then
 		flags+=(--dump-ssa)
 	fi

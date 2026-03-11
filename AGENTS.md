@@ -1,10 +1,8 @@
 # Project overview
 
-## Challenge
+We are developing algorithms to solve an ant simulation challenge. The goal is to maximize score on a set of 120 tests. We have 12 maps that we use to practice.
 
-- reference.md is the ISA specification
-- compiler/node-engine.js is the virtual machine, ported to node.
-- compiler/run.ts is a CLI for the above.
+## Challenge
 
 Runs the training dataset using the given antssembly file. Prints a per-map score and a total score.
 
@@ -34,8 +32,7 @@ We've built Antlisp, a lisp-based language specifically to solve this challenge.
 
 - ANTLISP.md is the language specification
 - ANTLISP-PATTERNS.md is a programming guide for the lanugage
-- compiler/antlisp.ts is the compiler
-- compiler/antlisp.test.js is the integration test suite
+- reference.md is the underlying ISA documentation
 
 The key things to note:
 - The target machine has 8 registers, no stack, a 64-instruction limit per "tick", and no limit on program size.
@@ -78,7 +75,7 @@ To run compiler tests (required when modifying the compiler). This runs all inte
 argc selftest
 ```
 
-If you need to modify the compiler, `argc selftest` MUST ALWAYS PASS. No exceptions.
+If you encounter an internal compiler error or compilation bug while working on an alisp program, immediately stop and ask the user for further instructions.
 
 ## Agent-User Relationship
 

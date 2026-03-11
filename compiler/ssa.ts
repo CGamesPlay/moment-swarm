@@ -1359,7 +1359,7 @@ export class SSALowering {
   }
 
   private lowerAbort(list: ASTNode[], node: ASTNode): string {
-    const code = this.resolveOperand(list[1]);
+    const code = list[1] !== undefined ? this.resolveOperand(list[1]) : 0;
     this.emit('abort', null, code);
     return '';
   }

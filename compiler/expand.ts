@@ -443,6 +443,15 @@ export function expandMacros(forms: ASTNode[], options: ExpandOptions = {}): Exp
   // Pass 1: Collect defmacro, const, and include definitions; keep other forms
   collectDefinitions(forms, macros, consts, remaining, options, includedFiles, false);
 
+  // Apply -D overrides for consts not declared in source (declared ones
+  // are already handled inside collectDefinitions)
+  if (options.constOverrides) {
+    for (const [name, rawVal] of options.constOverrides) {
+      const isNum = rawVal !== '' && !isNaN(Number(rawVal));
+      consts.set(name, isNum ? String(Number(rawVal)) : rawVal);
+    }
+  }
+
   // Pass 2: Expand macros and substitute consts in remaining forms
   const expanded = remaining.map(form => expandNode(form, macros, consts, 0));
 
