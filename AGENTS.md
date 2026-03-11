@@ -66,7 +66,7 @@ Use `argc debug` with the tmux skill to step through ant behavior:
 argc debug programs/example.alisp -m bridge   # Launch debugger on a specific map
 ```
 
-Key commands: `forward N`, `rewind N`, `break --id 103 --tick 110`, `continue`, `info [ID]`, `map [ID] [ph]`, `list [ADDR]`, `step`, `world`. Use breakpoints to reach a specific ant at a specific tick, then `step` to trace instruction-by-instruction. This is far more effective than adding ad-hoc trace code — a single reproducible scenario (ant ID + tick + position) beats sampling random ants from aggregate test output. See `compiler/debug.ts` for implementation details, and the `tmux` skill for session management.
+Key commands: `forward N`, `rewind N`, `break --id 103 --tick 110`, `break --stall`, `continue`, `info [ID]`, `map [ID] [ph]`, `list [ADDR]`, `step`, `world`. Use breakpoints to reach a specific ant at a specific tick, then `step` to trace instruction-by-instruction. This is far more effective than adding ad-hoc trace code — a single reproducible scenario (ant ID + tick + position) beats sampling random ants from aggregate test output. See `compiler/debug.ts` for implementation details, and the `tmux` skill for session management.
 
 If you encounter an internal compiler error or compilation bug while working on an alisp program, immediately stop and ask the user for further instructions.
 

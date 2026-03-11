@@ -57,6 +57,7 @@ interface Breakpoint {
   antId?: number;
   tick?: number;
   pc?: number;
+  stall?: true;
   regConditions: Array<{ reg: number; val: number }>;
 }
 
@@ -182,12 +183,13 @@ function restoreToTick(state: DebugState, targetTick: number) {
 // Breakpoint / watchpoint matching
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function matchesBreakpoint(state: DebugState, ant: any, antIndex: number): boolean {
+function matchesBreakpoint(state: DebugState, ant: any, antIndex: number, didStall: boolean = false): boolean {
   for (const bp of state.breakpoints) {
     let match = true;
     if (bp.antId !== undefined && bp.antId !== antIndex) match = false;
     if (bp.tick !== undefined && bp.tick !== state.world.tick) match = false;
     if (bp.pc !== undefined && bp.pc !== ant.pc) match = false;
+    if (bp.stall && !didStall) match = false;
     for (const rc of bp.regConditions) {
       if (ant.regs[rc.reg] !== rc.val) { match = false; break; }
     }
@@ -225,7 +227,7 @@ function matchesWatchpoint(state: DebugState, ant: any, antIndex: number, prevX:
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface PauseResult {
-  reason: "breakpoint" | "watchpoint" | "abort" | "end";
+  reason: "breakpoint" | "watchpoint" | "abort" | "stall" | "end";
   antId?: number;
   watchpoint?: Watchpoint;
 }
@@ -294,6 +296,13 @@ function runUntilBreak(state: DebugState): PauseResult {
         world.stallsByTag[ant.tag] = (world.stallsByTag[ant.tag] || 0) + 1;
         if (!world.stallCounts) world.stallCounts = 0;
         world.stallCounts++;
+
+        // Check stall breakpoints
+        if (matchesBreakpoint(state, ant, i, true)) {
+          state.currentAntId = i;
+          state.tickProgress.nextAntIndex = i + 1;
+          return { reason: "stall", antId: i };
+        }
       }
 
       // Check watchpoints AFTER stepping
@@ -591,6 +600,7 @@ function parseBreakArgs(tokens: string[]): Breakpoint | null {
     if (t === "--id") { bp.antId = parseInt(tokens[++i], 10); continue; }
     if (t === "--tick") { bp.tick = parseInt(tokens[++i], 10); continue; }
     if (t === "--pc") { bp.pc = parseInt(tokens[++i], 10); continue; }
+    if (t === "--stall") { bp.stall = true; continue; }
     const regMatch = /^--r(\d)=(\d+)$/.exec(t);
     if (regMatch) {
       bp.regConditions.push({ reg: parseInt(regMatch[1]), val: parseInt(regMatch[2]) });
@@ -638,7 +648,7 @@ Simulation control:
   quit (q)             Exit
 
 Breakpoints:
-  break [flags]        Add breakpoint (--id N, --tick N, --pc N, --rX=Y)
+  break [flags]        Add breakpoint (--id N, --tick N, --pc N, --stall, --rX=Y)
   break list           List breakpoints
   break del ID         Delete breakpoint
 
@@ -667,6 +677,9 @@ Inspection (when paused):
       } else if (result.reason === "abort") {
         const ant = state.world.ants[result.antId!];
         console.log(`Ant #${result.antId} aborted (code ${ant._aborted}) at tick ${state.world.tick}, pc=${ant.pc}`);
+      } else if (result.reason === "stall") {
+        const ant = state.world.ants[result.antId!];
+        console.log(`Ant #${result.antId} stalled at tick ${state.world.tick}, pc=${ant.pc}`);
       } else {
         console.log(`Simulation ended at tick ${state.world.tick}. Food collected: ${state.world.foodCollected}/${state.world.map.totalFood}`);
       }
@@ -692,6 +705,9 @@ Inspection (when paused):
       } else if (result.reason === "abort") {
         const ant = state.world.ants[result.antId!];
         console.log(`Ant #${result.antId} aborted (code ${ant._aborted}) at tick ${state.world.tick}, pc=${ant.pc}`);
+      } else if (result.reason === "stall") {
+        const ant = state.world.ants[result.antId!];
+        console.log(`Ant #${result.antId} stalled at tick ${state.world.tick}, pc=${ant.pc}`);
       } else {
         console.log(`Simulation ended at tick ${state.world.tick}.`);
       }
@@ -740,6 +756,7 @@ Inspection (when paused):
           if (bp.antId !== undefined) parts.push(`id=${bp.antId}`);
           if (bp.tick !== undefined) parts.push(`tick=${bp.tick}`);
           if (bp.pc !== undefined) parts.push(`pc=${bp.pc}`);
+          if (bp.stall) parts.push(`stall`);
           for (const rc of bp.regConditions) parts.push(`r${rc.reg}=${rc.val}`);
           console.log(`  ${parts.join(" ")}`);
         }
@@ -761,6 +778,7 @@ Inspection (when paused):
       if (bp.antId !== undefined) desc.push(`id=${bp.antId}`);
       if (bp.tick !== undefined) desc.push(`tick=${bp.tick}`);
       if (bp.pc !== undefined) desc.push(`pc=${bp.pc}`);
+      if (bp.stall) desc.push(`stall`);
       for (const rc of bp.regConditions) desc.push(`r${rc.reg}=${rc.val}`);
       console.log(`Breakpoint #${bp.id} added: ${desc.join(" ") || "(always)"}`);
       return "prompt";
