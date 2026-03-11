@@ -78,7 +78,7 @@
     ; no m2 computation, no second probe, no second move.
     (set! dir8 (and dir8 3))
     (while (> remaining 0)
-           ; ~11 ops: sniff + sense/smell + branch + mark
+           ; Propagate only — scan-wall is deep in the frontier
            (mark-gradient NEST_TRAIL nest)
 
            ; ~2 ops: probe + branch
@@ -440,7 +440,7 @@
       (when (= (carrying?) 1)
         (mark-gradient FOOD_TRAIL food))
 
-      ; Mark nest gradient (reinforce on way home)
+      ; Propagate nest gradient on return (ant is in frontier, far from nest)
       (mark-gradient NEST_TRAIL nest)
 
       ; Update dir8 to the backtrack (homeward) direction before stepping.
@@ -478,10 +478,10 @@
 
     ; ── Carrying, path exhausted, need gradient to get home ──
 
-    ; Mark food trail while carrying
+    ; Mark food trail while carrying (propagate only — far from food seed)
     (mark-gradient FOOD_TRAIL food)
 
-    ; Mark nest gradient to reinforce return path (if gradient exists here).
+    ; Reinforce nest gradient on return path (propagate — nest already handled above)
     (when (> (sniff NEST_TRAIL here) 0)
       (mark-gradient NEST_TRAIL nest))
 
@@ -503,7 +503,6 @@
               (move nest-dir)
               (go returning))
             ; Food trail inverse blocked — try perpendicular directions
-            ; (still moving generally away from food)
             (let ((perp-dir (turn-right food-dir)))
               (when (!= (probe perp-dir) 1)
                 (set! dir8 (- perp-dir 1))
@@ -520,25 +519,20 @@
     (set-tag lost)
     (when (and ABORT_WHEN_LOST DEBUG) (abort! 1))
 
-    ; Walk in dir8 with momentum — on wall, re-head and retry immediately.
-    ; Note: ants can never be completely boxed in, so this always terminates.
-    (let ((m1 0) (m2 0))
+    ; Walk in dir8 with momentum — on wall, re-head and retry.
+    ; Map guarantees a clear neighbor, so this always terminates.
+    (let ((m1 0))
       (tagbody
         try-move-lost
         (dir8-move1! m1 dir8)
         (if (!= (probe m1) 1)
           (begin
-            (dir8-move2! m2 dir8)
-            (if (and (!= m2 0) (= (probe m2) 1))
-              (begin
-                (random-nonwall-heading! dir8)
-                (go try-move-lost))
-              (begin
-                (move m1)
-                (when (!= m2 0)
-                  (if (!= (probe m2) 1)
-                    (move m2)
-                    (random-nonwall-heading! dir8))))))
+            (move m1)
+            ; For diagonals: try second component
+            (let ((m2 0))
+              (dir8-move2! m2 dir8)
+              (when (and (!= m2 0) (!= (probe m2) 1))
+                (move m2))))
           (begin
             (random-nonwall-heading! dir8)
             (go try-move-lost))))

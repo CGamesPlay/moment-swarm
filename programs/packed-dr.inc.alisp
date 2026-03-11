@@ -140,3 +140,14 @@
           (set! strongest (- strongest 1))
           (when (> strongest current)
             (mark ch (- strongest current))))))))
+
+; Lighter gradient propagation — no seed check.
+; Use when the ant is known to be far from the seed (nest/food).
+; Saves ~6 instructions per call vs mark-gradient.
+(defmacro mark-gradient-propagate (ch)
+  (let ((current (sniff ch here))
+        (strongest (sniff ch (smell ch))))
+    (when (> strongest 0)
+      (set! strongest (- strongest 1))
+      (when (> strongest current)
+        (mark ch (- strongest current))))))

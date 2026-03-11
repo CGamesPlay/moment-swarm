@@ -17,46 +17,9 @@
 ; ═══════════════════════════════════════════════════════════════
 
 (defmacro spread ()
-  (let ((ant-id (id))
-        (direction 0))
-    ; Compute octagonal direction from ant ID: div by 25 gives 0-7
-    (set! direction (/ ant-id 25))
-    
-    ; Map octant (0-7) to moves:
-    ;   0 = N        (move 1)
-    ;   1 = NE       (move 1 then move 2)
-    ;   2 = E        (move 2)
-    ;   3 = SE       (move 2 then move 3)
-    ;   4 = S        (move 3)
-    ;   5 = SW       (move 3 then move 4)
-    ;   6 = W        (move 4)
-    ;   7 = NW       (move 4 then move 1)
-    (cond
-      ((= direction 0)
-        ; N
-        (move 1))
-      ((= direction 1)
-        ; NE
-        (move 1)
-        (move 2))
-      ((= direction 2)
-        ; E
-        (move 2))
-      ((= direction 3)
-        ; SE
-        (move 2)
-        (move 3))
-      ((= direction 4)
-        ; S
-        (move 3))
-      ((= direction 5)
-        ; SW
-        (move 3)
-        (move 4))
-      ((= direction 6)
-        ; W
-        (move 4))
-      ((= direction 7)
-        ; NW
-        (move 4)
-        (move 1)))))
+  (let ((d (/ (id) 25)))
+    ; d = 0..7 (octagonal). First move: base cardinal = d/2 + 1
+    (move (+ (/ d 2) 1))
+    ; Diagonal octants (odd d): second move = turn-right of base
+    (when (!= (and d 1) 0)
+      (move (+ (mod (+ (/ d 2) 1) 4) 1)))))
