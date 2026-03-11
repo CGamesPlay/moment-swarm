@@ -2,6 +2,46 @@
 
 A Scheme-like language that compiles to flat Antssembly for the SWARM ant colony challenge.
 
+## The Challenge
+
+SWARM is an ant colony simulator. You write a single program that controls all
+200 ants simultaneously (each ant runs the same program independently). The goal
+is to collect as much food as possible within 2000 ticks.
+
+**Key constraints:**
+- **8 registers** (r0–r7) per ant, persisted across ticks
+- **64-op budget** per tick — reaching an action (move/pickup/drop) ends the tick
+- **No global communication** — ants share state only through pheromones on the map
+- **No absolute positioning** — ants sense only their 4 cardinal neighbors
+- Score is the average food collection ratio across 12 diverse maps
+
+**Scoring**: each map has a `totalFood` count. Your score is
+`(foodCollected / totalFood)` averaged across all evaluation maps, scaled to
+0–1000. A score of 500+ is decent; 700+ is competitive.
+
+### Map types
+
+Programs are evaluated across 12 randomly selected maps from these generators:
+
+| Map | Description |
+|-----|-------------|
+| `open` | Open field with scattered food clusters |
+| `maze` | DFS-generated maze with food in dead ends |
+| `spiral` | Concentric ring walls with gaps; food between rings |
+| `field` | Open field with wandering wall segments |
+| `bridge` | Vertical wall dividing the map; 2–4 bridges to cross |
+| `gauntlet` | Narrow corridor connecting wide rooms |
+| `pockets` | Wall grid with pocket rooms |
+| `fortress` | Concentric rectangular walls |
+| `islands` | Scattered wall clusters creating island regions |
+| `chambers` | Connected rectangular chambers |
+| `prairie` | Mostly open with sparse obstacles |
+| `brush` | Dense short wall fragments |
+
+The nest position, food placement, and wall layout are randomized per seed.
+Programs must be robust across all map types — an approach that works on `open`
+may fail completely on `maze` or `bridge`.
+
 ## Quick Example
 
 ```lisp
@@ -25,6 +65,19 @@ A Scheme-like language that compiles to flat Antssembly for the SWARM ant colony
 argc compile program.alisp                        # compile to stdout
 argc compile program.alisp > out.asm              # save to file
 argc compile -D EXPLORE_TIMEOUT=400 program.alisp # override a const
+
+argc test program.alisp                           # run simulation (DEBUG=1, aborts allowed)
+argc test program.alisp --no-debug                # production mode (DEBUG=0, strips ABORTs from output)
+argc test program.alisp -m maze -s 100            # specific map type and seed
+argc test program.alisp -o 128                    # override max ops per tick
+
+argc debug program.alisp                          # launch interactive debugger
+argc debug program.alisp -m open -s 42            # debugger with specific map
+
+argc unit program.unit.alisp                      # run unit tests
+argc unit program.unit.alisp -v                   # verbose output
+
+argc selftest                                     # run all compiler tests
 ```
 
 ### Const overrides (`-D`)
@@ -51,14 +104,6 @@ Rules:
   the source (catches typos).
 - Numeric strings are parsed as numbers; everything else is treated as a
   symbol (channel/direction names are uppercased automatically).
-
-### Conversion to SSA
-
-When diagnosing register exhaustion, it can be useful to output the optimized SSA form of the program.
-
-```bash
-argc compile --dump-ssa file.alisp
-```
 
 ---
 
@@ -90,9 +135,6 @@ all names at once. `let*` evaluates and binds sequentially, so later
 bindings can refer to earlier ones in the same block. Both scope their
 variables — names are freed when the block exits. `set!` mutations to
 outer variables propagate through both forms.
-
-Place long-lived state (dead-reckoning, FSM state, etc.) in a `let`
-that wraps the main loop.
 
 ### Control Flow
 
@@ -182,6 +224,21 @@ Sub-expressions work as operands: `(+ x (random 4))`, `(* timer 2)`.
 (id)                        ; ant index 0-199
 ```
 
+**Direction values**: `N=1 E=2 S=3 W=4 HERE=5`. Sensing returns 0 if
+nothing is found. When multiple neighbors match, one is chosen randomly.
+
+**`sense`** scans all 4 cardinal neighbors for the given target and returns
+a matching direction (random tiebreak). Returns 0 if none match.
+
+**`smell`** finds the cardinal direction with the strongest pheromone on the
+given channel. Ties broken randomly. Returns 0 if no pheromone present.
+
+**`sniff`** reads the raw pheromone intensity (0–255) at a specific direction
+and channel. Use `HERE` for the ant's own cell.
+
+**`probe`** returns the cell type at a direction: `EMPTY=0 WALL=1 FOOD=2 NEST=3`.
+Out-of-bounds or off-map cells return `WALL`.
+
 ### Actions
 
 ```lisp
@@ -208,6 +265,19 @@ Code that follows an action runs normally on the next tick — it is fine
 to place bookkeeping (e.g. updating a displacement tracker) after a
 `(move ...)` and before looping back, and macros can contain actions
 internally without any special handling.
+
+**`mark`** does NOT end the tick. It adds pheromone intensity (clamped to
+255) on the ant's current cell. Pheromones decay by 1 per tick globally.
+
+**`move`** to a wall or out-of-bounds silently fails (the ant doesn't move,
+but the tick still ends).
+
+**`pickup`** on an empty cell does nothing (tick still ends). Only picks up
+1 unit of food. Only works if not already carrying.
+
+**`drop`** when carrying scores a point if the ant is on a nest cell. If
+not on a nest cell, food is placed back on the ground. Does nothing if
+not carrying.
 
 ### Macros
 
@@ -377,60 +447,13 @@ argc test program.alisp --no-debug   # DEBUG=0 implied, ABORT opcode rejected by
 ```
 
 - **Default**: compiles with `DEBUG=1` as an implied default (overridden by any `(const DEBUG ...)` in the source), and passes `--allow-abort` to the simulator.
-- **`--no-debug`**: compiles with `DEBUG=0` (overriding the source's `(const DEBUG ...)`), and the assembler **rejects any `ABORT` opcode**. This acts as a production safety check — if a debug guard was accidentally omitted, the build fails with a clear error rather than silently scoring zero.
+- **`--no-debug`**: compiles with `DEBUG=0` (overriding the source's `(const DEBUG ...)`), which strips `(when DEBUG ...)` branches from the generated assembly. The assembler also **rejects any remaining `ABORT` opcode** as a safety net — if a debug guard was accidentally omitted, the build fails with a clear error rather than silently scoring zero.
 
 ```bash
 # Forgot the DEBUG guard — caught by --no-debug
 $ argc test my_program.alisp --no-debug
 Assembly error: Line 5: ABORT opcode is not allowed (run with --allow-abort for debug builds)
 ```
-
-### Unit Tests
-
-AntLisp includes a built-in unit test framework for verifying code behavior at compile-time and runtime.
-
-#### Running unit tests
-
-```bash
-argc unit program.unit.alisp             # run tests from a .unit.alisp file
-argc unit program.unit.alisp -v          # verbose: show each test name
-argc unit program.unit.alisp -D FOO=1    # override consts during test
-```
-
-#### Test syntax
-
-```lisp
-(test "test name" [:option value | :flag]* (begin ...))
-```
-
-Each test compiles independently, runs in an isolated world (single ant on a blank map), and uses `(assert! cond code)` for inline assertions. If the assertion fails, the test aborts with the given code.
-
-```lisp
-(test "set! updates register"
-  :run-once
-  (begin
-    (let ((x 0))
-      (set! x 42)
-      (assert! (= x 42) 1))))   ; passes: x is 42
-```
-
-#### Assertion macro
-
-The test harness provides `(assert! cond code)` — abort with code if cond is false:
-
-```lisp
-(assert! (= x 5) 1)             ; assert x equals 5, abort with code 1 on failure
-(assert! (> x 0) 2)             ; assert x is positive, abort with code 2 on failure
-```
-
-#### Test options
-
-- `:run-once` — run the test exactly once (stop at PC wrap); implies `:ticks 1`
-- `:ticks n` — number of world ticks to run (default 10)
-- `:max-ops n` — explicit maxOpsPerTick budget
-- `:ants n` — number of ants (default 1)
-- `:ant-x x` `:ant-y y` — starting position (default 16,16)
-- `:place-food x y` — place food at a location
 
 ### Low-Level Control Flow
 
@@ -460,30 +483,95 @@ expansion gets its own fresh tags automatically.
 
 ---
 
-## Compiler Optimizations
-
-The compiler performs several optimization passes on the SSA intermediate
-representation before register allocation:
-
-- **Constant folding** — evaluates arithmetic on compile-time constants and
-  eliminates branches with known conditions.
-- **Copy propagation** — removes trivial register-to-register copies, following
-  chains to their source.
-- **Dead code elimination** — removes unused temporaries and phi nodes, respecting
-  side effects (sensing and actions are never eliminated).
-- **Dead block elimination** — removes unreachable basic blocks and cleans up
-  phi entries that reference them.
-- **Comparison rewriting** — converts `gt N` → `ge N+1` and `lt N` → `le N-1`
-  to match the assembly's comparison operators (`<=`, `>=`, `==`, `!=`).
-
-After code generation, a peephole pass removes dead stores (consecutive `SET` to
-the same register) and redundant jumps (jump to the immediately following label).
-
----
-
-## Register Allocation Strategy
+## Register Allocation
 
 - **Bindings** (`let`/`let*`): allocated on entry, freed on scope exit; a `let` wrapping the main loop is effectively permanent for the program's lifetime
 - **Temps**: allocated by `resolveArg` for compound sub-expressions, freed immediately
 
 With 8 GP registers (r0-r7), a typical program uses 3–5 for long-lived state and leaves the rest for temporaries. Indices 8–12 are reserved for magic registers (`rD_FD`–`rD_PC`) and are never allocated to program variables.
+
+The compiler performs liveness analysis, so a `let` binding does not
+necessarily consume a register for its entire scope. Once a variable is
+no longer referenced, its register becomes available for reuse — even
+within the same `let` block. This means the practical register cost is
+driven by how many variables are *simultaneously live*, not by how many
+are declared.
+
+### Avoiding register exhaustion
+
+Register exhaustion is the most common compilation failure. Tips:
+
+- **Count simultaneously live variables at the deepest nesting point.** Nested
+  `let` blocks stack; sequential ones reuse registers. Prefer sequential when
+  variables don't overlap.
+- **Macros expand inline.** A macro with its own `let` bindings adds to the
+  caller's register pressure at the call site.
+- **Keep outer `let` bindings minimal.** Only bind what truly needs to persist
+  across the entire main loop.
+
+```lisp
+; BAD — 2 registers live simultaneously
+(let ((a (sense food))
+      (b (smell ch_red)))
+  (if (!= a 0) (move a) (if (!= b 0) (move b) (move random))))
+
+; BETTER — 1 register at a time (sequential)
+(let ((dir (sense food)))
+  (when (!= dir 0) (move dir))    ; dir freed after this
+  (set! dir (smell ch_red))
+  (when (!= dir 0) (move dir)))   ; reuses same register
+```
+
+---
+
+## Interactive Debugger
+
+The debugger provides full control over simulation execution with breakpoints,
+watchpoints, time travel, and detailed ant inspection.
+
+```bash
+argc debug program.alisp                  # launch debugger
+argc debug program.alisp -m open -s 42    # specific map and seed
+argc debug program.alisp -D FOO=100       # with const overrides
+```
+
+### Commands
+
+**Simulation control:**
+
+| Command | Description |
+|---------|-------------|
+| `continue` / `c` | Run until breakpoint/watchpoint or simulation end |
+| `forward N` | Run N ticks forward (breakpoints/watchpoints apply) |
+| `rewind N` | Rewind N ticks (restores from auto-snapshot) |
+| `world` | Print tick, food collected, map info |
+| `quit` / `q` | Exit |
+
+**Breakpoints** — pause before a specific ant steps (all conditions AND):
+
+```
+break --id 5 --tick 100 --pc 12 --r0=3
+break list
+break del 1
+```
+
+**Watchpoints** — break when any ant performs a specific action:
+
+```
+watch --action PICKUP              # break on any pickup
+watch --action MOVE --pos 64,58    # break on move to specific cell
+watch list
+watch del 1
+```
+
+**Inspection** (when paused at a breakpoint/watchpoint):
+
+| Command | Description |
+|---------|-------------|
+| `info` / `i` [ID] | Full ant state: registers, position, all sensor results |
+| `list` / `l` [ADDR] | Disassembly ±10 instructions around PC or ADDR |
+| `step` / `s` | Execute one instruction for the current ant |
+| `map` [ID] [space\|ants\|ph\|all] | 5×5 views around ant |
+
+The debugger automatically snapshots every tick (up to 2000) so `rewind`
+is always available.

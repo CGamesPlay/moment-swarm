@@ -1,7 +1,29 @@
 # AntLisp Patterns & Pitfalls
 
 Practical notes on writing AntLisp programs, learned from building and
-refactoring real forager brains.
+refactoring real forager brains. See ANTLISP.md for the language reference.
+
+---
+
+## Program Structure
+
+Every ant program follows this general shape:
+
+```lisp
+; 1. Constants and includes
+(const TRAIL ch_red)
+(const TIMEOUT 600)
+(include "helpers.inc.alisp")
+
+; 2. Macros
+(defmacro wander () (move (+ (random 4) 1)))
+
+; 3. Persistent state wrapping the main loop
+(let ((dx 0) (dy 0) (state 0))
+  ; 4. Main loop
+  (loop
+    ...))
+```
 
 ---
 
@@ -155,6 +177,60 @@ you'd written that loop at the call site:
     (move dir)
     ...))
 ```
+
+---
+
+## Common Strategies
+
+**Dead-reckoning**: Track displacement from nest using `dx`/`dy`. After each
+move, update the displacement. To go home, move in the direction that reduces
+`|dx|` or `|dy|`. This costs 2 permanent registers.
+
+**Pheromone trails**: `mark` a channel when finding food. Other ants `smell`
+that channel to follow the trail. Pheromones decay by 1 per tick, so trails
+need reinforcement. Use separate channels for different signals (food trail,
+nest gradient, etc.).
+
+**State machines**: Use a `state` variable and `cond` to switch behavior.
+Common states: exploring, returning, scanning (wall-following). Tag each
+state with `(set-tag name)` for visual debugging in the viewer.
+
+**Wall following**: When `probe` shows a wall ahead, turn perpendicular and
+walk along the wall, probing for gaps each tick. Budget the scan with a
+counter to avoid getting stuck.
+
+### Pheromone channel conventions
+
+Programs typically use channels as:
+
+| Channel | Common use |
+|---------|-----------|
+| `ch_red` | Nest gradient / return trail |
+| `ch_green` | Food trail / delivery trail |
+| `ch_blue` | Food-was-here beacon |
+| `ch_yellow` | Exploration frontier / misc |
+
+These are conventions, not requirements. Choose whatever makes sense for
+your algorithm.
+
+---
+
+## Common Pitfalls
+
+- **Stalling**: If your main loop has too much computation before reaching a
+  `move`/`pickup`/`drop`, the ant wastes ticks. Keep the path to an action
+  under 64 ops.
+- **Forgetting to loop**: The program wraps at the end (PC resets to 0),
+  which re-initializes `let` bindings. Always use an explicit `(loop ...)`.
+- **Moving into walls**: `(move dir)` into a wall silently fails. Always
+  `(probe dir)` first if you need the move to succeed, or accept that some
+  moves will fail.
+- **Pheromone saturation**: `mark` adds to existing value (capped at 255).
+  Marking 255 every tick creates a flat field with no gradient. Use moderate
+  values (50–100) or mark conditionally.
+- **Register pressure in macros**: Each macro expansion adds its `let`
+  bindings to the caller's live set. A deeply-nested macro call chain can
+  exhaust registers even if each macro is small.
 
 ---
 

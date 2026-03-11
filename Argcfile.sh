@@ -15,9 +15,7 @@ compile() {
 	for d in ${argc_define+"${argc_define[@]}"}; do
 		flags+=(-D "$d")
 	done
-	if [[ ${argc_no_debug+1} ]]; then
-		flags+=(-D DEBUG=0)
-	else
+	if [[ ! ${argc_no_debug+1} ]]; then
 		flags+=(-D DEBUG=1)
 	fi
 	if [[ ${argc_dump_ssa+1} ]]; then
@@ -33,22 +31,22 @@ compile() {
 	fi
 }
 
-# @cmd Run an alisp file through the simulator
+# @cmd Run an alisp file through the simulator (debug mode by default)
 # @arg  file!           alisp file
 # @option -m --map      Run only a specific map (type like "gauntlet" or full name like "gauntlet-41jczs")
 # @option -s --seed     Global map seed (default: 42)
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
-# @flag      --no-debug Compile with DEBUG=0 and reject ABORT opcodes
+# @flag      --no-debug Compile with DEBUG=0 and reject ABORT opcodes (production mode)
 test() {
 	local -a flags=()
 	for d in ${argc_define+"${argc_define[@]}"}; do
 		flags+=(-D "$d")
 	done
-	local -a run_flags=(--allow-abort)
-	if [[ ${argc_no_debug+1} ]]; then
-		flags+=(-D DEBUG=0)
-		run_flags=()
+	local -a run_flags=()
+	if [[ ! ${argc_no_debug+1} ]]; then
+		flags+=(-D DEBUG=1)
+		run_flags=(--allow-abort)
 	fi
 	local asm
 	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?

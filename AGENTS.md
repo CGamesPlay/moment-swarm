@@ -4,7 +4,10 @@ We are developing algorithms to solve an ant simulation challenge. The goal is t
 
 ## Challenge
 
-Runs the training dataset using the given antssembly file. Prints a per-map score and a total score.
+SWARM is an ant colony simulator. You write a single program that controls all
+200 ants simultaneously (each ant runs the same program independently). The goal
+is to collect as much food as possible within 2000 ticks. Score is the average
+food collection ratio across 12 diverse maps, scaled to 0–1000.
 
 Example baseline using the example brain.ant file:
 
@@ -30,32 +33,19 @@ Score: 48/1000  (4.8% avg collection, 12 maps, 0 stalls, 778ms)
 
 We've built Antlisp, a lisp-based language specifically to solve this challenge.
 
-- ANTLISP.md is the language specification
-- ANTLISP-PATTERNS.md is a programming guide for the lanugage
+- ANTLISP.md is the language reference
+- ANTLISP-PATTERNS.md is a programming guide with strategies and patterns
 - reference.md is the underlying ISA documentation
-
-The key things to note:
-- The target machine has 8 registers, no stack, a 64-instruction limit per "tick", and no limit on program size.
-- Since there's no call/return mechanism, macros are the only form of code reuse — they expand inline at every call site. Use `dotimes`/`dolist` for unrolled loops and callback-style macro parameters for reusable control flow.
-- Actions (`move`, `pickup`, `drop`) end the ant's turn but don't reset the program counter — execution resumes at the next instruction on the next tick. Bookkeeping after a move runs normally.
-- Scope variables to the states where they're needed. Variables with non-overlapping lifetimes share the same physical register automatically via liveness analysis. Don't manually reuse registers; let the compiler do it.
-- Use `argc test file.alisp -o 1000` to test with an inflated op limit. If the score barely changes, the algorithm is the bottleneck — not op efficiency or stalls.
-- `--no-debug` causes the assembler to reject any `ABORT` opcode, acting as a production safety check that fails loudly if a debug guard was accidentally omitted.
-- The simulator is fully deterministic. Small score differences (±5-10 points) from pure refactoring are real but reflect code-layout effects on op budget, not algorithmic changes — don't chase them.
 
 ## Development commands
 
-The most common command is to run the test suite on a given alisp file. By default, it runs the same tests as the official practice maps. It can be overridden with parameters:
-
 ```bash
 argc test example.alisp             # Run official practice maps
-argc test example.alisp -o 1000     # Run official practice maps with artifically increased op limit
+argc test example.alisp -o 1000     # Inflated op limit (stall-free ceiling)
 argc test example.alisp -m open     # Run only the "open" map type
 argc test example.alisp -s 16       # Run a different set of maps
-argc test example.alisp --no-debug  # Set DEBUG=0 and disable ABORT opcode (production mode)
+argc test example.alisp --no-debug  # Production mode (DEBUG=0, rejects ABORTs)
 ```
-
-You may with to inspect the output of a program:
 
 ```bash
 argc compile example.alisp             # Print antssembly
@@ -63,17 +53,20 @@ argc compile example.alisp --dump-ssa  # Print the internal SSA representation
 argc compile example.alisp -D DEBUG=0  # Compile without debugging information
 ```
 
-You can also run alisp unit tests:
-
 ```bash
-argc unit compiler/antlisp.unit.alisp # Run specific unit file
+argc unit compiler/antlisp.unit.alisp  # Run specific unit file
+argc selftest                          # Run all compiler + program tests
 ```
 
-To run compiler tests (required when modifying the compiler). This runs all internal compiler tests, then re-validates all program tests and compiles all 
+## Interactive debugger
+
+Use `argc debug` with the tmux skill to step through ant behavior:
 
 ```bash
-argc selftest
+argc debug programs/example.alisp -m bridge   # Launch debugger on a specific map
 ```
+
+Key commands: `forward N`, `rewind N`, `break --id 103 --tick 110`, `continue`, `info [ID]`, `map [ID] [ph]`, `list [ADDR]`, `step`, `world`. Use breakpoints to reach a specific ant at a specific tick, then `step` to trace instruction-by-instruction. This is far more effective than adding ad-hoc trace code — a single reproducible scenario (ant ID + tick + position) beats sampling random ants from aggregate test output. See `compiler/debug.ts` for implementation details, and the `tmux` skill for session management.
 
 If you encounter an internal compiler error or compilation bug while working on an alisp program, immediately stop and ask the user for further instructions.
 
