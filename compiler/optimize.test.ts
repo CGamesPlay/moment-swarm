@@ -6,7 +6,8 @@ import { runSuite, test, assert, assertEq, assertIncludes, assertNotIncludes,
          lowerAndOptimize, lowerSource, printSSA,
          makeBlock, makeInstr, makePhi, makeProgram, link } from './test-helpers';
 import { constantFolding, copyPropagation, deadCodeElimination,
-         deadBlockElimination, comparisonRewriting, deadBranchChainElimination } from './optimize';
+         deadBlockElimination, comparisonRewriting, deadBranchChainElimination,
+         computeIdoms, globalCSE } from './optimize';
 import type { SSAProgram, BasicBlock } from './ssa';
 
 function optSSA(src: string): string {
@@ -431,6 +432,125 @@ runSuite('Optimize', () => {
     deadBranchChainElimination(program);
 
     assert(entry.terminator.op === 'br_cmp', 'entry should still be br_cmp');
+  });
+
+  // ── Dominator Tree ──
+
+  test('computeIdoms: linear chain A→B→C', () => {
+    const a = makeBlock('A');
+    const b = makeBlock('B');
+    const c = makeBlock('C');
+    a.terminator = { op: 'jmp', target: b };
+    link(a, b);
+    b.terminator = { op: 'jmp', target: c };
+    link(b, c);
+    const program = makeProgram([a, b, c]);
+    const idom = computeIdoms(program);
+    assert(idom.get(a) === null, 'idom(A) = null (entry)');
+    assert(idom.get(b) === a, 'idom(B) = A');
+    assert(idom.get(c) === b, 'idom(C) = B');
+  });
+
+  test('computeIdoms: diamond A→{B,C}→D', () => {
+    const a = makeBlock('A');
+    const b = makeBlock('B');
+    const c = makeBlock('C');
+    const d = makeBlock('D');
+    a.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 0, thenBlock: b, elseBlock: c };
+    link(a, b); link(a, c);
+    b.terminator = { op: 'jmp', target: d };
+    link(b, d);
+    c.terminator = { op: 'jmp', target: d };
+    link(c, d);
+    const program = makeProgram([a, b, c, d]);
+    const idom = computeIdoms(program);
+    assert(idom.get(b) === a, 'idom(B) = A');
+    assert(idom.get(c) === a, 'idom(C) = A');
+    assert(idom.get(d) === a, 'idom(D) = A');
+  });
+
+  // ── Global CSE ──
+
+  test('globalCSE: same computation in dominator → replaced with copy', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('const', '%t0', 5),
+      makeInstr('add', '%t1', '%t0', 1),
+    ]);
+    const succ = makeBlock('succ', [
+      makeInstr('add', '%t2', '%t0', 1),  // same as %t1
+      makeInstr('move', null, '%t2'),
+    ]);
+    entry.terminator = { op: 'jmp', target: succ };
+    link(entry, succ);
+    const program = makeProgram([entry, succ]);
+    globalCSE(program);
+    const replaced = succ.instrs.find(i => i.dest === '%t2')!;
+    assertEq(replaced.op, 'copy', 'redundant add should become copy');
+    assertEq(replaced.args[0], '%t1', 'should copy from dominating temp');
+  });
+
+  test('globalCSE: no dominance → both kept', () => {
+    const entry = makeBlock('entry');
+    const left = makeBlock('left', [
+      makeInstr('add', '%t1', '%t0', 1),
+      makeInstr('move', null, '%t1'),
+    ]);
+    const right = makeBlock('right', [
+      makeInstr('add', '%t2', '%t0', 1),
+      makeInstr('move', null, '%t2'),
+    ]);
+    entry.terminator = { op: 'br_cmp', cmpOp: 'eq', a: '%t0', b: 0, thenBlock: left, elseBlock: right };
+    link(entry, left); link(entry, right);
+    const program = makeProgram([entry, left, right]);
+    globalCSE(program);
+    // Neither should be replaced — they're siblings, no dominance
+    assertEq(left.instrs[0].op, 'add', 'left add should remain');
+    assertEq(right.instrs[0].op, 'add', 'right add should remain');
+  });
+
+  test('globalCSE: commutative ops with swapped args → matched', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('add', '%t2', '%t0', '%t1'),
+    ]);
+    const succ = makeBlock('succ', [
+      makeInstr('add', '%t3', '%t1', '%t0'),  // swapped
+      makeInstr('move', null, '%t3'),
+    ]);
+    entry.terminator = { op: 'jmp', target: succ };
+    link(entry, succ);
+    const program = makeProgram([entry, succ]);
+    globalCSE(program);
+    const replaced = succ.instrs.find(i => i.dest === '%t3')!;
+    assertEq(replaced.op, 'copy', 'commutative swapped add should become copy');
+  });
+
+  test('globalCSE: side-effectful ops not eliminated', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('sense', '%t1', 'HERE'),
+    ]);
+    const succ = makeBlock('succ', [
+      makeInstr('sense', '%t2', 'HERE'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    entry.terminator = { op: 'jmp', target: succ };
+    link(entry, succ);
+    const program = makeProgram([entry, succ]);
+    globalCSE(program);
+    assertEq(succ.instrs[0].op, 'sense', 'sense should NOT be CSE-eliminated');
+  });
+
+  test('globalCSE: same block CSE', () => {
+    const entry = makeBlock('entry', [
+      makeInstr('add', '%t1', '%t0', 1),
+      makeInstr('add', '%t2', '%t0', 1),  // same as %t1
+      makeInstr('move', null, '%t1'),
+      makeInstr('move', null, '%t2'),
+    ]);
+    const program = makeProgram([entry]);
+    globalCSE(program);
+    const replaced = entry.instrs.find(i => i.dest === '%t2')!;
+    assertEq(replaced.op, 'copy', 'same-block redundant add should become copy');
+    assertEq(replaced.args[0], '%t1');
   });
 
   test('deadBranchChainElimination: integration with source-level cond', () => {

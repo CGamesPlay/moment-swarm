@@ -4,6 +4,15 @@
 
 import { SSAProgram, BasicBlock, SSAInstr, PhiNode, isSideEffectFree, CmpOp } from './ssa';
 
+// ─── Pure ops: safe for CSE (deterministic, no state reads) ──
+const PURE_OPS = new Set([
+  'add', 'sub', 'mul', 'div', 'mod',
+  'and', 'or', 'xor', 'lshift', 'rshift',
+]);
+
+// Commutative ops: arg order doesn't matter for CSE key
+const COMMUTATIVE_OPS = new Set(['add', 'mul', 'and', 'or', 'xor']);
+
 // ─── 4a: Constant Folding ───────────────────────────────────
 
 export function constantFolding(program: SSAProgram): void {
@@ -466,11 +475,184 @@ export function comparisonRewriting(program: SSAProgram): void {
   }
 }
 
+// ─── 4g: Global Common Subexpression Elimination ────────────
+
+// Compute immediate dominators using iterative dataflow (Cooper, Harvey, Kennedy).
+// Returns idom map: block → immediate dominator (null for entry).
+export function computeIdoms(program: SSAProgram): Map<BasicBlock, BasicBlock | null> {
+  const idom = new Map<BasicBlock, BasicBlock | null>();
+  const blockIndex = new Map<BasicBlock, number>();
+  for (let i = 0; i < program.blocks.length; i++) {
+    blockIndex.set(program.blocks[i], i);
+  }
+
+  // Initialize: entry dominates itself, others undefined
+  idom.set(program.entryBlock, null);
+
+  // Intersect two blocks in the dominator tree using block indices
+  function intersect(b1: BasicBlock, b2: BasicBlock): BasicBlock {
+    let finger1 = b1;
+    let finger2 = b2;
+    while (finger1 !== finger2) {
+      while (blockIndex.get(finger1)! > blockIndex.get(finger2)!) {
+        finger1 = idom.get(finger1)!;
+      }
+      while (blockIndex.get(finger2)! > blockIndex.get(finger1)!) {
+        finger2 = idom.get(finger2)!;
+      }
+    }
+    return finger1;
+  }
+
+  // Iterate to fixed point
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const block of program.blocks) {
+      if (block === program.entryBlock) continue;
+
+      // Find first predecessor with a computed idom
+      let newIdom: BasicBlock | undefined;
+      for (const pred of block.preds) {
+        if (idom.has(pred)) {
+          newIdom = pred;
+          break;
+        }
+      }
+      if (newIdom === undefined) continue;
+
+      // Intersect with remaining processed predecessors
+      for (const pred of block.preds) {
+        if (pred === newIdom) continue;
+        if (idom.has(pred)) {
+          newIdom = intersect(pred, newIdom);
+        }
+      }
+
+      if (idom.get(block) !== newIdom) {
+        idom.set(block, newIdom);
+        changed = true;
+      }
+    }
+  }
+
+  return idom;
+}
+
+// Check if `dominator` dominates `block` by walking the idom chain.
+function dominates(
+  dominator: BasicBlock,
+  block: BasicBlock,
+  idom: Map<BasicBlock, BasicBlock | null>,
+): boolean {
+  let current: BasicBlock | null = block;
+  while (current !== null) {
+    if (current === dominator) return true;
+    current = idom.get(current) ?? null;
+  }
+  return false;
+}
+
+// Check if `dominator` dominates `block` within `maxDepth` idom steps.
+function closeDominator(
+  dominator: BasicBlock,
+  block: BasicBlock,
+  idom: Map<BasicBlock, BasicBlock | null>,
+  maxDepth: number,
+): boolean {
+  let current: BasicBlock | null = block;
+  for (let i = 0; i <= maxDepth && current !== null; i++) {
+    if (current === dominator) return true;
+    current = idom.get(current) ?? null;
+  }
+  return false;
+}
+
+export function globalCSE(program: SSAProgram): void {
+  const idom = computeIdoms(program);
+
+  // Build dominator tree children map
+  const children = new Map<BasicBlock, BasicBlock[]>();
+  for (const block of program.blocks) {
+    children.set(block, []);
+  }
+  for (const block of program.blocks) {
+    const parent = idom.get(block);
+    if (parent !== undefined && parent !== null) {
+      children.get(parent)!.push(block);
+    }
+  }
+
+  // Value table: CSE key → { temp, block }
+  const valueTable = new Map<string, { temp: string; block: BasicBlock }>();
+
+  function makeKey(op: string, args: (string | number)[]): string {
+    let a = args.slice();
+    if (COMMUTATIVE_OPS.has(op) && a.length === 2) {
+      // Sort args for canonical form
+      const s0 = String(a[0]);
+      const s1 = String(a[1]);
+      if (s0 > s1) { a = [a[1], a[0]]; }
+    }
+    return `${op}:${a.join(',')}`;
+  }
+
+  // Walk dominator tree in preorder
+  function visit(block: BasicBlock) {
+    const addedKeys: string[] = [];
+
+    for (const instr of block.instrs) {
+      if (!instr.dest || !PURE_OPS.has(instr.op)) continue;
+
+      const key = makeKey(instr.op, instr.args);
+      const existing = valueTable.get(key);
+
+      // Conservative: only CSE when dominating computation is within 2 steps
+      // up the idom chain, to limit live-range extension and avoid regalloc pressure.
+      if (existing && closeDominator(existing.block, block, idom, 2)) {
+        // Replace with copy of existing temp
+        const oldDest = instr.dest;
+
+        // Transfer metadata from replaced temp to surviving temp
+        const name = program.tempNames.get(oldDest);
+        if (name && !program.tempNames.has(existing.temp)) {
+          program.tempNames.set(existing.temp, name);
+        }
+        const loc = program.tempLocs.get(oldDest);
+        if (loc) {
+          program.tempLocs.set(existing.temp, loc);
+        }
+
+        instr.op = 'copy';
+        instr.args = [existing.temp];
+      } else {
+        // Record this computation
+        valueTable.set(key, { temp: instr.dest, block });
+        addedKeys.push(key);
+      }
+    }
+
+    // Visit children in dominator tree
+    for (const child of children.get(block) ?? []) {
+      visit(child);
+    }
+
+    // Remove entries added by this block (scope cleanup)
+    for (const key of addedKeys) {
+      valueTable.delete(key);
+    }
+  }
+
+  visit(program.entryBlock);
+}
+
 // ─── Run All Passes ─────────────────────────────────────────
 
 export function optimize(program: SSAProgram): void {
   constantFolding(program);
   copyPropagation(program);
+  globalCSE(program);
+  copyPropagation(program);  // clean up copies introduced by CSE
   deadCodeElimination(program);
   deadBlockElimination(program);
   deadBranchChainElimination(program);
