@@ -78,52 +78,52 @@
     ; no m2 computation, no second probe, no second move.
     (set! dir8 (and dir8 3))
     (while (> remaining 0)
-      ; ~11 ops: sniff + sense/smell + branch + mark
-      (mark-gradient NEST_TRAIL nest)
+           ; ~11 ops: sniff + sense/smell + branch + mark
+           (mark-gradient NEST_TRAIL nest)
 
-      ; ~2 ops: probe + branch
-      ; Check if the wall we're tracking has a gap
-      (if (!= (probe blocked) 1)
-        ; Gap found — face the gap direction and exit
-        (begin
-          (set! dir8 (- blocked 1))
-          (set! remaining -1)        ; sentinel: "gap found"
-          (break))
+           ; ~2 ops: probe + branch
+           ; Check if the wall we're tracking has a gap
+           (if (!= (probe blocked) 1)
+             ; Gap found — face the gap direction and exit
+             (begin
+               (set! dir8 (- blocked 1))
+               (set! remaining -1)        ; sentinel: "gap found"
+               (break))
 
-        ; Still walled — try to step along the wall via move-forward!
-        ; dir8 is always cardinal here, so move-forward! only computes
-        ; m1 (no m2), does one probe, and one move on success.
-        ; Failure costs ~8 ops; success ends the tick.
-        (if (= (move-forward! path dir8 (begin)) 1)
-          ; Moved — action happened, tick ends. Decrement budget for
-          ; next tick's iteration.
-          (set! remaining (- remaining 1))
+             ; Still walled — try to step along the wall via move-forward!
+             ; dir8 is always cardinal here, so move-forward! only computes
+             ; m1 (no m2), does one probe, and one move on success.
+             ; Failure costs ~8 ops; success ends the tick.
+             (if (= (move-forward! path dir8 (begin)) 1)
+               ; Moved — action happened, tick ends. Decrement budget for
+               ; next tick's iteration.
+               (set! remaining (- remaining 1))
 
-          ; move-forward! returned 0 — no action this iteration.
-          ; Since dir8 is cardinal, m2 is always 0, so failure means
-          ; m1 is a wall or the path is full.
-          (let ((m1 0))
-            (dir8-move1! m1 dir8)
-            (if (!= (probe m1) 1)
-              ; m1 is not a wall — path is full (all 4 segments occupied).
-              (begin
-                (set! remaining -2)  ; sentinel: "path full"
-                (break))
+               ; move-forward! returned 0 — no action this iteration.
+               ; Since dir8 is cardinal, m2 is always 0, so failure means
+               ; m1 is a wall or the path is full.
+               (let ((m1 0))
+                 (dir8-move1! m1 dir8)
+                 (if (!= (probe m1) 1)
+                   ; m1 is not a wall — path is full (all 4 segments occupied).
+                   (begin
+                     (set! remaining -2)  ; sentinel: "path full"
+                     (break))
 
-              ; m1 is a wall. Reverse direction and try the other way
-              ; along the wall.
-              (begin
-                (set! dir8 (xor dir8 2))
-                (dir8-move1! m1 dir8)
-                (when (= (probe m1) 1)
-                  ; Reversed direction also blocked — try perpendicular
-                  ; to the wall we're tracking
-                  (set! dir8 (- (turn-right blocked) 1))
-                  (dir8-move1! m1 dir8)
-                  (when (= (probe m1) 1)
-                    ; Both perpendiculars blocked — try the other one
-                    (set! dir8 (- (invert-dir (turn-right blocked)) 1))))
-                (set! remaining (- remaining 1)))))))) ; budget tick used
+                   ; m1 is a wall. Reverse direction and try the other way
+                   ; along the wall.
+                   (begin
+                     (set! dir8 (xor dir8 2))
+                     (dir8-move1! m1 dir8)
+                     (when (= (probe m1) 1)
+                       ; Reversed direction also blocked — try perpendicular
+                       ; to the wall we're tracking
+                       (set! dir8 (- (turn-right blocked) 1))
+                       (dir8-move1! m1 dir8)
+                       (when (= (probe m1) 1)
+                         ; Both perpendiculars blocked — try the other one
+                         (set! dir8 (- (invert-dir (turn-right blocked)) 1))))
+                     (set! remaining (- remaining 1)))))))) ; budget tick used
 
     ; Loop exited. Restore tag (scan-wall is called from exploring-path).
     (set-tag exploring)
@@ -177,30 +177,40 @@
     exploring
     (set-tag exploring)
 
-    ; Mark nest gradient (once per tick)
-    (mark-gradient NEST_TRAIL nest)
+    ; Snapshot gradient before marking. An unvisited cell (HERE=0)
+    ; gets self-painted by mark-gradient (from neighbors), which
+    ; hides the frontier crossing from the threshold check below.
+    (let ((pre-grad (sniff NEST_TRAIL here)))
 
-    ; Food adjacent? Grab it with +1 range trick
-    (let ((food-dir (sense food)))
-      (when (!= food-dir 0)
-        (move food-dir)
-        (mark-gradient FOOD_TRAIL food)
-        (pickup)
-        (mark FOOD_NEARBY 255)
-        (move (invert-dir food-dir))
-        (set! spiral-cd 0)
-        (go returning))
+      ; Mark nest gradient (once per tick)
+      (mark-gradient NEST_TRAIL nest)
 
-      ; Pickup beacon → spiral
-      (when (and (= spiral-cd 0)
-                (>= (sniff FOOD_NEARBY here) PICKUP_SIGNAL)
-                (= (sense food) 0))
-        (go spiraling)))
+      ; Food adjacent? Grab it with +1 range trick
+      (let ((food-dir (sense food)))
+        (when (!= food-dir 0)
+          (move food-dir)
+          (mark-gradient FOOD_TRAIL food)
+          (pickup)
+          (mark FOOD_NEARBY 255)
+          (move (invert-dir food-dir))
+          (set! spiral-cd 0)
+          (go returning))
 
-    ; Crossed into frontier? Start recording path
-    (when (< (sniff NEST_TRAIL here) TRAIL_THRESHOLD)
-      (set! path 0)
-      (go exploring-path))
+        ; Pickup beacon → spiral
+        (when (and (= spiral-cd 0)
+                   (>= (sniff FOOD_NEARBY here) PICKUP_SIGNAL)
+                   (= (sense food) 0))
+          (go spiraling)))
+
+      ; Crossed into frontier? Start recording path.
+      ; For cells that had gradient on arrival (pre-grad > 0), use the
+      ; post-mark value — these are part of the gradient network even
+      ; if decayed. For unvisited cells (pre-grad = 0), force
+      ; transition to path recording to prevent the tendril bug.
+      (when (or (= pre-grad 0)
+                (< (sniff NEST_TRAIL here) TRAIL_THRESHOLD))
+        (set! path 0)
+        (go exploring-path)))
 
     ; Decrement spiral cooldown
     (when (> spiral-cd 0)
@@ -407,13 +417,13 @@
 
         spiral-done)
 
-    (if (= (carrying?) 1)
-      (begin
-        (set! spiral-cd 0)
-        (go returning))
-      (begin
-        (set! spiral-cd SPIRAL_COOLDOWN)
-        (go exploring))))
+      (if (= (carrying?) 1)
+        (begin
+          (set! spiral-cd 0)
+          (go returning))
+        (begin
+          (set! spiral-cd SPIRAL_COOLDOWN)
+          (go exploring))))
 
     ; ────────────────────────────────────────
     ; RETURNING — hybrid: backtrack path, then follow gradient
@@ -441,10 +451,10 @@
 
       ; Backtrack one step
       (backtrack! path
-        (begin
-          (when (= (carrying?) 1)
-            (mark-gradient FOOD_TRAIL food))
-          (mark-gradient NEST_TRAIL nest)))
+                  (begin
+                    (when (= (carrying?) 1)
+                      (mark-gradient FOOD_TRAIL food))
+                    (mark-gradient NEST_TRAIL nest)))
 
       ; Check if we've reached the gradient zone
       (when (>= (sniff NEST_TRAIL here) TRAIL_THRESHOLD)

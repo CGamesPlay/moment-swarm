@@ -268,28 +268,27 @@
 ; Pick a random 8-way direction (0-7) whose first cardinal
 ; component isn't a wall. Avoids the reverse of `dir`.
 ;
-; Strategy: pick a random non-wall ISA cardinal direction
-; (cheap — only 4 candidates with direct PROBE), convert to
-; dir8, then randomly add the diagonal flag.
+; Strategy: compute the reverse ISA cardinal, offset by a
+; random 1-3 to pick one of the 3 non-reverse cardinals,
+; then rotate through walls. The rotation may pass through
+; the reverse — acceptable when most cardinals are walled.
+; After 3 probes all 4 cardinals are exhausted; the 4th is
+; taken unconditionally (map guarantees a clear neighbor).
 ;
 ; Uses 1 scratch register (isa). dir is input (current
 ; heading) and output (new heading).
 ; Total = 2 including dir.
 (defmacro random-nonwall-heading! (dir)
   (let ((isa 0))
-    ; Pick a random ISA cardinal (1-4), avoiding reverse.
-    ; Reverse cardinal of dir8: (dir XOR 2) & 3 + 1
+    ; Reverse ISA cardinal of dir8: (dir XOR 2) & 3 + 1
     (set! isa (+ (and (xor dir 2) 3) 1))
     ; Offset 1..3 from reverse covers the 3 non-reverse cardinals
-    ; (random 3) gives 0..2, add 1 to get offset 1..3
     (set! isa (+ (mod (+ isa (random 3)) 4) 1))
-    ; Rotate through walls (up to 3 retries, then fall back to reverse)
-    (when (= (probe isa) 1)
-      (set! isa (+ (mod isa 4) 1))
-      (when (= (probe isa) 1)
-        (set! isa (+ (mod isa 4) 1))
-        (when (= (probe isa) 1)
-          (set! isa (+ (mod isa 4) 1)))))
-    ; Convert ISA (1-4) to dir8 (0-3), then randomly add diagonal flag
-    (set! dir (+ (- isa 1) (* 4 (random 2))))))
+    ; Rotate through walls; after 3 probes the 4th is unconditional.
+    (dotimes (_ 3)
+      (when (!= (probe isa) 1) (break))
+      (set! isa (+ (mod isa 4) 1)))
+    ; Convert ISA (1-4) to dir8 (0-7): subtract 1 for cardinal (0-3),
+    ; then randomly add 4 for diagonal via (and (random 8) 4).
+    (set! dir (+ (- isa 1) (and (random 8) 4)))))
 
