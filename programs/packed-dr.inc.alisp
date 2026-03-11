@@ -119,66 +119,24 @@
 
 ; ─── Gradient trail marking ──────────────────────────────────
 ;
-; Seeds MAX_TRAIL at nest, propagates strongest_neighbor - 1 elsewhere.
-; Only marks if deficit > 0 (never reduces the gradient).
+; Shared helper: propagate a gradient on `ch` seeded by `seed-cond`.
+; Starts at 255 when (sense seed-cond) != 0; otherwise propagates
+; strongest_neighbor - 1.  Only marks if deficit > 0.
 ;
-; Uses 3 scratch registers (via let): current, strongest, tmp
-; ~20 instructions in worst case
-(defmacro mark-gradient ()
-  (let ((current (sniff TRAIL_PH here)))
-    (if (!= (sense nest) 0)
-      ; Adjacent to nest — seed the gradient
-      (when (< current MAX_TRAIL)
-        (mark TRAIL_PH (- MAX_TRAIL current)))
-      ; Not at nest — propagate from strongest neighbor
-      (let ((strongest (sniff TRAIL_PH n)))
-        (let ((tmp (sniff TRAIL_PH e)))
-          (when (> tmp strongest) (set! strongest tmp))
-          (set! tmp (sniff TRAIL_PH s))
-          (when (> tmp strongest) (set! strongest tmp))
-          (set! tmp (sniff TRAIL_PH w))
-          (when (> tmp strongest) (set! strongest tmp)))
+; Uses smell to find the strongest-neighbor direction, then one sniff
+; to read its intensity — cheaper than sniffing all 4 directions.
+;
+; Uses 2 scratch registers (via let): current, strongest
+(defmacro mark-gradient (ch seed-cond)
+  (let ((current (sniff ch here)))
+    (if (!= (sense seed-cond) 0)
+      ; Adjacent to seed — top up the gradient
+      (when (< current 255)
+        (mark ch (- 255 current)))
+      ; Not at seed — propagate from strongest neighbor via smell
+      (let ((strongest (sniff ch (smell ch))))
         ; target = strongest - 1; deficit = target - current
         (when (> strongest 0)
           (set! strongest (- strongest 1))
           (when (> strongest current)
-            (mark TRAIL_PH (- strongest current))))))))
-
-
-; ─── Delivering gradient trail marking ────────────────────────
-;
-; Same approach as mark-gradient but for DELIVERING_PH.
-; Seeds MAX_TRAIL at food cells, propagates strongest_neighbor - 1.
-; Only marks if deficit > 0 (never reduces the gradient).
-(defmacro mark-delivering-gradient ()
-  (let ((current (sniff DELIVERING_PH here)))
-    (if (!= (sense food) 0)
-      ; Adjacent to food — seed the delivering gradient
-      (when (< current MAX_TRAIL)
-        (mark DELIVERING_PH (- MAX_TRAIL current)))
-      ; Not at food — propagate from strongest neighbor
-      (let ((strongest (sniff DELIVERING_PH n)))
-        (let ((tmp (sniff DELIVERING_PH e)))
-          (when (> tmp strongest) (set! strongest tmp))
-          (set! tmp (sniff DELIVERING_PH s))
-          (when (> tmp strongest) (set! strongest tmp))
-          (set! tmp (sniff DELIVERING_PH w))
-          (when (> tmp strongest) (set! strongest tmp)))
-        ; target = strongest - 1; deficit = target - current
-        (when (> strongest 0)
-          (set! strongest (- strongest 1))
-          (when (> strongest current)
-            (mark DELIVERING_PH (- strongest current))))))))
-
-; ─── Food grab macro ─────────────────────────────────────────
-; Sense food, grab it, mark green beacon, go to returning.
-; Must be called inside tagbody with a `returning` label.
-(defmacro grab-food-if-adjacent (dir homepos)
-  (let ((food-dir (sense food)))
-    (when (!= food-dir 0)
-      (mark-gradient)
-      (set! dir food-dir)
-      (move-track-unsafe dir homepos)
-      (pickup)
-      (mark PICKUP_PH 255)
-      (go returning))))
+            (mark ch (- strongest current))))))))
