@@ -32,7 +32,7 @@ compile() {
 }
 
 # @cmd Run an alisp file through the simulator (debug mode by default)
-# @arg  file!           alisp file
+# @arg  file!           alisp or compiled .ant file
 # @option -m --map      Run only a specific map (type like "gauntlet" or full name like "gauntlet-41jczs")
 # @option -s --seed     Global map seed (default: 42)
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
@@ -48,12 +48,23 @@ test() {
 		flags+=(-D DEBUG=1)
 		run_flags=(--allow-abort)
 	fi
-	local asm
-	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
-	echo "$asm" | npx --prefix compiler tsx compiler/run.ts \
-		${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
-		${argc_max_ops+-o "$argc_max_ops"} \
-		${run_flags+"${run_flags[@]}"}
+	
+	# If the file is already a compiled .ant file, pass it directly to run.ts
+	if [[ "${argc_file:?}" == *.ant ]]; then
+		npx --prefix compiler tsx compiler/run.ts \
+			${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
+			${argc_max_ops+-o "$argc_max_ops"} \
+			${run_flags+"${run_flags[@]}"} \
+			"${argc_file:?}"
+	else
+		# Otherwise, compile the .alisp file first
+		local asm
+		asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
+		echo "$asm" | npx --prefix compiler tsx compiler/run.ts \
+			${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
+			${argc_max_ops+-o "$argc_max_ops"} \
+			${run_flags+"${run_flags[@]}"}
+	fi
 }
 
 # @cmd Run alisp unit tests
