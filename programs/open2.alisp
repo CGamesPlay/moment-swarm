@@ -26,9 +26,9 @@
 
 ; ── Local macros ──────────────────────────────────────────────────────────────
 
-; Sense food, grab it, mark green beacon, go to returning.
-; Must be called inside tagbody with a `returning` label.
-(defmacro grab-food-if-adjacent (dir homepos)
+; Sense food, grab it, mark green beacon, then invoke the provided action.
+; The `on-success` parameter is the action to take when food is picked up (e.g. (go returning)).
+(defmacro grab-food-if-adjacent (dir homepos on-success)
   (let ((food-dir (sense food)))
     (when (!= food-dir 0)
       (mark-gradient TRAIL_PH nest)
@@ -36,123 +36,53 @@
       (move-track-unsafe dir homepos)
       (pickup)
       (mark PICKUP_PH 255)
-      (go returning))))
+      (on-success))))
 
-; ══════════════════════════════════════════════════════════════════════════════
-; MAIN LOOP
-; ══════════════════════════════════════════════════════════════════════════════
-
-; Register budget (8 total):
-;   dir, homepos = 2 persistent
-;   counter = 1 dual-purpose per state
-;   explore-age = 1 dual-purpose per state
-;   ── 4 remaining for macro temps ──
-
-(let ((dir         0)  ; current movement direction
-      (homepos     0)  ; packed dx/dy displacement from nest
-      (counter     0)  ; EXPLORING: heading steps remaining
-                       ; SCANNING: the blocked direction to probe for gaps
-      (explore-age 0)) ; EXPLORING: ticks spent this run
-                       ; SCANNING: steps remaining in wall-follow
-  ; Initial dispersion: spread ants out using their IDs
-  (spread)
-  
+; Scan along a wall looking for a gap in `wall-dir`.
+; Walks perpendicular to the wall for up to `scan-steps` ticks, probing
+; `wall-dir` each tick. If a gap is found, sets dir = wall-dir and
+; invokes `on-success`. If budget exhausted, invokes `on-success`.
+; If gradient is too weak, invokes `on-abort`.
+;
+; `wall-dir`   — the blocked direction to probe for gaps
+; `scan-steps` — steps remaining (passed by reference, modified in-place)
+; `on-abort`    — action to take if gradient too weak (e.g. (go returning))
+; `on-success` — action to take if scan completes (e.g. (go exploring))
+;
+; Caller must have already called mark-gradient this tick before the
+; first entry; subsequent iterations mark normally.
+(defmacro scan-wall (dir homepos wall-dir scan-steps on-abort on-success)
   (tagbody
-    ; ────────────────────────────────────────
-    ; EXPLORING
-    ; ────────────────────────────────────────
-    exploring
-    (set-tag exploring)
+    (go scan-marked)
 
-    (grab-food-if-adjacent dir homepos)
-
-    ; Gradient trail marking
-    (mark-gradient TRAIL_PH nest)
-
-    ; Gradient too weak — beyond the frontier, turn back
-    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-      (go returning))
-
-    ; Green beacon — food was picked up here but none left → spiral to search nearby
-    (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
-              (= (sense food) 0))
-      (set! counter 1)
-      (set! explore-age 0)
-      (pick-random-nonwall dir)
-      (go spiraling))
-
-    ; DELIVERING gradient — follow toward food if signal is strong enough
-    (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
-      (let ((del-dir (smell DELIVERING_PH)))
-        (when (!= del-dir 0)
-          (set! dir del-dir)
-          (set! counter HEADING_STEPS))))
-
-    ; Pick new heading when counter (heading steps) runs out
-    (when (<= counter 0)
-      (let ((back (invert-dir dir)))
-        (pick-nonwall-no-reverse dir back))
-      (set! counter (+ (random HEADING_STEPS) 1)))
-
-    ; Wall check — if blocked, enter SCANNING state
-    (when (= (probe dir) 1)
-      ; Save the direction we want to go (through the wall)
-      (let ((wall-dir dir))
-        ; Pick perpendicular direction (random left or right turn)
-        (if (< (random 2) 1)
-          (set! dir (turn-right wall-dir))
-          (set! dir (invert-dir (turn-right wall-dir))))
-        ; If perpendicular is also blocked, try the other one
-        (when (= (probe dir) 1)
-          (set! dir (invert-dir dir))
-          (when (= (probe dir) 1)
-            (set! dir (invert-dir wall-dir))))
-        ; Repurpose counter as blocked-dir for scanning
-        (set! counter wall-dir))
-      ; Repurpose explore-age as scan countdown
-      (set! explore-age SCAN_STEPS)
-      (go scanning-marked))  ; skip mark-gradient — already called this tick
-
-    ; dir is known clear (wall case jumped to scanning above)
-    (move-track-unsafe dir homepos)
-    (set! counter (- counter 1))
-    (set! explore-age (+ explore-age 1))
-    (go exploring)
-
-    ; ────────────────────────────────────────
-    ; SCANNING — walk along wall, probing for gap
-    ; counter = the blocked direction we want to go through
-    ; explore-age = steps remaining in wall-follow
-    ; ────────────────────────────────────────
-    scanning
+    scan-top
     (set-tag scanning)
 
-    (grab-food-if-adjacent dir homepos)
+    (grab-food-if-adjacent dir homepos (on-abort))
 
     ; Gradient trail marking
     (mark-gradient TRAIL_PH nest)
 
     ; Gradient too weak — beyond the frontier, turn back
     (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-      (go returning))
+      (on-abort))
 
-    scanning-marked  ; entry point when mark-gradient already done (from exploring)
+    scan-marked
 
     ; Check if the blocked direction is now open (gap!)
-    (when (!= (probe counter) 1)
+    (when (!= (probe wall-dir) 1)
       ; Gap found — go through!
-      (set! dir counter)
-      (set! counter 0)
-      (set! explore-age (+ (random HEADING_STEPS) 1))
+      (set! dir wall-dir)
+      (set! wall-dir 0)
+      (set! scan-steps 0)
       ; dir was just probed as not-wall
       (move-track-unsafe dir homepos)
-      (go exploring))
+      (on-success))
 
     ; Scan limit reached — go back to exploring
-    (when (<= explore-age 0)
-      (set! counter 0)
-      (set! explore-age 0)
-      (go exploring))
+    (when (<= scan-steps 0)
+      (set! wall-dir 0)
+      (on-success))
 
     ; Keep walking along wall
     (when (= (probe dir) 1)
@@ -162,59 +92,143 @@
         (pick-random-nonwall dir)))
 
     (move-track dir homepos)
-    (set! explore-age (- explore-age 1))
-    (go scanning)
+    (set! scan-steps (- scan-steps 1))
+    (go scan-top)))
 
-    ; ────────────────────────────────────────
-    ; SPIRALING — outward spiral after losing delivery trail
-    ; counter = steps remaining in current leg
-    ; explore-age = legs completed (0..2*SPIRAL_RADIUS-1)
-    ;   leg length = (explore-age / 2) + 1
-    ; ────────────────────────────────────────
-    spiraling
+; Outward spiral search after losing a delivery trail or pickup beacon.
+; Spirals outward for `radius` legs, then invokes `on-done`.
+; If gradient is too weak or food is found, invokes `on-abort`.
+;
+; `leg-steps`  — steps remaining in current leg (passed by reference)
+; `legs`       — legs completed so far (passed by reference)
+; `radius`     — spiral radius (compile-time constant; completes after 2*radius legs)
+; `on-abort`   — action when gradient too weak or food grabbed
+; `on-done`    — action when spiral completes
+(defmacro spiral-search (dir homepos leg-steps legs radius on-abort on-done)
+  (tagbody
+    spiral-top
     (set-tag spiraling)
 
-    (grab-food-if-adjacent dir homepos)
+    (grab-food-if-adjacent dir homepos (on-abort))
 
     ; Gradient trail marking
     (mark-gradient TRAIL_PH nest)
 
     ; Gradient too weak — turn back
     (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-      (go returning))
+      (on-abort))
 
-    ; Spiral complete — resume exploring
-    (when (>= explore-age (* 2 SPIRAL_RADIUS))
-      (set! counter 0)
-      (set! explore-age 0)
-      (go exploring))
+    ; Spiral complete — done
+    (when (>= legs (* 2 radius))
+      (set! leg-steps 0)
+      (set! legs 0)
+      (on-done))
 
     ; Wall check — if blocked, enter scanning
     (when (= (probe dir) 1)
-      (let ((wall-dir dir))
-        (if (< (random 2) 1)
-          (set! dir (turn-right wall-dir))
-          (set! dir (invert-dir (turn-right wall-dir))))
+      (set! leg-steps dir)
+      (if (< (random 2) 1)
+        (set! dir (turn-right leg-steps))
+        (set! dir (invert-dir (turn-right leg-steps))))
+      (when (= (probe dir) 1)
+        (set! dir (invert-dir dir))
         (when (= (probe dir) 1)
-          (set! dir (invert-dir dir))
-          (when (= (probe dir) 1)
-            (set! dir (invert-dir wall-dir))))
-        (set! counter wall-dir))
-      (set! explore-age SCAN_STEPS)
-      (go scanning-marked))
+          (set! dir (invert-dir leg-steps))))
+      (set! legs SCAN_STEPS)
+      (scan-wall dir homepos leg-steps legs (on-abort) (on-done)))
 
     ; Take a step in the current direction (dir is known clear)
     (move-track-unsafe dir homepos)
-    (set! counter (- counter 1))
+    (set! leg-steps (- leg-steps 1))
 
     ; If leg finished, turn right and start next leg
-    (when (<= counter 0)
-      (set! explore-age (+ explore-age 1))
-      ; New leg length = (explore-age / 2) + 1, randomly +1 extra step
-      (set! counter (+ (/ explore-age 2) 1 (random 2)))
+    (when (<= leg-steps 0)
+      (set! legs (+ legs 1))
+      ; New leg length = (legs / 2) + 1, randomly +1 extra step
+      (set! leg-steps (+ (/ legs 2) 1 (random 2)))
       (set! dir (turn-right dir)))
 
-    (go spiraling)
+    (go spiral-top)))
+
+; ══════════════════════════════════════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════════════════════════════════════
+
+; Register budget (8 total):
+;   dir, homepos = 2 persistent (all states)
+;   steps, age   = 2 per-state scratch (reinitialized on each state entry)
+;   ── 4 remaining for macro temps ──
+
+(let ((dir     0)    ; current movement direction
+      (homepos 0))   ; packed dx/dy displacement from nest
+  ; Initial dispersion: spread ants out using their IDs
+  (spread)
+  
+  (tagbody
+    ; ────────────────────────────────────────
+    ; EXPLORING
+    ; ────────────────────────────────────────
+    exploring
+    (let ((steps 0) (age 0))
+      (loop
+        (set-tag exploring)
+
+        (grab-food-if-adjacent dir homepos (go returning))
+
+        ; Gradient trail marking
+        (mark-gradient TRAIL_PH nest)
+
+        ; Gradient too weak — beyond the frontier, turn back
+        (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+          (go returning))
+
+        ; Green beacon — food was picked up here but none left → spiral to search nearby
+        (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
+                  (= (sense food) 0))
+          (pick-random-nonwall dir)
+          (go spiraling))
+
+        ; DELIVERING gradient — follow toward food if signal is strong enough
+        (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
+          (let ((del-dir (smell DELIVERING_PH)))
+            (when (!= del-dir 0)
+              (set! dir del-dir)
+              (set! steps HEADING_STEPS))))
+
+        ; Pick new heading when steps runs out
+        (when (<= steps 0)
+          (let ((back (invert-dir dir)))
+            (pick-nonwall-no-reverse dir back))
+          (set! steps (+ (random HEADING_STEPS) 1)))
+
+        ; Wall check — if blocked, enter SCANNING state
+        (when (= (probe dir) 1)
+          ; Borrow steps/age as scratch for scan-wall
+          (set! steps dir)
+          ; Pick perpendicular direction (random left or right turn)
+          (if (< (random 2) 1)
+            (set! dir (turn-right steps))
+            (set! dir (invert-dir (turn-right steps))))
+          ; If perpendicular is also blocked, try the other one
+          (when (= (probe dir) 1)
+            (set! dir (invert-dir dir))
+            (when (= (probe dir) 1)
+              (set! dir (invert-dir steps))))
+          (set! age SCAN_STEPS)
+          (scan-wall dir homepos steps age (go returning) (continue)))
+
+        ; dir is known clear (wall case jumped to scanning above)
+        (move-track-unsafe dir homepos)
+        (set! steps (- steps 1))
+        (set! age (+ age 1))))
+
+    ; ────────────────────────────────────────
+    ; SPIRALING — outward spiral after losing delivery trail
+    ; ────────────────────────────────────────
+    spiraling
+    (let ((steps 1) (age 0))
+      (spiral-search dir homepos steps age SPIRAL_RADIUS
+                     (go returning) (go exploring)))
 
     ; ────────────────────────────────────────
     ; RETURNING — follow gradient trail home
@@ -230,16 +244,12 @@
         (move-track-unsafe dir homepos)
         (drop)
         (set! homepos 0)
-        (set! explore-age 0)
-        (set! counter 0)
         (go exploring)))
 
     ; Carrying: mark delivering gradient; Not carrying: resume exploring if near home
     (if (= (carrying?) 1)
       (mark-gradient DELIVERING_PH food)
       (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
-        (set! explore-age 0)
-        (set! counter 0)
         (go exploring)))
 
     ; Gradient trail marking (reinforce on the way home)
