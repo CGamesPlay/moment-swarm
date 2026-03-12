@@ -92,6 +92,10 @@
 (defmacro invert-dir (d)
   (+ (mod (+ d 1) 4) 1))
 
+; Turn left: N→W, W→S, S→E, E→N  (counterclockwise)
+(defmacro turn-left (d)
+  (+ (mod (+ d 2) 4) 1))
+
 ; Turn right: N→E, E→S, S→W, W→N
 (defmacro turn-right (d)
   (+ (mod d 4) 1))
@@ -151,3 +155,5 @@
       (set! strongest (- strongest 1))
       (when (> strongest current)
         (mark ch (- strongest current))))))
+
+; vim:ft=lisp:sw=2

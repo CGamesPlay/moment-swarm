@@ -1,0 +1,226 @@
+; ── TRACING2 — Random Walk + Wall Tracing Forager ────────────────────────────
+;
+; States:
+;
+;   WALKING     Random-walk exploration. Biased toward going straight with
+;               occasional turns. On food → pick up, go to RETURNING.
+;               On wall → choose CW/CCW, go to TRACING-OUT.
+;
+;   TRACING-OUT Follow the wall found during WALKING. Each step has a
+;               random chance to detach and resume WALKING.
+;
+;   RETURNING   Dead-reckon home via packed dx/dy. On reaching nest →
+;               drop food, go to WALKING. On wall ahead → choose CW/CCW,
+;               take one trace-step, go to TRACING-HOME.
+;
+;   TRACING-HOME Follow the wall blocking the return path. Escape when
+;               home direction points ahead or away from the tracing wall.
+;               Budget-limited: bail with a random step after N ticks
+;               to avoid getting stuck on micro-wall clusters.
+;
+; CW/CCW choice when entering a trace:
+;   - If the wall extends left → CCW (wall-side = left).
+;   - If it extends right → CW (wall-side = right).
+;   - Dead ahead only → random.
+;   - RETURNING has WRONG_WAY_CHANCE to invert, forcing the ant around
+;     the far side of short fragments instead of always taking the
+;     shortcut that leads right back to the same wall face.
+;
+; Register budget (8 total):
+;   dir     = 1  current movement direction (1–4)
+;   homepos = 1  packed dx/dy displacement from nest
+;   cw      = 1  tracing rotation sense (1=CW, 0=CCW)
+;   ── 5 remaining for macro temps ──
+
+(include "./packed-dr.inc.alisp")
+
+; ── Tuning constants ──────────────────────────────────────────────────────────
+
+; Random walk straight bias.  Roll (random STRAIGHT_FRACTION+2):
+;   0 → turn left, 1 → turn right, else → go straight.
+; @hp min=2 max=20 step=2
+(const STRAIGHT_FRACTION 16)
+
+; 1-in-N chance each step to detach from wall and resume WALKING.
+; @hp min=4 max=20 step=2
+(const WALL_LEAVE_CHANCE 8)
+
+; Max trace-steps in TRACING-HOME before bailing out with a random step.
+; @hp min=10 max=50 step=5
+(const TRACE_HOME_BUDGET 20)
+
+; 1-in-N chance to trace "the wrong way" when RETURNING hits a wall.
+; @hp min=2 max=8 step=1
+(const WRONG_WAY_CHANCE 3)
+
+; ── Direction helpers ─────────────────────────────────────────────────────────
+
+; Wall-side direction: CW → right of dir, CCW → left of dir.
+(defmacro wall-side-of (dir cw)
+  (if (= cw 1) (turn-right dir) (turn-left dir)))
+
+; Away-from-wall direction: CW → left of dir, CCW → right of dir.
+(defmacro turn-away (dir cw)
+  (if (= cw 1) (turn-left dir) (turn-right dir)))
+
+; ── Wall tracing step ─────────────────────────────────────────────────────────
+;
+; One step of standard wall-following.  Priority:
+;   1. Wall-side open  → turn toward it (follow concavity)
+;   2. Ahead open      → walk forward   (wall alongside)
+;   3. Ahead blocked   → turn away      (convex corner)
+;   4. Still blocked   → reverse         (dead end)
+;
+; Contains a move — ends the tick.  Does NOT sense food or change state.
+
+(defmacro trace-step (dir cw homepos)
+  (let ((ws (wall-side-of dir cw)))
+    (if (!= (probe ws) 1)
+      (begin
+        (set! dir ws)
+        (move-track dir homepos))
+      (if (!= (probe dir) 1)
+        (move-track-unsafe dir homepos)
+        (begin
+          (set! dir (turn-away dir cw))
+          (if (!= (probe dir) 1)
+            (move-track dir homepos)
+            (begin
+              (set! dir (invert-dir dir))
+              (move-track dir homepos))))))))
+
+; ── Grab adjacent food ────────────────────────────────────────────────────────
+; Sense food, step toward it, pick up.  Caller provides on-success action
+; (e.g. (go returning)) which fires after pickup.
+
+(defmacro grab-food (dir homepos on-success)
+  (let ((fd (sense food)))
+    (when (!= fd 0)
+      (set! dir fd)
+      (move-track-unsafe dir homepos)
+      (pickup)
+      (on-success))))
+
+; ── Pick CW/CCW from wall geometry ───────────────────────────────────────────
+; Wall is dead ahead in `dir`.  Probe left/right to decide rotation sense.
+
+(defmacro pick-cw-from-wall (dir cw)
+  (if (= (probe (turn-left dir)) 1)
+    (set! cw 0)
+    (if (= (probe (turn-right dir)) 1)
+      (set! cw 1)
+      (set! cw (random 2)))))
+
+; ══════════════════════════════════════════════════════════════════════════════
+; MAIN PROGRAM
+; ══════════════════════════════════════════════════════════════════════════════
+
+(let ((dir (+ (random 4) 1))
+      (homepos 0)
+      (cw 0))
+
+  (tagbody
+
+    ; ── WALKING ──────────────────────────────────────────────────────────────
+    walking
+    (loop
+      (set-tag walking)
+
+      (grab-food dir homepos (go returning))
+
+      ; Steer: 0 = left, 1 = right, else = straight
+      (let ((roll (random (+ STRAIGHT_FRACTION 2))))
+        (cond
+          ((= roll 0) (set! dir (turn-left dir)))
+          ((= roll 1) (set! dir (turn-right dir)))))
+
+      (if (!= (probe dir) 1)
+        (move-track-unsafe dir homepos)
+        (begin
+          (pick-cw-from-wall dir cw)
+          (set! dir (turn-away dir cw))
+          (go tracing-out))))
+
+    ; ── TRACING-OUT ──────────────────────────────────────────────────────────
+    tracing-out
+    (loop
+      (set-tag tracing)
+
+      (grab-food dir homepos (go returning))
+
+      ; Random chance to detach from wall
+      (when (= (random WALL_LEAVE_CHANCE) 0)
+        (set! dir (turn-away dir cw))
+        (when (= (probe dir) 1)
+          (set! dir (invert-dir dir)))
+        (go walking))
+
+      (trace-step dir cw homepos))
+
+    ; ── RETURNING ────────────────────────────────────────────────────────────
+    returning
+    (loop
+      (set-tag returning)
+
+      ; Nest check
+      (let ((nd (sense nest)))
+        (when (!= nd 0)
+          (set! dir nd)
+          (move-track-unsafe dir homepos)
+          (drop)
+          (set! homepos 0)
+          (go walking)))
+
+      (home-dir dir homepos)
+
+      (if (!= (probe dir) 1)
+        (move-track-unsafe dir homepos)
+
+        ; Wall ahead — set up CW/CCW and enter TRACING-HOME.
+        ; Inline the first trace-step so the tick ends here and
+        ; TRACING-HOME starts with a fresh 64-op budget.
+        (begin
+          (pick-cw-from-wall dir cw)
+          (when (= (random WRONG_WAY_CHANCE) 0)
+            (set! cw (- 1 cw)))
+          (set! dir (turn-away dir cw))
+          (trace-step dir cw homepos)
+          (go tracing-home))))
+
+    ; ── TRACING-HOME ─────────────────────────────────────────────────────────
+    tracing-home
+    (let ((steps 1))
+      (loop
+        (set-tag tracing-home)
+
+        ; Nest check
+        (let ((nd (sense nest)))
+          (when (!= nd 0)
+            (set! dir nd)
+            (move-track-unsafe dir homepos)
+            (drop)
+            (set! homepos 0)
+            (go walking)))
+
+        ; Budget expired — flip CW/CCW, jitter, resume dead-reckoning
+        (when (>= steps TRACE_HOME_BUDGET)
+          (set! cw (- 1 cw))
+          (pick-random-nonwall dir)
+          (move-track dir homepos)
+          (go returning))
+
+        ; Escape check: if home is ahead or away from the tracing wall,
+        ; the wall is no longer blocking us.  Step home and resume DR.
+        ; (Takes a step here to avoid stalling — returning would call
+        ; home-dir again on the same tick and exceed the op budget.)
+        (let ((hdir 0))
+          (home-dir hdir homepos)
+          (when (or (= hdir (turn-away dir cw)) (= hdir dir))
+            (set! dir hdir)
+            (move-track dir homepos)
+            (go returning)))
+
+        (trace-step dir cw homepos)
+        (set! steps (+ steps 1))))))
+
+; vim:ft=lisp:sw=2

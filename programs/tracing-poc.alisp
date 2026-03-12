@@ -1,4 +1,4 @@
-; ── TRACER — Wall-Following Validation ───────────────────────────────────────
+; ── TRACING — Wall-Following Validation ───────────────────────────────────────
 ;
 ; Goal: validate wall-following logic. Not a forager — ignores food entirely.
 ;
@@ -28,10 +28,6 @@
 (const DEBUG 0)
 (const TRACE_MARK ch_red)
 (const MARK_STRENGTH 128)
-
-; Turn left: N→W, W→S, S→E, E→N
-(defmacro turn-left (d)
-  (+ (mod (+ d 2) 4) 1))
 
 ; Compute wall-side direction given dir and cw flag.
 ; CW: wall on right = turn-right(dir)
