@@ -479,6 +479,13 @@ def _(
                 action="store_true",
                 help="Write best combo back to file",
             )
+            _parser.add_argument(
+                "--params",
+                nargs="+",
+                metavar="NAME",
+                default=None,
+                help="Only sweep these parameters (others are pinned to current value)",
+            )
             _args = _parser.parse_args()
 
             # Resolve file path
@@ -490,10 +497,22 @@ def _(
                 sys.exit(1)
 
             # Parse annotations
-            _lines, _params = parse_annotations(_filepath)
-            if not _params:
+            _lines, _all_params = parse_annotations(_filepath)
+            if not _all_params:
                 print("error: no @hp annotations found", file=sys.stderr)
                 sys.exit(1)
+
+            # Split into swept vs pinned based on --params filter
+            if _args.params is not None:
+                _unknown = set(_args.params) - {p.name for p in _all_params}
+                if _unknown:
+                    print(f"error: unknown params: {', '.join(sorted(_unknown))}", file=sys.stderr)
+                    sys.exit(1)
+                _params = [p for p in _all_params if p.name in _args.params]
+                _cli_pinned = [(p.name, p.current_val) for p in _all_params if p.name not in _args.params]
+            else:
+                _params = _all_params
+                _cli_pinned = []
 
             # Build search space
             _combos = build_search_space(_params)
@@ -504,6 +523,8 @@ def _(
             print(f"{'=' * 70}")
             print(f"File: {_filepath}")
             print(f"Parameters: {len(_params)}")
+            if _cli_pinned:
+                print(f"Pinned: {', '.join(f'{n}={v}' for n, v in _cli_pinned)}")
             print(f"Combinations: {len(_combos)}")
             print(
                 f"Seeds: {len(_seeds)} (from {_args.seed_start} to {_args.seed_start + _args.seeds - 1})"
@@ -527,6 +548,7 @@ def _(
                 _args.relax_ops,
                 _args.jobs,
                 print_fn=print,
+                pinned_params=_cli_pinned,
             )
 
             # Analyze results

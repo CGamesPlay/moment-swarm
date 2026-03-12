@@ -83,6 +83,38 @@ In debug mode, the simulator reports aborts with numeric codes. User-defined cod
 
 These built-in aborts only fire in debug mode (`--allow-abort`). In production (`--no-debug`), invalid moves are silently ignored by the engine.
 
+## Hyperparameter sweeps
+
+Use `hyperparameters.py` to sweep `(const NAME val)` parameters annotated with `; @hp`:
+
+```lisp
+; @hp min=4 max=14 step=4
+(const WALL_LEAVE_MIN 10)
+```
+
+```bash
+uv run hyperparameters.py programs/foo.alisp                # sweep all @hp params
+uv run hyperparameters.py programs/foo.alisp -s 5           # 5 seeds
+uv run hyperparameters.py programs/foo.alisp --params A B   # only sweep A and B (others pinned)
+uv run hyperparameters.py programs/foo.alisp --write        # write best values back to file
+```
+
+**Cost model:** each combination × seed is one `argc test` call, which takes ~1 second. With `-j 8` parallel workers, wall time is roughly `(combos × seeds) / 8` seconds. Combinations multiply across parameters:
+
+| Parameters | Values each | Combos | Seeds | Jobs | Wall time (~j=8) |
+|---|---|---|---|---|---|
+| 1 | 5 | 5 | 5 | 25 | ~3s |
+| 2 | 5 | 25 | 5 | 125 | ~16s |
+| 3 | 5 | 125 | 5 | 625 | ~78s |
+| 4 | 5 | 625 | 5 | 3125 | ~6.5 min |
+| 5 | 5 | 3125 | 5 | 15625 | ~33 min |
+
+**Avoid combinatorial explosion:** sweep at most 2–3 parameters at a time. Use `--params` to restrict which parameters are swept. Run coarse ranges first (large step), then zoom in around the best value with a finer step.
+
+**Seeds:** more seeds = less noise but proportionally more jobs. 4–8 seeds is usually enough to distinguish real signal from map-to-map variance.
+
+**The tool does not support non-contiguous value lists** (e.g. `3 4 5 7 10`). Use a contiguous `min/max/step` range that covers the region of interest, or run a manual loop for sparse spot-checks.
+
 ## Agent-User Relationship
 
 The user is suggesting strategies and agent is implementing them. Sometimes the strategies perform worse by some metrics. Sometimes the user points out a problem with an implementation to highlight a bug. In general, push forward rather than walking back. Only revert changes that the user has explicitly asked for, or when you are unable to resolve correctness issues and want to fulfill the user's directions from a clean slate.
