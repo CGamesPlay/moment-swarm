@@ -82,7 +82,7 @@ interface DebugState {
   sourceLines: string[];
   bytecode: Int32Array;
   instrCount: number;
-  currentAntId: number | null;
+  currentAntId: number;
   breakpoints: Breakpoint[];
   watchpoints: Watchpoint[];
   nextBreakpointId: number;
@@ -177,7 +177,6 @@ function restoreToTick(state: DebugState, targetTick: number) {
   state.world.abortCounts = 0;
   state.world.abortsByCode = undefined;
   state.tickProgress = { nextAntIndex: 0, tickStarted: false };
-  state.currentAntId = null;
   return true;
 }
 
@@ -456,10 +455,6 @@ function computeSensors(ant: any, map: any, antGrid: any) {
 
 function printInfo(state: DebugState, antId?: number) {
   const id = antId ?? state.currentAntId;
-  if (id === null || id === undefined) {
-    console.log("No ant selected. Use: info <ID>");
-    return;
-  }
   const ant = state.world.ants[id];
   if (!ant) { console.log(`Invalid ant ID: ${id}`); return; }
 
@@ -473,8 +468,10 @@ function printInfo(state: DebugState, antId?: number) {
   for (let r = 0; r < NUM_REGISTERS; r++) {
     const alias = aliases?.get(r);
     const label = alias ? `${alias}(r${r})` : `r${r}`;
-    regLine += `  ${label.padEnd(10)}=${String(ant.regs[r]).padStart(4)}`;
-    if (r === 3 || r === 7) regLine += "\n";
+    const uval = (ant.regs[r] >>> 0).toString(16).padStart(8, "0");
+    const dval = ant.regs[r].toString(10).padStart(10);
+    regLine += `  ${label.padEnd(10)} = 0x${uval} (${dval})`;
+    if (r === 1 || r === 3 || r === 5 || r === 7) regLine += "\n";
   }
   console.log(regLine);
 
@@ -490,7 +487,7 @@ function printInfo(state: DebugState, antId?: number) {
 }
 
 function printList(state: DebugState, addr?: number) {
-  const ant = state.currentAntId !== null ? state.world.ants[state.currentAntId] : null;
+  const ant = state.world.ants[state.currentAntId];
   const center = addr ?? (ant ? ant.pc : 0);
   const start = Math.max(0, center - 10);
   const end = Math.min(state.instrCount, center + 11);
@@ -508,7 +505,6 @@ function printList(state: DebugState, addr?: number) {
 
 function printMapView(state: DebugState, antId?: number, what?: string) {
   const id = antId ?? state.currentAntId;
-  if (id === null || id === undefined) { console.log("No ant selected."); return; }
   const ant = state.world.ants[id];
   if (!ant) { console.log(`Invalid ant ID: ${id}`); return; }
 
@@ -645,6 +641,7 @@ function executeCommand(state: DebugState, line: string): "continue" | "quit" | 
 Simulation control:
   continue (c)         Run until breakpoint or end
   forward N            Run N ticks forward
+  tick                 Run one full tick; pause before current ant in next tick
   rewind N             Rewind N ticks
   world                Print world info
   quit (q)             Exit
@@ -690,12 +687,7 @@ Inspection (when paused):
 
     case "forward": {
       const n = parseInt(rest[0], 10) || 1;
-      // Finish current tick if mid-tick, then run N-1 more
       const targetTick = state.world.tick + n;
-      // If paused mid-tick on an ant, skip past it so we don't re-fire the same breakpoint
-      if (state.tickProgress.tickStarted && state.currentAntId !== null) {
-        state.tickProgress.nextAntIndex = state.currentAntId + 1;
-      }
       // Set a temporary tick breakpoint
       const tempBp: Breakpoint = { id: -1, tick: targetTick, antId: 0, regConditions: [] };
       state.breakpoints.push(tempBp);
@@ -714,6 +706,38 @@ Inspection (when paused):
       } else if (result.reason === "stall") {
         const ant = state.world.ants[result.antId!];
         console.log(`Ant #${result.antId} stalled at tick ${state.world.tick}, pc=${ant.pc}`);
+      } else {
+        console.log(`Simulation ended at tick ${state.world.tick}.`);
+      }
+      return "prompt";
+    }
+
+    case "tick": {
+      const resumeAntId = state.currentAntId;
+      const targetTick = state.world.tick + 1;
+
+      const tempBp: Breakpoint = {
+        id: -1,
+        tick: targetTick,
+        antId: resumeAntId,
+        regConditions: [],
+      };
+      state.breakpoints.push(tempBp);
+      const result = runUntilBreak(state);
+      state.breakpoints = state.breakpoints.filter(b => b !== tempBp);
+
+      if (result.reason === "breakpoint" && state.world.tick === targetTick) {
+        console.log(`Tick complete. Paused at tick ${state.world.tick} before ant #${resumeAntId}.`);
+      } else if (result.reason === "abort") {
+        const ant = state.world.ants[result.antId!];
+        console.log(`Ant #${result.antId} aborted (code ${ant._aborted}) at tick ${state.world.tick}, pc=${ant.pc}`);
+      } else if (result.reason === "stall") {
+        const ant = state.world.ants[result.antId!];
+        console.log(`Ant #${result.antId} stalled at tick ${state.world.tick}, pc=${ant.pc}`);
+      } else if (result.reason === "watchpoint") {
+        const wp = result.watchpoint!;
+        const ant = state.world.ants[result.antId!];
+        console.log(`Watchpoint #${wp.id} hit: ant #${result.antId} at (${ant.x},${ant.y}), tick ${state.world.tick}`);
       } else {
         console.log(`Simulation ended at tick ${state.world.tick}.`);
       }
@@ -741,7 +765,6 @@ Inspection (when paused):
         state.breakpoints = state.breakpoints.filter(b => b !== tempBp);
       }
       console.log(`Rewound to tick ${state.world.tick}.`);
-      state.currentAntId = null;
       return "prompt";
     }
 
@@ -843,10 +866,6 @@ Inspection (when paused):
 
     case "step":
     case "s": {
-      if (state.currentAntId === null) {
-        console.log("No ant selected. Set a breakpoint first.");
-        return "prompt";
-      }
       const ant = state.world.ants[state.currentAntId];
       if (ant._aborted !== undefined) {
         console.log(`Ant #${state.currentAntId} is aborted (code ${ant._aborted}).`);
@@ -970,7 +989,7 @@ async function main() {
     sourceLines: source.split("\n"),
     bytecode,
     instrCount,
-    currentAntId: null,
+    currentAntId: 0,
     breakpoints: [],
     watchpoints: [],
     nextBreakpointId: 1,
