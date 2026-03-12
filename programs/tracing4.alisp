@@ -1,0 +1,360 @@
+; ── TRACER4 — open2 gradient architecture + tracing3 wall-following ──────────
+;
+; Base: open2's gradient homing, 3-channel pheromones, spiral search, spread.
+; Added: tracing3's proper wall-following (trace-step) for both exploration
+; and return navigation, replacing random wall-bouncing.
+;
+; States:
+;
+;   EXPLORING    Gradient-guided random walk. Marks TRAIL_PH gradient.
+;                Follows DELIVERING_PH trails. Detects food, pickup beacons.
+;                On wall → enter TRACING-OUT.
+;
+;   TRACING-OUT  Follow wall found during EXPLORING using shared trace-step.
+;                Detach on: random chance, DELIVERING_PH trail, opening entry.
+;                Still marks gradient and senses food.
+;                On gradient too weak → RETURNING.
+;
+;   SPIRALING    Outward spiral after pickup beacon (food was here).
+;                Uses scan-wall for gap-finding (unchanged from open2).
+;
+;   RETURNING    Follow gradient trail home. Drop DELIVERING_PH.
+;                Fallback: dead-reckon via homepos.
+;                On wall → enter TRACING-HOME.
+;
+;   TRACING-HOME Follow wall blocking return path. Drop DELIVERING_PH.
+;                Escape when dir == tdir AND wall-side clears.
+;                Shares trace-step code with TRACING-OUT.
+;
+; Size optimization: trace-step is expanded once. It lives at the bottom
+; of the tracing-home loop so tracing-home falls through naturally.
+; tracing-out jumps to `do-trace-step` and is dispatched back afterward.
+;
+; Register budget (8 total):
+;   dir     = 1  current movement direction (1-4)
+;   homepos = 1  packed dx/dy displacement from nest
+;   cw      = 1  tracing rotation sense (1=CW, 0=CCW)
+;   tdir    = 1  target direction for TRACING-HOME escape check
+;   steps   = 1  per-state scratch (exploring heading counter)
+;   ── 3 remaining for macro temps ──
+
+(include "./packed-dr.inc.alisp")
+(include "./spread.inc.alisp")
+
+; ── Constants ──
+(const TRAIL_PH ch_red)          ; gradient trail channel
+(const DELIVERING_PH ch_green)   ; food-delivery breadcrumb channel
+(const PICKUP_PH ch_blue)        ; "food was here" beacon channel
+
+(const USE_SPREAD 1)
+; @hp min=32 max=64 step=4
+(const HEADING_STEPS 40)
+(const GRADIENT_GO_HOME 2)
+(const GRADIENT_NEAR_HOME 32)
+(const DELIVERY_GO_TOWARD 2)
+; @hp min=1 max=7 step=1
+(const SPIRAL_RADIUS 3)
+(const PICKUP_SIGNAL 10)
+
+; ── Wall-tracing constants ──
+; @hp min=4 max=30 step=2
+(const WALL_LEAVE_CHANCE 20)
+; @hp min=2 max=8 step=1
+(const WRONG_WAY_CHANCE 6)
+; @hp min=2 max=8 step=1
+(const OPENING_ENTER_CHANCE 2)
+
+
+; ── Local macros ──────────────────────────────────────────────────────────────
+
+; Sense food, grab it, mark gradient + pickup beacon, then invoke action.
+(defmacro grab-food-if-adjacent (dir homepos on-success)
+  (let ((food-dir (sense food)))
+    (when (!= food-dir 0)
+      (mark-gradient TRAIL_PH nest)
+      (set! dir food-dir)
+      (move-track-unsafe dir homepos)
+      (pickup)
+      (mark PICKUP_PH 255)
+      (on-success))))
+
+; Lighter food grab — skip mark-gradient (caller already marked).
+(defmacro grab-food-light (dir homepos on-success)
+  (let ((food-dir (sense food)))
+    (when (!= food-dir 0)
+      (set! dir food-dir)
+      (move-track-unsafe dir homepos)
+      (pickup)
+      (mark PICKUP_PH 255)
+      (on-success))))
+
+; ── Wall-tracing macros ───────────────────────────────────────────────────────
+
+(defmacro wall-side-of (dir cw)
+  (if (= cw 1) (turn-right dir) (turn-left dir)))
+
+(defmacro turn-away (dir cw)
+  (if (= cw 1) (turn-left dir) (turn-right dir)))
+
+; Pick CW/CCW from wall geometry.  Wall is dead ahead in `dir`.
+(defmacro pick-cw-from-wall (dir cw)
+  (if (= (probe (turn-left dir)) 1)
+    (set! cw 0)
+    (if (= (probe (turn-right dir)) 1)
+      (set! cw 1)
+      (set! cw (random 2)))))
+
+; ── Spiral search macro ───────────────────────────────────────────────────────
+
+(defmacro spiral-search (dir homepos leg-steps legs radius on-abort on-done)
+  (tagbody
+    spiral-top
+    (set-tag spiraling)
+
+    (mark-gradient TRAIL_PH nest)
+
+    (grab-food-light dir homepos (on-abort))
+
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (on-abort))
+
+    (when (>= legs (* 2 radius))
+      (set! leg-steps 0)
+      (set! legs 0)
+      (on-done))
+
+    (when (= (probe dir) 1)
+      (pick-random-nonwall dir))
+
+    (move-track-unsafe dir homepos)
+    (set! leg-steps (- leg-steps 1))
+
+    (when (<= leg-steps 0)
+      (set! legs (+ legs 1))
+      (set! leg-steps (+ (/ legs 2) 1 (random 2)))
+      (set! dir (turn-right dir)))
+
+    (go spiral-top)))
+
+; ══════════════════════════════════════════════════════════════════════════════
+; MAIN LOOP
+; ══════════════════════════════════════════════════════════════════════════════
+
+(let ((dir     (+ (random 4) 1))
+      (homepos 0)
+      (cw      0)
+      (tdir    0))
+  (when USE_SPREAD (spread))
+
+  (tagbody
+    ; ────────────────────────────────────────
+    ; EXPLORING — gradient-guided random walk
+    ; ────────────────────────────────────────
+    exploring
+    (let ((steps 0))
+      (loop
+        (set-tag exploring)
+
+        (grab-food-if-adjacent dir homepos (go returning))
+
+        (mark-gradient TRAIL_PH nest)
+
+        (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+          (go returning))
+
+        ; Pickup beacon → spiral
+        (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
+                  (= (sense food) 0))
+          (pick-random-nonwall dir)
+          (go spiraling))
+
+        ; DELIVERING gradient — follow toward food
+        (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
+          (let ((del-dir (smell DELIVERING_PH)))
+            (when (!= del-dir 0)
+              (set! dir del-dir)
+              (set! steps HEADING_STEPS))))
+
+        ; Pick new heading when steps runs out
+        (when (<= steps 0)
+          (let ((back (invert-dir dir)))
+            (pick-nonwall-no-reverse dir back))
+          (set! steps (+ (random HEADING_STEPS) 1)))
+
+        ; Wall hit → enter TRACING-OUT
+        (when (= (probe dir) 1)
+          (pick-cw-from-wall dir cw)
+          (set! dir (turn-away dir cw))
+          (go tracing-out))
+
+        (move-track-unsafe dir homepos)
+        (set! steps (- steps 1))))
+
+    ; ────────────────────────────────────────
+    ; TRACING-OUT — follow wall found during exploration
+    ; ────────────────────────────────────────
+    tracing-out
+    (set-tag tracing-out)
+
+    ; Gradient marking
+    (mark-gradient TRAIL_PH nest)
+
+    (grab-food-light dir homepos (go returning))
+
+    ; Gradient too weak — retreat
+    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
+      (go returning))
+
+    ; Detach toward DELIVERING trail
+    (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
+      (let ((del-dir (smell DELIVERING_PH)))
+        (when (!= del-dir 0)
+          (set! dir del-dir)
+          (go exploring))))
+
+    ; Random chance to detach
+    (when (= (random WALL_LEAVE_CHANCE) 0)
+      (set! dir (turn-away dir cw))
+      (when (= (probe dir) 1)
+        (set! dir (invert-dir dir)))
+      (go exploring))
+
+    ; Opening detection
+    (let ((ws (wall-side-of dir cw)))
+      (when (!= (probe ws) 1)
+        (when (= (random OPENING_ENTER_CHANCE) 0)
+          (set! dir ws)
+          (move-track-unsafe dir homepos)
+          (go exploring))))
+
+    ; Jump to shared trace-step; set tdir=0 so dispatch knows we're tracing-out
+    (set! tdir 0)
+    (go do-trace-step)
+
+    ; ────────────────────────────────────────
+    ; SPIRALING — outward spiral after pickup beacon
+    ; ────────────────────────────────────────
+    spiraling
+    (let ((steps 1) (age 0))
+      (spiral-search dir homepos steps age SPIRAL_RADIUS
+                     (go returning) (go exploring)))
+
+    ; ────────────────────────────────────────
+    ; RETURNING — follow gradient trail home
+    ; ────────────────────────────────────────
+    returning
+    (set-tag returning)
+
+    ; Nest check
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! dir nest-dir)
+        (move-track-unsafe dir homepos)
+        (drop)
+        (set! homepos 0)
+        (go exploring)))
+
+    ; Carrying: mark delivering gradient; Not carrying: resume exploring if near home
+    (if (= (carrying?) 1)
+      (mark-gradient DELIVERING_PH food)
+      (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
+        (go exploring)))
+
+    ; Gradient trail marking (reinforce on the way home)
+    (mark-gradient TRAIL_PH nest)
+
+    ; Follow gradient
+    (let ((trail-dir (smell TRAIL_PH)))
+      (when (!= trail-dir 0)
+        (when (!= (probe trail-dir) 1)
+          (set! dir trail-dir)
+          (move-track-unsafe dir homepos)
+          (go returning))))
+
+    ; Dead-reckon
+    (home-dir dir homepos)
+
+    (if (!= (probe dir) 1)
+      (begin
+        (move-track-unsafe dir homepos)
+        (go returning))
+      (begin
+        ; Wall ahead — set up tracing-home
+        (set! tdir dir)    ; tdir = 1-4 (real target direction for escape check)
+        (pick-cw-from-wall dir cw)
+        (when (= (random WRONG_WAY_CHANCE) 0)
+          (set! cw (- 1 cw)))
+        (set! dir (turn-away dir cw))
+        ; Do first trace-step then enter tracing-home loop
+        ; tdir is already set to 1-4, so dispatch will route to tracing-home
+        (go do-trace-step)))
+
+    ; ────────────────────────────────────────
+    ; TRACING-HOME — follow wall while returning
+    ; ────────────────────────────────────────
+    ; The trace-step body lives here; tracing-home falls through to it.
+    ; tracing-out jumps to do-trace-step and is bounced back via dispatch.
+    tracing-home
+    (set-tag tracing-home)
+
+    ; Drop delivering gradient while carrying
+    (when (= (carrying?) 1)
+      (mark-gradient DELIVERING_PH food))
+
+    ; Gradient reinforcement
+    (mark-gradient-propagate TRAIL_PH)
+
+    ; Nest check
+    (let ((nest-dir (sense nest)))
+      (when (!= nest-dir 0)
+        (set! dir nest-dir)
+        (move-track-unsafe dir homepos)
+        (drop)
+        (set! homepos 0)
+        (go exploring)))
+
+    ; Fall through to shared trace-step (tdir = 1-4 from returning setup)
+
+    ; ── SHARED TRACE-STEP BODY ───────────────────────────────────────────────
+    ; One step of wall-following.  Priority:
+    ;   1. Wall-side open  → turn toward it (follow concavity)
+    ;   2. Ahead open      → walk forward   (wall alongside)
+    ;   3. Ahead blocked   → turn away      (convex corner)
+    ;   4. Still blocked   → reverse         (dead end)
+    ;
+    ; Callers:
+    ;   tracing-out: sets tdir=0, jumps here
+    ;   returning→tracing-home: sets tdir=1-4 (real target dir), falls through
+    ;   tracing-home loop: sets tdir unchanged (still 1-4), falls through
+    do-trace-step
+
+    (let ((ws (wall-side-of dir cw)))
+      (if (!= (probe ws) 1)
+        (begin
+          (set! dir ws)
+          (move-track dir homepos))
+        (if (!= (probe dir) 1)
+          (move-track-unsafe dir homepos)
+          (begin
+            (set! dir (turn-away dir cw))
+            (if (!= (probe dir) 1)
+              (move-track dir homepos)
+              (begin
+                (set! dir (turn-away dir cw))
+                (move-track dir homepos)))))))
+
+    ; ── POST TRACE-STEP DISPATCH ─────────────────────────────────────────────
+    ; tdir=0 → came from tracing-out (go back to tracing-out)
+    ; tdir=1-4 → came from tracing-home; check escape condition
+    (when (= tdir 0)
+      (go tracing-out))
+
+    ; Escape check for tracing-home: dir matches original blocked direction
+    ; AND wall-side is clear → wall has ended, resume returning.
+    (when (= dir tdir)
+      (when (!= (probe (wall-side-of dir cw)) 1)
+        (go returning)))
+
+    (go tracing-home)))
+
+; vim:ft=lisp:sw=2
