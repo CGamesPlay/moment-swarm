@@ -16,7 +16,6 @@ def _():
     import polars as pl
     import altair as alt
     import argparse
-    import concurrent.futures
     import itertools
     import os
     import re
@@ -29,7 +28,6 @@ def _():
         NamedTuple,
         alt,
         argparse,
-        concurrent,
         itertools,
         mo,
         os,
@@ -116,6 +114,16 @@ def _(ANNOTATION_RE, CONST_RE, HyperParam):
 
 @app.cell
 def _(itertools):
+    import math as _math
+
+    def count_search_space(params) -> int:
+        """Count combinations without materializing them."""
+        if not params:
+            return 0
+        return _math.prod(
+            len(range(p.min_val, p.max_val + 1, p.step)) for p in params
+        )
+
     def build_search_space(params) -> list[tuple]:
         """Generate all combinations of hyperparameter values."""
         return list(
@@ -124,7 +132,7 @@ def _(itertools):
             )
         )
 
-    return (build_search_space,)
+    return build_search_space, count_search_space
 
 
 @app.cell
@@ -169,7 +177,7 @@ def _(JobResult, SCORE_RE, subprocess):
 
 
 @app.cell
-def _(concurrent, run_one):
+def _(run_one):
     def run_sweep(
         params,
         combos: list[tuple],
@@ -184,6 +192,8 @@ def _(concurrent, run_one):
         pinned_params: list[tuple[str, int]] | None = None,
     ) -> list:
         """Run all combinations and seeds in parallel, collecting results."""
+        import concurrent.futures
+
         param_names = [p.name for p in params]
         all_jobs = [(combo, seed) for combo in combos for seed in seeds]
         results = []
@@ -556,6 +566,14 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    """Persistent state for sweep results — survives upstream changes."""
+
+    get_sweep_results, set_sweep_results = mo.state(None)
+    return get_sweep_results, set_sweep_results
+
+
+@app.cell
 def _(mo, os, sys):
     """Refresh button, CLI arg, and selected-file state."""
 
@@ -651,14 +669,18 @@ def _(HyperParam, all_params, mo):
 
 
 @app.cell
-def _(HyperParam, all_params, build_search_space, param_form):
+def _(HyperParam, all_params, count_search_space, param_form):
     """Filter params based on form selection and build search space with overrides.
 
     Checked params are swept; unchecked params are pinned to their Value.
+    Only computes the combo count here — the full list is materialized lazily
+    in the sweep cell to avoid CPU spin on large search spaces.
     """
 
-    params, combos = [], []
+    params = []
+    combo_count = 0
     pinned_params: list[tuple[str, int]] = []
+    pinned_params_full: list[HyperParam] = []
     if param_form is not None and param_form.value:
         _vals = param_form.value
         for _p in all_params:
@@ -673,17 +695,20 @@ def _(HyperParam, all_params, build_search_space, param_form):
             else:
                 _val = int(_vals.get(f"{_p.name}__val", _p.current_val))
                 pinned_params.append((_p.name, _val))
-        combos = build_search_space(params)
-    return combos, params, pinned_params
+                pinned_params_full.append(
+                    HyperParam(_p.name, _p.min_val, _p.max_val, _p.step, _p.line_index, _val)
+                )
+        combo_count = count_search_space(params)
+    return combo_count, params, pinned_params, pinned_params_full
 
 
 @app.cell
-def _(combos, mo, params, pinned_params, seeds_slider):
+def _(combo_count, mo, params, pinned_params, seeds_slider):
     """Show search space summary."""
 
     _output = None
     if params:
-        _total_jobs = len(combos) * seeds_slider.value
+        _total_jobs = combo_count * seeds_slider.value
         _details = ", ".join(
             f"{p.name}={len(range(p.min_val, p.max_val + 1, p.step))}"
             for p in params
@@ -693,11 +718,14 @@ def _(combos, mo, params, pinned_params, seeds_slider):
             _pinned_str = "  \nPinned: " + ", ".join(
                 f"{name}={val}" for name, val in pinned_params
             )
+        _warn = ""
+        if combo_count > 100_000:
+            _warn = f"\n\n⚠️ **Very large search space** ({combo_count:,} combos). Consider reducing ranges or increasing step sizes."
         _output = mo.md(
             f"**{len(params)} parameters** ({_details}) × "
-            f"**{len(combos)} combinations** × "
-            f"**{seeds_slider.value} seed(s)** = **{_total_jobs} total jobs**"
-            f"{_pinned_str}"
+            f"**{combo_count:,} combinations** × "
+            f"**{seeds_slider.value} seed(s)** = **{_total_jobs:,} total jobs**"
+            f"{_pinned_str}{_warn}"
         )
     _output
     return
@@ -708,7 +736,7 @@ def _(mo):
     """Configuration sliders."""
 
     mo.md("## Configuration")
-    seeds_slider = mo.ui.slider(1, 30, value=10, label="Seeds", step=1)
+    seeds_slider = mo.ui.slider(1, 8, value=4, label="Seeds", step=1)
     seed_start_input = mo.ui.number(value=42, label="Seed start")
     jobs_slider = mo.ui.slider(1, 16, value=8, label="Parallel jobs", step=1)
     map_filter_input = mo.ui.text(value="", label="Map filter (blank = all)")
@@ -734,18 +762,19 @@ def _(mo):
 
 
 @app.cell
-def _(combos, mo, params, seeds_slider):
+def _(combo_count, mo, params, seeds_slider):
     """Run button."""
 
-    _total_jobs = len(combos) * seeds_slider.value if params else 0
-    run_button = mo.ui.run_button(label=f"Run sweep ({_total_jobs} jobs)")
+    _total_jobs = combo_count * seeds_slider.value if params else 0
+    run_button = mo.ui.run_button(label=f"Run sweep ({_total_jobs:,} jobs)")
     run_button
     return (run_button,)
 
 
 @app.cell
 def _(
-    combos,
+    build_search_space,
+    combo_count,
     filepath,
     jobs_slider,
     map_filter_input,
@@ -753,74 +782,99 @@ def _(
     os,
     params,
     pinned_params,
+    pinned_params_full,
     relax_ops_checkbox,
     run_button,
     run_sweep,
     seed_start_input,
     seeds_slider,
+    set_sweep_results,
 ):
-    """Execute the sweep when button is clicked."""
+    """Execute the sweep when button is clicked.
 
-    results = []
+    Results are stored in mo.state so they persist when upstream UI changes.
+    Combos are only materialized here, not in the reactive dependency chain.
+    """
 
-    if run_button.value:
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        map_filter = map_filter_input.value or None
-        relax_ops = relax_ops_checkbox.value
-        seeds = list(
-            range(
-                int(seed_start_input.value),
-                int(seed_start_input.value) + seeds_slider.value,
-            )
+    mo.stop(not run_button.value)
+
+    # Materialize combos only when actually running the sweep
+    combos = build_search_space(params)
+
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    map_filter = map_filter_input.value or None
+    relax_ops = relax_ops_checkbox.value
+    seeds = list(
+        range(
+            int(seed_start_input.value),
+            int(seed_start_input.value) + seeds_slider.value,
         )
-        _total = len(combos) * len(seeds)
+    )
+    _total = combo_count * len(seeds)
 
-        with mo.status.progress_bar(
-            total=_total,
-            title="Running sweep",
-            completion_title="Sweep complete",
-            remove_on_exit=True,
-        ) as _bar:
-            results = run_sweep(
-                params,
-                combos,
-                seeds,
-                filepath,
-                project_root,
-                map_filter,
-                relax_ops,
-                int(jobs_slider.value),
-                print_fn=lambda x: None,
-                progress_bar=_bar,
-                pinned_params=pinned_params,
-            )
-    return (results,)
+    with mo.status.progress_bar(
+        total=_total,
+        title="Running sweep",
+        completion_title="Sweep complete",
+        remove_on_exit=True,
+    ) as _bar:
+        _results = run_sweep(
+            params,
+            combos,
+            seeds,
+            filepath,
+            project_root,
+            map_filter,
+            relax_ops,
+            int(jobs_slider.value),
+            print_fn=lambda x: None,
+            progress_bar=_bar,
+            pinned_params=pinned_params,
+        )
+
+    # Store results + snapshot of params/filepath used for this sweep
+    set_sweep_results({
+        "results": _results,
+        "params": list(params),
+        "pinned_params_full": list(pinned_params_full),
+        "filepath": filepath,
+    })
+    return
 
 
 @app.cell
-def _(compute_sensitivity, params, pl, results):
-    """Compute ranked results, sensitivity, and results dataframe."""
+def _(compute_sensitivity, get_sweep_results, pl):
+    """Compute ranked results, sensitivity, and results dataframe.
 
-    ranked = average_scores(results, params) if results else []
-    sensitivity = compute_sensitivity(results, params) if results else []
+    Reads from mo.state so charts persist when upstream UI changes.
+    """
+
+    _sweep = get_sweep_results()
+    _results = _sweep["results"] if _sweep else []
+    sweep_params = _sweep["params"] if _sweep else []
+    sweep_pinned_full = _sweep["pinned_params_full"] if _sweep else []
+    sweep_filepath = _sweep["filepath"] if _sweep else None
+
+    ranked = average_scores(_results, sweep_params) if _results else []
+    sensitivity = compute_sensitivity(_results, sweep_params) if _results else []
 
     # Build a polars DataFrame from raw results for charting
     results_df = pl.DataFrame()
-    if results:
+    if _results:
         _rows = []
-        for _r in results:
+        for _r in _results:
             if _r.score is not None:
-                _row = {params[_i].name: _r.combo[_i] for _i in range(len(params))}
+                _row = {sweep_params[_i].name: _r.combo[_i] for _i in range(len(sweep_params))}
                 _row["seed"] = _r.seed
                 _row["score"] = _r.score
                 _rows.append(_row)
         if _rows:
             results_df = pl.DataFrame(_rows)
-    return ranked, results_df, sensitivity
+    return ranked, results_df, sensitivity, sweep_params, sweep_pinned_full, sweep_filepath
 
 
 @app.cell
-def _(mo, params, pl, ranked):
+def _(mo, sweep_params, pl, ranked):
     """Display top results as a table."""
 
     _result = None
@@ -831,7 +885,7 @@ def _(mo, params, pl, ranked):
         df_top = pl.DataFrame(
             [
                 {
-                    **{params[i].name: combo[i] for i in range(len(params))},
+                    **{sweep_params[i].name: combo[i] for i in range(len(sweep_params))},
                     "avg_score": avg,
                 }
                 for combo, avg in ranked[:10]
@@ -845,28 +899,37 @@ def _(mo, params, pl, ranked):
 
 
 @app.cell
-def _(filepath, lines, mo, params, ranked, write_back, write_button):
-    """Handle write-back when button is clicked."""
+def _(mo, ranked, sweep_filepath, sweep_params, sweep_pinned_full, write_back, write_button):
+    """Handle write-back when button is clicked.
 
-    output = None
-    if write_button and write_button.value:
+    Writes both the best swept combo AND any manually-overridden pinned values.
+    Uses the params/filepath snapshot from the sweep that produced the results.
+    Re-reads the file fresh to get current line contents.
+    """
+
+    _output = None
+    if write_button and write_button.value and sweep_filepath:
+        _lines = open(sweep_filepath).readlines()
         best_combo, best_avg = ranked[0]
-        write_back(lines, params, best_combo, filepath)
-        output = mo.md(
-            f"✓ **Wrote best combo** (avg score: {best_avg:.1f}) to `{filepath}`"
+        # Write swept params with best combo values, plus pinned overrides
+        all_write_params = list(sweep_params) + list(sweep_pinned_full)
+        all_write_vals = tuple(best_combo) + tuple(p.current_val for p in sweep_pinned_full)
+        write_back(_lines, all_write_params, all_write_vals, sweep_filepath)
+        _output = mo.md(
+            f"✓ **Wrote best combo** (avg score: {best_avg:.1f}) to `{sweep_filepath}`"
         )
-    output
+    _output
     return
 
 
 @app.cell
-def _(alt, mo, params, pl, results_df):
+def _(alt, mo, sweep_params, pl, results_df):
     """Per-parameter score charts with mean, min, max."""
 
     _result = None
-    if len(results_df) > 0 and params:
+    if len(results_df) > 0 and sweep_params:
         _charts = []
-        for _param in params:
+        for _param in sweep_params:
             _agg = (
                 results_df.group_by(_param.name)
                 .agg(
@@ -988,6 +1051,95 @@ def _(alt, mo, sensitivity):
                 mo.ui.altair_chart(_chart),
             ]
         )
+    _result
+    return
+
+
+@app.cell
+def _(mo, sweep_params):
+    """Dropdowns to pick two parameters for interaction heatmap."""
+
+    _result = None
+    interact_x = None
+    interact_y = None
+    if len(sweep_params) >= 2:
+        _names = [p.name for p in sweep_params]
+        interact_x = mo.ui.dropdown(options=_names, value=_names[0], label="X axis")
+        interact_y = mo.ui.dropdown(options=_names, value=_names[1], label="Y axis")
+        _result = mo.vstack([
+            mo.md("## Parameter Interaction"),
+            mo.hstack([interact_x, interact_y], justify="start", gap=1),
+        ])
+    _result
+    return interact_x, interact_y
+
+
+@app.cell
+def _(alt, interact_x, interact_y, mo, pl, results_df, sweep_params):
+    """Heatmap showing mean score for each combination of two parameters."""
+
+    _result = None
+    if (
+        interact_x is not None
+        and interact_y is not None
+        and interact_x.value
+        and interact_y.value
+        and len(results_df) > 0
+        and len(sweep_params) >= 2
+    ):
+        _xname = interact_x.value
+        _yname = interact_y.value
+
+        if _xname != _yname:
+            _agg = (
+                results_df.group_by([_xname, _yname])
+                .agg([
+                    pl.col("score").mean().alias("mean_score"),
+                    pl.col("score").std().alias("std_score"),
+                    pl.col("score").count().alias("n"),
+                ])
+                .sort([_xname, _yname])
+            )
+
+            _heatmap = (
+                alt.Chart(_agg)
+                .mark_rect()
+                .encode(
+                    x=alt.X(f"{_xname}:O", title=_xname, sort=None),
+                    y=alt.Y(f"{_yname}:O", title=_yname, sort=None),
+                    color=alt.Color(
+                        "mean_score:Q",
+                        title="Mean Score",
+                        scale=alt.Scale(scheme="viridis"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip(_xname, title=_xname),
+                        alt.Tooltip(_yname, title=_yname),
+                        alt.Tooltip("mean_score:Q", title="Mean", format=".1f"),
+                        alt.Tooltip("std_score:Q", title="Std", format=".1f"),
+                        alt.Tooltip("n:Q", title="Count"),
+                    ],
+                )
+                .properties(
+                    title=f"Mean Score: {_xname} × {_yname}",
+                    width=400,
+                    height=400,
+                )
+            )
+
+            _text = (
+                alt.Chart(_agg)
+                .mark_text(fontSize=10, color="white")
+                .encode(
+                    x=alt.X(f"{_xname}:O", sort=None),
+                    y=alt.Y(f"{_yname}:O", sort=None),
+                    text=alt.Text("mean_score:Q", format=".0f"),
+                )
+            )
+
+            _result = mo.ui.altair_chart(_heatmap + _text)
+        else:
+            _result = mo.md("*Pick two different parameters.*")
     _result
     return
 

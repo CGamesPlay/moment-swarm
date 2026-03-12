@@ -18,9 +18,10 @@
 ;               go to TRACING-HOME.
 ;
 ;   TRACING-HOME Follow the wall blocking the return path. Drop FOOD_TRAIL
-;               pheromone. Escape when home direction points ahead or away
-;               from the tracing wall. Budget-limited: bail with a random
-;               step after N ticks to avoid getting stuck.
+;               pheromone. Escape when current direction matches the stored
+;               target direction AND the wall-side is clear (wall has truly
+;               ended). Budget-limited: bail with a random step after N
+;               ticks to avoid getting stuck.
 ;
 ; CW/CCW choice when entering a trace:
 ;   - If the wall extends left → CCW (wall-side = left).
@@ -34,7 +35,8 @@
 ;   dir     = 1  current movement direction (1–4)
 ;   homepos = 1  packed dx/dy displacement from nest
 ;   cw      = 1  tracing rotation sense (1=CW, 0=CCW)
-;   ── 5 remaining for macro temps ──
+;   tdir    = 1  target direction (stored on tracing-home entry)
+;   ── 4 remaining for macro temps ──
 
 (include "./packed-dr.inc.alisp")
 
@@ -43,19 +45,15 @@
 ; Random walk straight bias.  Roll (random STRAIGHT_FRACTION+2):
 ;   0 → turn left, 1 → turn right, else → go straight.
 ; @hp min=2 max=20 step=2
-(const STRAIGHT_FRACTION 16)
+(const STRAIGHT_FRACTION 47)
 
 ; 1-in-N chance each step to detach from wall and resume WALKING.
 ; @hp min=4 max=20 step=2
-(const WALL_LEAVE_CHANCE 8)
-
-; Max trace-steps in TRACING-HOME before bailing out with a random step.
-; @hp min=10 max=50 step=5
-(const TRACE_HOME_BUDGET 20)
+(const WALL_LEAVE_CHANCE 20)
 
 ; 1-in-N chance to trace "the wrong way" when RETURNING hits a wall.
 ; @hp min=2 max=8 step=1
-(const WRONG_WAY_CHANCE 3)
+(const WRONG_WAY_CHANCE 6)
 
 ; ── Pheromone constants ───────────────────────────────────────────────────────
 
@@ -64,16 +62,27 @@
 
 ; Amount of pheromone to drop per tick while returning with food
 ; @hp min=20 max=100 step=10
-(const FOOD_TRAIL_STRENGTH 50)
+(const FOOD_TRAIL_STRENGTH 60)
 
 ; Minimum smell intensity to follow food trail (ignore faint trails)
 ; @hp min=2 max=40 step=2
-(const FOOD_TRAIL_THRESHOLD 20)
+(const FOOD_TRAIL_THRESHOLD 2)
 
-; 1-in-N chance to follow trail when detected (vs random walk)
-; Lower = follow more often. 1 = always follow.
-; @hp min=1 max=4 step=1
-(const TRAIL_FOLLOW_CHANCE 2)
+; Percentage chance (0–100) to attempt following food trail each tick.
+; @hp min=10 max=100 step=10
+(const TRAIL_FOLLOW_CHANCE 30)
+
+; Channel used for crowding signal (dropped while exploring)
+(const CROWDED_HERE ch_red)
+
+; Amount of crowding pheromone to drop per tick while walking/tracing
+; @hp min=5 max=30 step=5
+(const CROWDED_STRENGTH 5)
+
+; Max percentage chance (out of 100) to detach from wall due to crowding.
+; At intensity=255 → CROWDED_WALL_LEAVE_PCT%. At intensity=128 → ~half that.
+; @hp min=1 max=10 step=1
+(const CROWDED_WALL_LEAVE_PCT 3)
 
 ; ── Direction helpers ─────────────────────────────────────────────────────────
 
@@ -108,7 +117,13 @@
           (if (!= (probe dir) 1)
             (move-track dir homepos)
             (begin
-              (set! dir (invert-dir dir))
+              ; Reverse: turn away again (two 90° turns = 180°).
+              ; Using (turn-away dir cw) instead of (invert-dir dir)
+              ; because dir was already set to turn-away(original)
+              ; by priority 3 above.  invert-dir would give us
+              ; wall-side(original), which is wrong in dead-ends
+              ; where the wall-side is also blocked.
+              (set! dir (turn-away dir cw))
               (move-track dir homepos))))))))
 
 ; ── Grab adjacent food ────────────────────────────────────────────────────────
@@ -146,7 +161,8 @@
 
 (let ((dir (+ (random 4) 1))
       (homepos 0)
-      (cw 0))
+      (cw 0)
+      (tdir 0))
 
   (tagbody
 
@@ -155,19 +171,30 @@
     (loop
       (set-tag walking)
 
+      ; Mark crowding pheromone so other ants know we've been here
+      (mark CROWDED_HERE CROWDED_STRENGTH)
+
       (grab-food dir homepos (go returning))
 
-      ; Steer: 0 = left, 1 = right, else = straight
+      ; Steer: 0 = left, 1 = right, else = straight.
+      ; When turning, bias away from the crowd direction.
       (let ((roll (random (+ STRAIGHT_FRACTION 2))))
         (cond
-          ((= roll 0) (set! dir (turn-left dir)))
+          ((= roll 0)
+           ; Turning — check if crowd says to pick a specific side
+           (let ((crowd-dir (smell CROWDED_HERE)))
+             (if (!= crowd-dir 0)
+               ; Turn away from crowd
+               (set! dir (invert-dir crowd-dir))
+               ; Normal left turn
+               (set! dir (turn-left dir)))))
           ((= roll 1) (set! dir (turn-right dir)))))
 
       ; Follow food trail: walk AWAY from strongest neighbor
       ; (food is at the trail's origin, nest at its strongest end).
       ; toward-food = invert(trail-dir), backwards = invert(dir).
       ; toward-food != backwards ↔ invert(trail-dir) != invert(dir) ↔ trail-dir != dir.
-      (when (= (random TRAIL_FOLLOW_CHANCE) 0)
+      (when (< (random 100) TRAIL_FOLLOW_CHANCE)
         (when (>= (sniff FOOD_TRAIL here) FOOD_TRAIL_THRESHOLD)
           (let ((trail-dir (smell FOOD_TRAIL)))
             (when (!= trail-dir 0)
@@ -186,16 +213,30 @@
     (loop
       (set-tag tracing)
 
+      ; Mark crowding pheromone
+      (mark CROWDED_HERE CROWDED_STRENGTH)
+
       (grab-food dir homepos (go returning))
 
       ; Detach toward food trail if detected (walk away from strongest = toward food)
-      (when (= (random TRAIL_FOLLOW_CHANCE) 0)
+      (when (< (random 100) TRAIL_FOLLOW_CHANCE)
         (when (>= (sniff FOOD_TRAIL here) FOOD_TRAIL_THRESHOLD)
           (let ((trail-dir (smell FOOD_TRAIL)))
             (when (!= trail-dir 0)
               (when (!= trail-dir dir)
                 (set! dir (invert-dir trail-dir))
                 (go walking))))))
+
+      ; Extra detach chance scaled by crowding intensity on this cell.
+      ; Probability = (intensity * CROWDED_WALL_LEAVE_PCT) / 256 percent.
+      ; intensity=128 → 50% of PCT. intensity=255 → ~100% of PCT.
+      (let ((crowd-here (sniff CROWDED_HERE here)))
+        (when (> crowd-here 0)
+          (when (< (random 100) (/ (* crowd-here CROWDED_WALL_LEAVE_PCT) 256))
+            (set! dir (turn-away dir cw))
+            (when (= (probe dir) 1)
+              (set! dir (invert-dir dir)))
+            (go walking))))
 
       ; Random chance to detach from wall
       (when (= (random WALL_LEAVE_CHANCE) 0)
@@ -228,10 +269,11 @@
       (if (!= (probe dir) 1)
         (move-track-unsafe dir homepos)
 
-        ; Wall ahead — set up CW/CCW and enter TRACING-HOME.
-        ; Inline the first trace-step so the tick ends here and
-        ; TRACING-HOME starts with a fresh 64-op budget.
+        ; Wall ahead — store target direction, set up CW/CCW, and
+        ; enter TRACING-HOME.  Inline the first trace-step so the
+        ; tick ends here and TRACING-HOME starts with a fresh budget.
         (begin
+          (set! tdir dir)
           (pick-cw-from-wall dir cw)
           (when (= (random WRONG_WAY_CHANCE) 0)
             (set! cw (- 1 cw)))
@@ -241,41 +283,31 @@
 
     ; ── TRACING-HOME ─────────────────────────────────────────────────────────
     tracing-home
-    (let ((steps 1))
-      (loop
-        (set-tag tracing-home)
+    (loop
+      (set-tag tracing-home)
 
-        ; Drop food trail pheromone while carrying food
-        (drop-food-trail)
+      ; Drop food trail pheromone while carrying food
+      (drop-food-trail)
 
-        ; Nest check
-        (let ((nd (sense nest)))
-          (when (!= nd 0)
-            (set! dir nd)
-            (move-track-unsafe dir homepos)
-            (drop)
-            (set! homepos 0)
-            (go walking)))
+      ; Nest check
+      (let ((nd (sense nest)))
+        (when (!= nd 0)
+          (set! dir nd)
+          (move-track-unsafe dir homepos)
+          (drop)
+          (set! homepos 0)
+          (go walking)))
 
-        ; Budget expired — flip CW/CCW, jitter, resume dead-reckoning
-        (when (>= steps TRACE_HOME_BUDGET)
-          (set! cw (- 1 cw))
-          (pick-random-nonwall dir)
-          (move-track dir homepos)
-          (go returning))
+      (trace-step dir cw homepos)
 
-        ; Escape check: if home is ahead or away from the tracing wall,
-        ; the wall is no longer blocking us.  Step home and resume DR.
-        ; (Takes a step here to avoid stalling — returning would call
-        ; home-dir again on the same tick and exceed the op budget.)
-        (let ((hdir 0))
-          (home-dir hdir homepos)
-          (when (or (= hdir (turn-away dir cw)) (= hdir dir))
-            (set! dir hdir)
-            (move-track dir homepos)
-            (go returning)))
-
-        (trace-step dir cw homepos)
-        (set! steps (+ steps 1))))))
+      ; Escape check — AFTER trace-step so that concave bends
+      ; (wall-side opens → trace-step turns toward wall) change dir
+      ; away from tdir before we test.  Only fires when the ant is
+      ; heading in the original blocked direction AND the wall is no
+      ; longer beside it.  No extra move: trace-step already moved
+      ; this tick; returning will move next tick.
+      (when (= dir tdir)
+        (when (!= (probe (wall-side-of dir cw)) 1)
+          (go returning))))))
 
 ; vim:ft=lisp:sw=2
