@@ -1,0 +1,108 @@
+; ── TRACER — Wall-Following Validation ───────────────────────────────────────
+;
+; Goal: validate wall-following logic. Not a forager — ignores food entirely.
+;
+; Algorithm:
+;   1. Walk north until a wall is found
+;   2. Randomly choose CW (right-hand rule) or CCW (left-hand rule)
+;   3. Begin wall tracing: always stay within 1 step of the wall
+;
+; CW (right-hand rule): wall is on your RIGHT.
+;   wall-side = turn-right(dir)
+;
+; CCW (left-hand rule): wall is on your LEFT.
+;   wall-side = turn-left(dir)
+;
+; Each tick:
+;   1. Compute wall-side from dir + cw
+;   2. If wall-side cell is open → turn toward it and step (follow concavity)
+;   3. Else if ahead is open → step forward (wall alongside)
+;   4. Else → turn away from wall (convex corner)
+;      4a. If still blocked → reverse (dead end / tight corridor)
+;
+; Pheromone channels:
+;   ch_red = wall trace trail
+
+(include "./packed-dr.inc.alisp")
+
+(const DEBUG 0)
+(const TRACE_MARK ch_red)
+(const MARK_STRENGTH 128)
+
+; Turn left: N→W, W→S, S→E, E→N
+(defmacro turn-left (d)
+  (+ (mod (+ d 2) 4) 1))
+
+; Compute wall-side direction given dir and cw flag.
+; CW: wall on right = turn-right(dir)
+; CCW: wall on left = turn-left(dir)
+(defmacro wall-side-of (dir cw)
+  (if (= cw 1)
+    (turn-right dir)
+    (turn-left dir)))
+
+; Turn away from wall: opposite of toward.
+; CW: turn away = turn-left
+; CCW: turn away = turn-right
+(defmacro turn-away (dir cw)
+  (if (= cw 1)
+    (turn-left dir)
+    (turn-right dir)))
+
+; ══════════════════════════════════════════════════════════════════════════════
+; MAIN PROGRAM
+; ══════════════════════════════════════════════════════════════════════════════
+;
+; Register budget:
+;   dir = 1  current movement direction (1-4)
+;   cw  = 1  rotation sense: 1=CW, 0=CCW
+;   ── 6 remaining for temps ──
+
+(let ((dir 0)
+      (cw 0))
+
+  ; ── Phase 1: Walk north until we hit a wall ──
+  (set-tag walking)
+  (loop
+    (when (= (probe n) 1)
+      (break))
+    (move n))
+
+  ; ── Phase 2: Choose rotation and set up ──
+  ; Wall is to the north. CW → face west (wall on right). CCW → face east (wall on left).
+  (set! cw (random 2))
+  (if (= cw 1)
+    (set! dir w)   ; CW: face west, wall (north) on right
+    (set! dir e))  ; CCW: face east, wall (north) on left
+
+  ; ── Phase 3: Wall-following loop ──
+  (set-tag tracing)
+  (loop
+    ; Mark our position
+    (mark TRACE_MARK MARK_STRENGTH)
+
+    ; Compute wall-side each tick from dir + cw
+    (let ((ws (wall-side-of dir cw)))
+      (if (!= (probe ws) 1)
+        ; Wall-side is open — turn toward it and step
+        ; This follows concavities / indentations in the wall
+        (begin
+          (set! dir ws)
+          (move dir))
+
+        (if (!= (probe dir) 1)
+          ; Ahead is open — walk forward (wall still alongside)
+          (move dir)
+
+          ; Ahead is blocked — turn away from wall
+          (begin
+            (set! dir (turn-away dir cw))
+            (if (!= (probe dir) 1)
+              ; Turned away successfully
+              (move dir)
+              ; Still blocked — reverse (dead end)
+              (begin
+                (set! dir (invert-dir dir))
+                (move dir)))))))))
+
+; vim:ft=lisp:sw=2
