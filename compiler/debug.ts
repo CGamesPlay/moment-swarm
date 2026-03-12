@@ -353,6 +353,21 @@ function formatOperand(val: number, flags: number, bit: number, context: string)
   }
 }
 
+function getVarNamesAtPC(program: any, pc: number): Map<number, string> | undefined {
+  if (!program.varMaps?.length) return undefined;
+  let best: any = undefined;
+  for (const entry of program.varMaps) {
+    if (entry.pc <= pc) best = entry;
+    else break;
+  }
+  if (!best) return undefined;
+  const map = new Map<number, string>();
+  for (const [k, v] of Object.entries(best.regs)) {
+    map.set(Number(k), v as string);
+  }
+  return map;
+}
+
 function disassembleInstr(bytecode: Int32Array, pc: number, program: any): string {
   const base = pc * BC_STRIDE;
   const op = bytecode[base];
@@ -362,11 +377,11 @@ function disassembleInstr(bytecode: Int32Array, pc: number, program: any): strin
   const a2 = bytecode[base + 4];
   const name = OPCODE_NAME_TABLE[op] ?? `OP${op}`;
 
+  // Prefer per-PC variable names from .varmap, fall back to static .alias
+  const varNames = getVarNamesAtPC(program, pc);
   const aliases = program.registerAliases;
   function regName(r: number): string {
-    if (flags & (1 << 0) && r === a0 || flags & (1 << 1) && r === a1) {
-      // Already formatted as register
-    }
+    if (varNames?.has(r)) return `${varNames.get(r)}(r${r})`;
     if (aliases?.has(r)) return `${aliases.get(r)}(r${r})`;
     return `r${r}`;
   }
@@ -459,6 +474,8 @@ function printInfo(state: DebugState, antId?: number) {
   if (!ant) { console.log(`Invalid ant ID: ${id}`); return; }
 
   const tagName = state.program.tagNames?.get(ant.tag) ?? `tag${ant.tag}`;
+  // Prefer per-PC variable names from .varmap, fall back to static .alias
+  const varNames = getVarNamesAtPC(state.program, ant.pc);
   const aliases = state.program.registerAliases;
 
   console.log(`Ant #${id}  tick=${state.world.tick}  pc=${ant.pc}  tag=${tagName}  pos=(${ant.x},${ant.y})  carrying=${ant.carrying}  aborted=${ant._aborted ?? "no"}`);
@@ -466,8 +483,9 @@ function printInfo(state: DebugState, antId?: number) {
   // GP registers
   let regLine = "Registers:\n";
   for (let r = 0; r < NUM_REGISTERS; r++) {
+    const varName = varNames?.get(r);
     const alias = aliases?.get(r);
-    const label = alias ? `${alias}(r${r})` : `r${r}`;
+    const label = varName ? `${varName}(r${r})` : alias ? `${alias}(r${r})` : `r${r}`;
     const uval = (ant.regs[r] >>> 0).toString(16).padStart(8, "0");
     const dval = ant.regs[r].toString(10).padStart(10);
     regLine += `  ${label.padEnd(10)} = 0x${uval} (${dval})`;

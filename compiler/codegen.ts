@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { SSAProgram, BasicBlock, SSAInstr, Terminator, CmpOp } from './ssa';
-import { AllocationResult, computeBlockLiveness } from './regalloc';
+import { AllocationResult, NumberedInstr, computeBlockLiveness } from './regalloc';
 
 // ─── Compute Live Registers at Block Exits ──────────────────
 // Must be called BEFORE applyAllocation (while blocks still have %t names).
@@ -43,6 +43,16 @@ export function computeLiveRegsAtEnd(
   return liveRegsAtEnd;
 }
 
+// ─── Code Generation Result ─────────────────────────────────
+// Each output line has a corresponding instrIndex entry: the regalloc
+// numbered instruction index it originated from, or -1 for labels,
+// directives, and blank lines.
+
+export interface CodegenResult {
+  lines: string[];
+  instrIndex: number[];
+}
+
 // ─── Code Generation ────────────────────────────────────────
 
 export function generateCode(
@@ -50,12 +60,19 @@ export function generateCode(
   linearized: BasicBlock[],
   allocResult: AllocationResult,
   liveRegsAtEnd?: Map<BasicBlock, Set<string>>,
-): string {
-  const output: string[] = [];
+  numbered?: NumberedInstr[],
+): CodegenResult {
+  const lines: string[] = [];
+  const instrIndex: number[] = [];
+
+  function emit(line: string, idx: number) {
+    lines.push(line);
+    instrIndex.push(idx);
+  }
 
   // Emit directives
-  for (const t of program.tags) output.push(`.tag ${t.id} ${t.name}`);
-  if (program.tags.length) output.push('');
+  for (const t of program.tags) emit(`.tag ${t.id} ${t.name}`, -1);
+  if (program.tags.length) emit('', -1);
 
   // Build phi copy map: block → copies to insert at end
   const phiCopiesPerBlock = new Map<BasicBlock, { from: string; to: string }[]>();
@@ -101,38 +118,84 @@ export function generateCode(
     }
   }
 
+  // Build numbered instruction grouping per block for instrIndex tracking
+  const numberedByBlock = new Map<BasicBlock, NumberedInstr[]>();
+  if (numbered) {
+    for (const ni of numbered) {
+      if (!numberedByBlock.has(ni.block)) numberedByBlock.set(ni.block, []);
+      numberedByBlock.get(ni.block)!.push(ni);
+    }
+  }
+
   for (let blockIdx = 0; blockIdx < linearized.length; blockIdx++) {
     const block = linearized[blockIdx];
     const nextBlock = blockIdx + 1 < linearized.length ? linearized[blockIdx + 1] : null;
 
     // Only emit label if it's referenced by a jump
     if (referencedLabels.has(block.label)) {
-      output.push(`${block.label}:`);
+      emit(`${block.label}:`, -1);
     }
 
+    // Get numbered instructions for this block
+    const blockNumbered = numberedByBlock.get(block) ?? [];
+    let niPos = 0;
+    // Skip phis in numbered (they don't emit instructions directly)
+    while (niPos < blockNumbered.length && blockNumbered[niPos].kind === 'phi') {
+      niPos++;
+    }
+    // The first instruction in the block inherits the last phi's instrIndex
+    // (representing the variable state at block entry after phi resolution)
+    const blockEntryIdx = niPos > 0 ? blockNumbered[niPos - 1].index : -1;
+
     // Emit instructions
-    for (const instr of block.instrs) {
-      const line = emitInstr(instr);
-      if (line) output.push(line);
+    for (let i = 0; i < block.instrs.length; i++) {
+      const instr = block.instrs[i];
+      // Determine the regalloc instrIndex for this instruction
+      let idx = -1;
+      if (niPos < blockNumbered.length && blockNumbered[niPos].kind === 'instr') {
+        idx = blockNumbered[niPos].index;
+        niPos++;
+      }
+      const text = emitInstr(instr);
+      if (text) {
+        // emitInstr can return multi-line (e.g., arith: SET + OP)
+        const sublines = text.split('\n');
+        for (const sl of sublines) {
+          emit(sl, idx);
+        }
+      }
     }
 
     // Emit phi copies before terminator, resolving parallel move conflicts
+    // Phi copies are synthetic — use the block entry instrIndex so variable
+    // state at the phi point is associated with these lines
     const copies = phiCopiesPerBlock.get(block);
     if (copies) {
       const liveRegs = liveRegsAtEnd.get(block) ?? new Set<string>();
       for (const line of resolveParallelMoves(copies, liveRegs)) {
-        output.push(line);
+        emit(line, blockEntryIdx);
       }
     }
 
     // Emit terminator
     if (block.terminator) {
-      const lines = emitTerminator(block.terminator, nextBlock);
-      output.push(...lines);
+      let termIdx = -1;
+      if (niPos < blockNumbered.length && blockNumbered[niPos].kind === 'terminator') {
+        termIdx = blockNumbered[niPos].index;
+      }
+      const termLines = emitTerminator(block.terminator, nextBlock);
+      for (const line of termLines) {
+        // Labels within terminators (skip labels) get -1
+        if (line.trim().endsWith(':')) {
+          emit(line, -1);
+        } else {
+          emit(line, termIdx);
+        }
+      }
     }
   }
 
-  return output.join('\n');
+  return { lines, instrIndex };
 }
 
 // Resolve parallel move conflicts in phi copies.

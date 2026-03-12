@@ -558,6 +558,83 @@ export function linearScan(
 // ─── Apply Allocation ───────────────────────────────────────
 // Replace all %tN with allocated registers in place
 
+// ─── Per-Instruction Variable Map ────────────────────────────
+// Build a mapping from numbered instruction index to the register→varName
+// state at that point. Only records entries where the mapping changes.
+
+export interface VarMapEntry {
+  instrIndex: number;
+  regs: Record<string, string>;  // register (e.g. "r0") → variable name
+}
+
+export function buildVarMap(
+  numbered: NumberedInstr[],
+  intervals: LiveInterval[],
+  allocation: Map<string, string>,
+  tempNames: Map<string, string>,
+): VarMapEntry[] {
+  // Sort intervals by start
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+
+  // For each numbered instruction index, compute the set of active intervals
+  // and derive register → varName. Record only at change points.
+  const entries: VarMapEntry[] = [];
+  const active: { temp: string; end: number }[] = [];
+  let prevRegs: Record<string, string> = {};
+  let intervalIdx = 0;
+
+  for (const ni of numbered) {
+    // Expire intervals that ended before this instruction
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].end < ni.index) {
+        active.splice(i, 1);
+      }
+    }
+
+    // Activate intervals that start at this instruction
+    while (intervalIdx < sorted.length && sorted[intervalIdx].start <= ni.index) {
+      const iv = sorted[intervalIdx];
+      if (iv.end >= ni.index) {
+        active.push({ temp: iv.temp, end: iv.end });
+      }
+      intervalIdx++;
+    }
+
+    // Build current register → varName mapping
+    const regs: Record<string, string> = {};
+    for (const a of active) {
+      if (a.end < ni.index) continue;
+      const reg = allocation.get(a.temp);
+      const name = tempNames.get(a.temp);
+      if (reg && name) {
+        // If multiple temps map to the same register, prefer the one with the
+        // latest start (most recently defined)
+        regs[reg] = name;
+      }
+    }
+
+    // Check if mapping changed
+    const keys = Object.keys(regs).sort();
+    const prevKeys = Object.keys(prevRegs).sort();
+    let changed = keys.length !== prevKeys.length;
+    if (!changed) {
+      for (const k of keys) {
+        if (regs[k] !== prevRegs[k]) { changed = true; break; }
+      }
+    }
+
+    if (changed) {
+      entries.push({ instrIndex: ni.index, regs: { ...regs } });
+      prevRegs = { ...regs };
+    }
+  }
+
+  return entries;
+}
+
+// ─── Apply Allocation ───────────────────────────────────────
+// Replace all %tN with allocated registers in place
+
 export function applyAllocation(program: SSAProgram, allocation: Map<string, string>): void {
   function replace(val: string | number): string | number {
     if (typeof val === 'string' && allocation.has(val)) {

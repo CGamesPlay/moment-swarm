@@ -132,9 +132,8 @@ export function compileSource(src: string, opts?: { constOverrides?: Record<stri
   const allocResult = linearScan(program, intervals);
   const liveRegsAtEnd = computeLiveRegsAtEnd(program, allocResult.allocation);
   applyAllocation(program, allocResult.allocation);
-  const rawAsm = generateCode(program, linearized, allocResult, liveRegsAtEnd);
-  const lines = rawAsm.split('\n');
-  return peephole(lines).join('\n');
+  const codegen = generateCode(program, linearized, allocResult, liveRegsAtEnd);
+  return peephole(codegen.lines).lines.join('\n');
 }
 
 

@@ -68,9 +68,9 @@ function effectiveTail(block: AsmBlock, output: string[]): string[] {
 
 let tailCounter = 0;
 
-function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
+function tailMerge(output: string[], outputIdx: number[]): { lines: string[]; instrIndex: number[]; changed: boolean } {
   const blocks = parseBlocks(output);
-  if (blocks.length < 2) return { lines: output, changed: false };
+  if (blocks.length < 2) return { lines: output, instrIndex: outputIdx, changed: false };
 
   // Build effective tails for each block
   const tails = blocks.map(b => effectiveTail(b, output));
@@ -136,7 +136,7 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
     }
   }
 
-  if (merges.length === 0) return { lines: output, changed: false };
+  if (merges.length === 0) return { lines: output, instrIndex: outputIdx, changed: false };
 
   // Deduplicate: a block should only appear in one merge group.
   // Prefer the group with highest savings.
@@ -154,15 +154,17 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
     finalMerges.push(mg);
   }
 
-  if (finalMerges.length === 0) return { lines: output, changed: false };
+  if (finalMerges.length === 0) return { lines: output, instrIndex: outputIdx, changed: false };
 
   // Check for identical block dedup (special case: tail == entire body)
   // For identical blocks, rewrite jump targets instead of extracting a tail.
   const result = [...output];
+  const resultIdx = [...outputIdx];
   const linesToDelete = new Set<number>();
   const labelsToDelete = new Set<string>();
   const labelRewrites = new Map<string, string>();
   const appendBlocks: string[] = [];
+  const appendBlocksIdx: number[] = [];
 
   for (const { indices, tailLen } of finalMerges) {
     const tl = tails[indices[0]];
@@ -192,8 +194,20 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
       // Tail extraction: create shared tail block, truncate each block
       const tailLabel = `__tail_${tailCounter++}`;
       appendBlocks.push(`${tailLabel}:`);
-      for (const instr of sharedTail) {
-        appendBlocks.push(`  ${instr}`);
+      appendBlocksIdx.push(-1);
+      // Use instrIndex from the first block's tail instructions
+      const firstBlock = blocks[indices[0]];
+      const firstRealBodyLen = firstBlock.body.length;
+      for (let t = 0; t < sharedTail.length; t++) {
+        appendBlocks.push(`  ${sharedTail[t]}`);
+        // Determine instrIndex: for real body instructions, use the original;
+        // for the virtual JMP, use -1
+        const bodyPos = firstRealBodyLen - tailLen + t;
+        if (bodyPos >= 0 && bodyPos < firstRealBodyLen) {
+          appendBlocksIdx.push(outputIdx[firstBlock.bodyLines[bodyPos]]);
+        } else {
+          appendBlocksIdx.push(-1);
+        }
       }
 
       for (const idx of indices) {
@@ -221,10 +235,12 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
         const firstDeletedIdx = blk.bodyLines[realBodyLen - realTailLen];
         if (firstDeletedIdx !== undefined) {
           result[firstDeletedIdx] = `  JMP ${tailLabel}`;
+          resultIdx[firstDeletedIdx] = -1;
           linesToDelete.delete(firstDeletedIdx);
         } else {
           // All body lines are tail; replace the first body line with JMP
           result[blk.bodyLines[0]] = `  JMP ${tailLabel}`;
+          resultIdx[blk.bodyLines[0]] = -1;
           linesToDelete.delete(blk.bodyLines[0]);
         }
       }
@@ -233,13 +249,16 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
 
   // Rebuild output: filter deleted lines, delete labels for deduped blocks, append tails
   const newOutput: string[] = [];
+  const newOutputIdx: number[] = [];
   for (let i = 0; i < result.length; i++) {
     if (linesToDelete.has(i)) continue;
     const trimmed = result[i].trim();
     if (trimmed.endsWith(':') && labelsToDelete.has(trimmed.slice(0, -1))) continue;
     newOutput.push(result[i]);
+    newOutputIdx.push(resultIdx[i]);
   }
   newOutput.push(...appendBlocks);
+  newOutputIdx.push(...appendBlocksIdx);
 
   // Apply label rewrites to the combined output (including appended tail blocks)
   if (labelRewrites.size > 0) {
@@ -256,11 +275,12 @@ function tailMerge(output: string[]): { lines: string[]; changed: boolean } {
     }
   }
 
-  return { lines: newOutput, changed: true };
+  return { lines: newOutput, instrIndex: newOutputIdx, changed: true };
 }
 
-export function peephole(lines: string[]): string[] {
+export function peephole(lines: string[], instrIndex?: number[]): { lines: string[]; instrIndex: number[] } {
   let output = [...lines];
+  let outputIdx = instrIndex ? [...instrIndex] : new Array(lines.length).fill(-1);
   tailCounter = 0;
 
   // All passes run in a fixed-point loop: removing a label can expose
@@ -334,9 +354,10 @@ export function peephole(lines: string[]): string[] {
     }
 
     // Pass 1: Tail merging.
-    const tmResult = tailMerge(output);
+    const tmResult = tailMerge(output, outputIdx);
     if (tmResult.changed) {
       output = tmResult.lines;
+      outputIdx = tmResult.instrIndex;
       changed = true;
     }
 
@@ -359,6 +380,7 @@ export function peephole(lines: string[]): string[] {
           const m2 = next.match(/^SET (r\d) .+/);
           if (m2 && m2[1] === reg) {
             output.splice(i, 1);
+            outputIdx.splice(i, 1);
             i--;
             dseChanged = true;
             changed = true;
@@ -387,6 +409,7 @@ export function peephole(lines: string[]): string[] {
       }
       if (redundant) {
         output.splice(i, 1);
+        outputIdx.splice(i, 1);
         i--;
         changed = true;
       }
@@ -407,16 +430,20 @@ export function peephole(lines: string[]): string[] {
       }
     }
     const before = output.length;
-    output = output.filter(line => {
-      const trimmed = line.trim();
-      if (!trimmed.endsWith(':')) return true;
-      const label = trimmed.slice(0, -1);
-      return referencedLabels.has(label);
-    });
-    if (output.length !== before) {
+    const filteredLines: string[] = [];
+    const filteredIdx: number[] = [];
+    for (let i = 0; i < output.length; i++) {
+      const trimmed = output[i].trim();
+      if (trimmed.endsWith(':') && !referencedLabels.has(trimmed.slice(0, -1))) continue;
+      filteredLines.push(output[i]);
+      filteredIdx.push(outputIdx[i]);
+    }
+    if (filteredLines.length !== before) {
       changed = true;
     }
+    output = filteredLines;
+    outputIdx = filteredIdx;
   }
 
-  return output;
+  return { lines: output, instrIndex: outputIdx };
 }

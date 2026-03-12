@@ -196,7 +196,7 @@ function parseAssembly(source, { isa = 'prod' } = {}) {
     const firstTok = line.split(/\s+/)[0];
 
     // Directives
-    if (firstTok.startsWith(".") && firstTok !== ".alias" && firstTok !== ".const" && firstTok !== ".tag") {
+    if (firstTok.startsWith(".") && firstTok !== ".alias" && firstTok !== ".const" && firstTok !== ".tag" && firstTok !== ".varmap") {
       throw new AssemblyError(i + 1, `Unknown directive: "${firstTok}"`);
     }
 
@@ -227,6 +227,12 @@ function parseAssembly(source, { isa = 'prod' } = {}) {
       const name = parts[2];
       tagNames.set(num, parts.slice(2).join(" "));
       if (!aliases.has(name) && !consts.has(name)) consts.set(name, String(num));
+      continue;
+    }
+
+    if (firstTok === ".varmap") {
+      // .varmap PC r0=name r2=name ...
+      // Parsed later; just skip during instruction assembly
       continue;
     }
 
@@ -469,11 +475,36 @@ function parseAssembly(source, { isa = 'prod' } = {}) {
     if (idx !== null && !registerAliases.has(idx)) registerAliases.set(idx, name);
   }
 
+  // Parse .varmap directives (second pass over lines)
+  const varMaps = [];
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    const semi = line.indexOf(";");
+    if (semi >= 0) line = line.substring(0, semi);
+    line = line.trim();
+    if (!line.startsWith(".varmap")) continue;
+    const parts = line.split(/\s+/);
+    const pc = parseInt(parts[1], 10);
+    const regs = {};
+    for (let j = 2; j < parts.length; j++) {
+      const eq = parts[j].indexOf('=');
+      if (eq < 0) continue;
+      const regStr = parts[j].substring(0, eq);
+      const name = parts[j].substring(eq + 1);
+      const idx = parseRegister(regStr);
+      if (idx !== null) regs[idx] = name;
+    }
+    varMaps.push({ pc, regs });
+  }
+  // Sort by PC
+  varMaps.sort((a, b) => a.pc - b.pc);
+
   return {
     instructions,
     sourceLines,
     tagNames: tagNames.size > 0 ? tagNames : undefined,
     registerAliases: registerAliases.size > 0 ? registerAliases : undefined,
+    varMaps: varMaps.length > 0 ? varMaps : undefined,
   };
 }
 
