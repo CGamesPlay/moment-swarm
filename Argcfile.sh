@@ -86,12 +86,18 @@ unit() {
 # @option -s --seed     Global map seed (default: 42)
 # @option -o --max-ops  Max ops per ant per tick (default: 64)
 # @option -D --define*  Override a const value, e.g. -D EXPLORE_TIMEOUT=400
+# @flag      --no-debug Compile with DEBUG=0 and use production ISA (disables ABORT opcodes)
 debug() {
 	local -a flags=()
+	local -a debug_flags=()
+	if [[ ! ${argc_no_debug+1} ]]; then
+		flags+=(-D DEBUG=1)
+	else
+		debug_flags+=(--no-debug)
+	fi
 	for d in ${argc_define+"${argc_define[@]}"}; do
 		flags+=(-D "$d")
 	done
-	flags+=(-D DEBUG=1)
 	local asm
 	asm="$(npx --prefix compiler tsx compiler/antlisp.ts ${flags+"${flags[@]}"} "${argc_file:?}")" || exit $?
 	local tmpant
@@ -99,6 +105,7 @@ debug() {
 	echo "$asm" > "$tmpant"
 	npx --prefix compiler tsx compiler/debug.ts \
 		${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
+		${debug_flags+"${debug_flags[@]}"} \
 		"$tmpant"
 	rm -f "$tmpant"
 }

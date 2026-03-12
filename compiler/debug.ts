@@ -8,7 +8,8 @@
  *   -m, --map <name>    Select map generator (default: first eval map)
  *   -s, --seed <n>      Map seed (default: 42)
  *   -a, --ants <n>      Ant count (default: 200)
- *   --allow-abort       Allow ABORT opcodes
+ *   --allow-abort       Allow ABORT opcodes (default: enabled)
+ *   --no-debug          Use production ISA (disables ABORT opcodes)
  */
 
 import * as fs from "fs";
@@ -103,12 +104,15 @@ function parseArgs(argv: string[]) {
   let seed = 42;
   let antCount = 200;
   let file: string | undefined;
+  let allowAbort = true;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-m" || a === "--map") { mapName = args[++i]; continue; }
     if (a === "-s" || a === "--seed") { seed = parseInt(args[++i], 10); continue; }
     if (a === "-a" || a === "--ants") { antCount = parseInt(args[++i], 10); continue; }
+    if (a === "--allow-abort") { allowAbort = true; continue; }
+    if (a === "--no-debug") { allowAbort = false; continue; }
     if (a.startsWith("-")) { console.error(`Unknown option: ${a}`); process.exit(1); }
     file = a;
   }
@@ -119,10 +123,11 @@ function parseArgs(argv: string[]) {
     console.error("  -m, --map <name>    Select map (default: first eval map)");
     console.error("  -s, --seed <n>      Map seed (default: 42)");
     console.error("  -a, --ants <n>      Ant count (default: 200)");
+    console.error("  --no-debug          Use production ISA (disables ABORT opcodes)");
     process.exit(1);
   }
 
-  return { mapName, seed, antCount, file: file! };
+  return { mapName, seed, antCount, file: file!, allowAbort };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -912,7 +917,8 @@ async function main() {
     process.exit(1);
   }
   const source = fs.readFileSync(filePath, "utf-8");
-  const program = parseAssembly(source, { isa: 'debug' });
+  const isa = opts.allowAbort ? 'debug' : 'prod';
+  const program = parseAssembly(source, { isa });
   const bytecode = compileBytecode(program);
   const instrCount = program.instructions.length;
 
@@ -963,7 +969,7 @@ async function main() {
     snapshots: new Map(),
     maxSnapshots: 2000,
     maxTicks: config.maxTicks,
-    isa: 'debug',
+    isa,
   };
 
   console.log(`Loaded ${filePath}`);
