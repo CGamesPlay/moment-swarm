@@ -49,8 +49,6 @@
 (const USE_SPREAD 1)
 ; @hp min=32 max=64 step=4
 (const HEADING_STEPS 40)
-(const GRADIENT_GO_HOME 2)
-(const GRADIENT_NEAR_HOME 32)
 (const DELIVERY_GO_TOWARD 2)
 ; @hp min=1 max=7 step=1
 (const SPIRAL_RADIUS 3)
@@ -63,6 +61,9 @@
 (const WRONG_WAY_CHANCE 6)
 ; @hp min=2 max=8 step=1
 (const OPENING_ENTER_CHANCE 2)
+; Max steps in tracing-home before bailing to dead-reckon
+; @hp min=10 max=80 step=5
+(const TRACE_HOME_BUDGET 60)
 
 
 ; ── Local macros ──────────────────────────────────────────────────────────────
@@ -115,9 +116,6 @@
 
     (grab-food-light dir homepos (on-abort))
 
-    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-      (on-abort))
-
     (when (>= legs (* 2 radius))
       (set! leg-steps 0)
       (set! legs 0)
@@ -143,7 +141,8 @@
 (let ((dir     (+ (random 4) 1))
       (homepos 0)
       (cw      0)
-      (tdir    0))
+      (tdir    0)
+      (thb     0))
   (when USE_SPREAD (spread))
 
   (tagbody
@@ -158,9 +157,6 @@
         (grab-food-if-adjacent dir homepos (go returning))
 
         (mark-gradient TRAIL_PH nest)
-
-        (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-          (go returning))
 
         ; Pickup beacon → spiral
         (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
@@ -200,10 +196,6 @@
     (mark-gradient TRAIL_PH nest)
 
     (grab-food-light dir homepos (go returning))
-
-    ; Gradient too weak — retreat
-    (when (< (sniff TRAIL_PH here) GRADIENT_GO_HOME)
-      (go returning))
 
     ; Detach toward DELIVERING trail
     (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
@@ -254,11 +246,10 @@
         (set! homepos 0)
         (go exploring)))
 
-    ; Carrying: mark delivering gradient; Not carrying: resume exploring if near home
+    ; Carrying: mark delivering gradient; Not carrying: resume exploring immediately
     (if (= (carrying?) 1)
       (mark-gradient DELIVERING_PH food)
-      (when (>= (sniff TRAIL_PH here) GRADIENT_NEAR_HOME)
-        (go exploring)))
+      (go exploring))
 
     ; Gradient trail marking (reinforce on the way home)
     (mark-gradient TRAIL_PH nest)
@@ -281,6 +272,7 @@
       (begin
         ; Wall ahead — set up tracing-home
         (set! tdir dir)    ; tdir = 1-4 (real target direction for escape check)
+        (set! thb TRACE_HOME_BUDGET)
         (pick-cw-from-wall dir cw)
         (when (= (random WRONG_WAY_CHANCE) 0)
           (set! cw (- 1 cw)))
@@ -312,6 +304,14 @@
         (drop)
         (set! homepos 0)
         (go exploring)))
+
+    ; Budget check — bail to returning with dead-reckon after N steps
+    (set! thb (- thb 1))
+    (when (<= thb 0)
+      (home-dir dir homepos)
+      (when (= (probe dir) 1)
+        (pick-random-nonwall dir))
+      (go returning))
 
     ; Fall through to shared trace-step (tdir = 1-4 from returning setup)
 
