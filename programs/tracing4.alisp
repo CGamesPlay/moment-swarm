@@ -47,21 +47,27 @@
 (const PICKUP_PH ch_blue)        ; "food was here" beacon channel
 
 (const USE_SPREAD 1)
-; @hp min=32 max=64 step=4
+; Sweep: no signal (S/N=0.27). 40 confirmed.
+; @hp min=20 max=60 step=5
 (const HEADING_STEPS 40)
 (const DELIVERY_GO_TOWARD 2)
-; @hp min=1 max=7 step=1
+; Sweep: 3 is optimal (S/N=0.21). Larger spirals waste time.
+; @hp min=1 max=7 step=2
 (const SPIRAL_RADIUS 3)
 (const PICKUP_SIGNAL 10)
 
 ; ── Wall-tracing constants ──
-; @hp min=4 max=30 step=2
+; Sweep: no signal (S/N=0.20). 20 confirmed.
+; @hp min=8 max=40 step=4
 (const WALL_LEAVE_CHANCE 20)
+; Sweep: no signal (S/N=0.10). 6 confirmed.
 ; @hp min=2 max=8 step=1
 (const WRONG_WAY_CHANCE 6)
-; @hp min=2 max=8 step=1
+; Sweep: no signal (S/N=0.14). 2 confirmed.
+; @hp min=1 max=6 step=1
 (const OPENING_ENTER_CHANCE 2)
 ; Max steps in tracing-home before bailing to dead-reckon
+; Sweep: clear signal (S/N=0.58). 60 is sweet spot. +20 pts.
 ; @hp min=10 max=80 step=5
 (const TRACE_HOME_BUDGET 60)
 
@@ -192,8 +198,8 @@
     tracing-out
     (set-tag tracing-out)
 
-    ; Gradient marking
-    (mark-gradient TRAIL_PH nest)
+    ; Lighter gradient propagation (no seed check — saves ~6 ops vs mark-gradient)
+    (mark-gradient-propagate TRAIL_PH)
 
     (grab-food-light dir homepos (go returning))
 
