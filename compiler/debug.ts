@@ -692,6 +692,10 @@ Inspection (when paused):
       const n = parseInt(rest[0], 10) || 1;
       // Finish current tick if mid-tick, then run N-1 more
       const targetTick = state.world.tick + n;
+      // If paused mid-tick on an ant, skip past it so we don't re-fire the same breakpoint
+      if (state.tickProgress.tickStarted && state.currentAntId !== null) {
+        state.tickProgress.nextAntIndex = state.currentAntId + 1;
+      }
       // Set a temporary tick breakpoint
       const tempBp: Breakpoint = { id: -1, tick: targetTick, antId: 0, regConditions: [] };
       state.breakpoints.push(tempBp);
@@ -765,6 +769,12 @@ Inspection (when paused):
         return "prompt";
       }
       if (rest[0] === "del") {
+        if (rest[1] === "all") {
+          const count = state.breakpoints.length;
+          state.breakpoints.length = 0;
+          console.log(`Deleted ${count} breakpoint${count !== 1 ? "s" : ""}`);
+          return "prompt";
+        }
         const delId = parseInt(rest[1], 10);
         const idx = state.breakpoints.findIndex(b => b.id === delId);
         if (idx < 0) { console.log(`No breakpoint #${delId}`); return "prompt"; }
