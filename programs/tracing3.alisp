@@ -84,6 +84,11 @@
 ; @hp min=1 max=10 step=1
 (const CROWDED_WALL_LEAVE_PCT 3)
 
+; 1-in-N chance to detach and enter an opening when wall-side opens up
+; during TRACING-OUT.  Lower = more aggressive entry.
+; @hp min=2 max=8 step=1
+(const OPENING_ENTER_CHANCE 2)
+
 ; ── Direction helpers ─────────────────────────────────────────────────────────
 
 ; Wall-side direction: CW → right of dir, CCW → left of dir.
@@ -244,6 +249,18 @@
         (when (= (probe dir) 1)
           (set! dir (invert-dir dir)))
         (go walking))
+
+      ; Opening detection: when wall-side opens (priority 1 of trace-step),
+      ; probabilistically enter the opening but detach to WALKING
+      ; instead of continuing to trace the inner wall.
+      ; The ant turns into the wall-side direction and walks in,
+      ; then random-walks in the interior.
+      (let ((ws (wall-side-of dir cw)))
+        (when (!= (probe ws) 1)
+          (when (= (random OPENING_ENTER_CHANCE) 0)
+            (set! dir ws)
+            (move-track-unsafe dir homepos)
+            (go walking))))
 
       (trace-step dir cw homepos))
 
