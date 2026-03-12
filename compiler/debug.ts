@@ -90,7 +90,7 @@ interface DebugState {
   snapshots: Map<number, any>; // tick → snapshot
   maxSnapshots: number;
   maxTicks: number;
-  allowAbort: boolean;
+  isa: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -102,7 +102,6 @@ function parseArgs(argv: string[]) {
   let mapName: string | undefined;
   let seed = 42;
   let antCount = 200;
-  let allowAbort = false;
   let file: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -110,7 +109,6 @@ function parseArgs(argv: string[]) {
     if (a === "-m" || a === "--map") { mapName = args[++i]; continue; }
     if (a === "-s" || a === "--seed") { seed = parseInt(args[++i], 10); continue; }
     if (a === "-a" || a === "--ants") { antCount = parseInt(args[++i], 10); continue; }
-    if (a === "--allow-abort") { allowAbort = true; continue; }
     if (a.startsWith("-")) { console.error(`Unknown option: ${a}`); process.exit(1); }
     file = a;
   }
@@ -121,11 +119,10 @@ function parseArgs(argv: string[]) {
     console.error("  -m, --map <name>    Select map (default: first eval map)");
     console.error("  -s, --seed <n>      Map seed (default: 42)");
     console.error("  -a, --ants <n>      Ant count (default: 200)");
-    console.error("  --allow-abort       Allow ABORT opcodes");
     process.exit(1);
   }
 
-  return { mapName, seed, antCount, allowAbort, file: file! };
+  return { mapName, seed, antCount, file: file! };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -281,7 +278,7 @@ function runUntilBreak(state: DebugState): PauseResult {
 
       // Save pre-step state for watchpoint detection
       const prevX = ant.x, prevY = ant.y, prevCarrying = ant.carrying;
-      const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, rng, config.maxOpsPerTick, antGrid, config.senseRange, -1, state.allowAbort);
+      const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, rng, config.maxOpsPerTick, antGrid, config.senseRange, -1, state.isa === 'debug');
       if (delivered) world.foodCollected++;
       map.visitCounts[ant.y * map.width + ant.x]++;
 
@@ -856,7 +853,7 @@ Inspection (when paused):
       const prevX = ant.x, prevY = ant.y, prevCarrying = ant.carrying;
       const rng = getTickRng();
       const delivered = stepAnt(ant, state.currentAntId, state.bytecode, state.instrCount,
-        state.world.map, 0, rng, 1, state.world.antGrid, state.config.senseRange, -1, state.allowAbort);
+        state.world.map, 0, rng, 1, state.world.antGrid, state.config.senseRange, -1, state.isa === 'debug');
       if (delivered) state.world.foodCollected++;
 
       const disasm = disassembleInstr(state.bytecode, prevPc, state.program);
@@ -915,7 +912,7 @@ async function main() {
     process.exit(1);
   }
   const source = fs.readFileSync(filePath, "utf-8");
-  const program = parseAssembly(source, { allowAbort: opts.allowAbort });
+  const program = parseAssembly(source, { isa: 'debug' });
   const bytecode = compileBytecode(program);
   const instrCount = program.instructions.length;
 
@@ -966,7 +963,7 @@ async function main() {
     snapshots: new Map(),
     maxSnapshots: 2000,
     maxTicks: config.maxTicks,
-    allowAbort: opts.allowAbort,
+    isa: 'debug',
   };
 
   console.log(`Loaded ${filePath}`);

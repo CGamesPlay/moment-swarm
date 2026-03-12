@@ -24,7 +24,7 @@ Options:
   -l, --list            List generated map names and exit
   -v, --verbose         Print per-tick progress every 100 ticks
   -q, --quiet           Only print the final score number
-      --allow-abort     Allow ABORT opcodes in assembly (rejected by default)
+      --isa <mode>      ISA mode: debug (allows ABORT + magic regs) or prod (default)
   -h, --help            Show this help
 `.trim();
 
@@ -75,7 +75,7 @@ let maxOpsPerTick = 64;
 let listMaps = false;
 let verbose = false;
 let quiet = false;
-let allowAbort = false;
+let isa = 'prod';
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -110,8 +110,12 @@ for (let i = 0; i < args.length; i++) {
     case "-q": case "--quiet":
       quiet = true;
       break;
-    case "--allow-abort":
-      allowAbort = true;
+    case "--isa":
+      isa = args[++i];
+      if (isa !== 'debug' && isa !== 'prod') {
+        console.error(`Invalid --isa value: "${isa}" (must be "debug" or "prod")`);
+        process.exit(1);
+      }
       break;
     default:
       if (arg.startsWith("-")) {
@@ -163,7 +167,7 @@ if (file) {
 
 let program: Program;
 try {
-  program = engine.parseAssembly(source, { allowAbort });
+  program = engine.parseAssembly(source, { isa });
 } catch (e) {
   if (e instanceof engine.AssemblyError) {
     console.error(`Assembly error: ${(e as Error).message}`);
@@ -175,7 +179,7 @@ try {
 
 // ─── Generate maps ───────────────────────────────────────────────────────────
 
-const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick, allowAbort };
+const config = { ...engine.DEFAULT_CONFIG, maxTicks, antCount, maxOpsPerTick, isa };
 const allMaps: EvalMap[] = engine.generateEvalMaps(config.mapWidth, config.mapHeight, seed, numMaps);
 
 let maps: EvalMap[];

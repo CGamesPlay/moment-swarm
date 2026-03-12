@@ -46,7 +46,7 @@ test() {
 	local -a run_flags=()
 	if [[ ! ${argc_no_debug+1} ]]; then
 		flags+=(-D DEBUG=1)
-		run_flags=(--allow-abort)
+		run_flags=(--isa debug)
 	fi
 	
 	# If the file is already a compiled .ant file, pass it directly to run.ts
@@ -99,7 +99,7 @@ debug() {
 	echo "$asm" > "$tmpant"
 	npx --prefix compiler tsx compiler/debug.ts \
 		${argc_map+-m "$argc_map"} ${argc_seed+-s "$argc_seed"} \
-		--allow-abort "$tmpant"
+		"$tmpant"
 	rm -f "$tmpant"
 }
 

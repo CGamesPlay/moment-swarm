@@ -48,6 +48,7 @@ def _(NamedTuple):
         max_val: int
         step: int
         line_index: int
+        current_val: int = 0
 
 
     class JobResult(NamedTuple):
@@ -63,6 +64,8 @@ def _(NamedTuple):
         means: list[float]
         signal: float
         noise: float
+        seed_noise: float
+        interaction_noise: float
 
     return HyperParam, JobResult, SensitivityRow
 
@@ -96,10 +99,11 @@ def _(ANNOTATION_RE, CONST_RE, HyperParam):
                         f"@hp annotation on line {i - 1} not followed by (const NAME val)"
                     )
                 name = const_match.group(2)
+                current_val = int(const_match.group(3))
                 min_val = int(pending_annotation.group(1))
                 max_val = int(pending_annotation.group(2))
                 step = int(pending_annotation.group(3))
-                params.append(HyperParam(name, min_val, max_val, step, i))
+                params.append(HyperParam(name, min_val, max_val, step, i, current_val))
                 pending_annotation = None
         if pending_annotation is not None:
             raise ValueError(
@@ -133,10 +137,13 @@ def _(JobResult, SCORE_RE, subprocess):
         project_root: str,
         map_filter: str | None,
         relax_ops: bool,
+        pinned: list[tuple[str, int]] | None = None,
     ) -> JobResult:
         """Run a single parameter combination with a given seed."""
         cmd = ["argc", "test"]
         for name, val in zip(param_names, combo):
+            cmd.extend(["-D", f"{name}={val}"])
+        for name, val in (pinned or []):
             cmd.extend(["-D", f"{name}={val}"])
         cmd.extend(["-s", str(seed)])
         if map_filter:
@@ -174,6 +181,7 @@ def _(concurrent, run_one):
         jobs: int,
         print_fn=print,
         progress_bar=None,
+        pinned_params: list[tuple[str, int]] | None = None,
     ) -> list:
         """Run all combinations and seeds in parallel, collecting results."""
         param_names = [p.name for p in params]
@@ -191,6 +199,7 @@ def _(concurrent, run_one):
                     project_root,
                     map_filter,
                     relax_ops,
+                    pinned_params,
                 ): (combo, seed)
                 for combo, seed in all_jobs
             }
@@ -236,7 +245,12 @@ def average_scores(results, params):
 @app.cell
 def _(SensitivityRow):
     def compute_sensitivity(results, params):
-        """Analyze per-parameter sensitivity to score variation."""
+        """Analyze per-parameter sensitivity to score variation.
+
+        Decomposes noise into two components:
+        - seed_noise: variance from running the same combo across different seeds
+        - interaction_noise: variance from other parameters (after averaging out seeds)
+        """
         from collections import defaultdict
 
         sensitivity_rows = []
@@ -253,13 +267,59 @@ def _(SensitivityRow):
             ]
             signal = max(means) - min(means) if means else 0.0
 
-            # Compute noise as mean range within each value
+            # Compute total noise as mean range within each value (unchanged)
             noise_ranges = []
             for v in values:
                 if len(scores_by_value[v]) > 1:
                     s = scores_by_value[v]
                     noise_ranges.append(max(s) - min(s))
             noise = sum(noise_ranges) / len(noise_ranges) if noise_ranges else 0.0
+
+            # Group scores by combo to get per-combo means and seed ranges
+            scores_by_combo = defaultdict(lambda: defaultdict(list))
+            for result in results:
+                if result.score is not None:
+                    scores_by_combo[result.combo][result.seed].append(result.score)
+
+            # Seed noise: for each combo, range across seeds, then average
+            # This is the noise from running the same combo on different maps
+            seed_noise_ranges = []
+            for combo, seeds_dict in scores_by_combo.items():
+                seed_means = [
+                    sum(s) / len(s) for s in seeds_dict.values() if s
+                ]
+                if len(seed_means) > 1:
+                    seed_noise_ranges.append(max(seed_means) - min(seed_means))
+            seed_noise = (
+                sum(seed_noise_ranges) / len(seed_noise_ranges)
+                if seed_noise_ranges
+                else 0.0
+            )
+
+            # Interaction noise: for each param value, range of combo means
+            # This shows how much the other parameters affect the score
+            interaction_ranges = []
+            for v in values:
+                # Find all combos where this param has value v
+                combo_means = []
+                for combo, seeds_dict in scores_by_combo.items():
+                    if combo[param_idx] == v:
+                        all_scores = [
+                            s for sl in seeds_dict.values() for s in sl
+                        ]
+                        if all_scores:
+                            combo_means.append(
+                                sum(all_scores) / len(all_scores)
+                            )
+                if len(combo_means) > 1:
+                    interaction_ranges.append(
+                        max(combo_means) - min(combo_means)
+                    )
+            interaction_noise = (
+                sum(interaction_ranges) / len(interaction_ranges)
+                if interaction_ranges
+                else 0.0
+            )
 
             sensitivity_rows.append(
                 SensitivityRow(
@@ -268,6 +328,8 @@ def _(SensitivityRow):
                     means=means,
                     signal=signal,
                     noise=noise,
+                    seed_noise=seed_noise,
+                    interaction_noise=interaction_noise,
                 )
             )
         return sensitivity_rows
@@ -332,6 +394,9 @@ def print_sensitivity(sensitivity, print_fn=print):
         s_to_n = row.signal / row.noise if row.noise > 0 else float("inf")
         print_fn(
             f"  {row.name:20} signal={row.signal:7.1f}  noise={row.noise:7.1f}  s/n={s_to_n:6.2f}"
+        )
+        print_fn(
+            f"    {'seed_noise':>24}={row.seed_noise:7.1f}  interaction_noise={row.interaction_noise:7.1f}"
         )
         print_fn(
             f"    {' '.join(f'{v}={m:6.1f}' for v, m in zip(row.values, row.means))}"
@@ -550,56 +615,89 @@ def _(file_dropdown, parse_annotations):
 
 
 @app.cell
-def _(all_params, mo):
-    """Selectable parameter table — check which params to sweep."""
+def _(HyperParam, all_params, mo):
+    """Editable parameter table — toggle inclusion and override min/max/step."""
 
-    param_table = None
+    param_form = None
     if all_params:
-        _rows = []
+        _elements = {}
         for _p in all_params:
-            _values = list(range(_p.min_val, _p.max_val + 1, _p.step))
-            _rows.append(
-                {
-                    "Parameter": _p.name,
-                    "Min": _p.min_val,
-                    "Max": _p.max_val,
-                    "Step": _p.step,
-                    "# Values": len(_values),
-                    "Range": f"{_values[0]}–{_values[-1]}" if _values else "—",
-                }
+            _elements[f"{_p.name}__enabled"] = mo.ui.checkbox(value=True)
+            _elements[f"{_p.name}__val"] = mo.ui.number(
+                value=_p.current_val, label="", start=0, stop=9999, step=1
             )
-        param_table = mo.ui.table(
-            _rows,
-            selection="multi",
-            initial_selection=list(range(len(all_params))),
-            label="Select parameters to sweep",
-            show_column_summaries=False,
-        )
-    param_table
-    return (param_table,)
+            _elements[f"{_p.name}__min"] = mo.ui.number(
+                value=_p.min_val, label="", start=0, stop=9999, step=1
+            )
+            _elements[f"{_p.name}__max"] = mo.ui.number(
+                value=_p.max_val, label="", start=0, stop=9999, step=1
+            )
+            _elements[f"{_p.name}__step"] = mo.ui.number(
+                value=_p.step, label="", start=1, stop=9999, step=1
+            )
+
+        _header = "| Sweep | Parameter | Value | Min | Max | Step |\n|---|---|---|---|---|---|\n"
+        _rows_md = ""
+        for _p in all_params:
+            _n = _p.name
+            _rows_md += (
+                f"| {{{_n}__enabled}} | **{_n}** | {{{_n}__val}} "
+                f"| {{{_n}__min}} | {{{_n}__max}} | {{{_n}__step}} |\n"
+            )
+        param_form = mo.md(_header + _rows_md).batch(**_elements)
+
+    param_form
+    return (param_form,)
 
 
 @app.cell
-def _(all_params, build_search_space, param_table):
-    """Filter params based on table selection and build search space."""
+def _(HyperParam, all_params, build_search_space, param_form):
+    """Filter params based on form selection and build search space with overrides.
+
+    Checked params are swept; unchecked params are pinned to their Value.
+    """
 
     params, combos = [], []
-    if param_table is not None and param_table.value:
-        _selected_names = {_row["Parameter"] for _row in param_table.value}
-        params = [_p for _p in all_params if _p.name in _selected_names]
+    pinned_params: list[tuple[str, int]] = []
+    if param_form is not None and param_form.value:
+        _vals = param_form.value
+        for _p in all_params:
+            if _vals.get(f"{_p.name}__enabled", False):
+                _min = int(_vals.get(f"{_p.name}__min", _p.min_val))
+                _max = int(_vals.get(f"{_p.name}__max", _p.max_val))
+                _step = int(_vals.get(f"{_p.name}__step", _p.step))
+                _cur = int(_vals.get(f"{_p.name}__val", _p.current_val))
+                params.append(
+                    HyperParam(_p.name, _min, _max, _step, _p.line_index, _cur)
+                )
+            else:
+                _val = int(_vals.get(f"{_p.name}__val", _p.current_val))
+                pinned_params.append((_p.name, _val))
         combos = build_search_space(params)
-    return combos, params
+    return combos, params, pinned_params
 
 
 @app.cell
-def _(combos, mo, params, seeds_slider):
+def _(combos, mo, params, pinned_params, seeds_slider):
     """Show search space summary."""
 
     _output = None
     if params:
         _total_jobs = len(combos) * seeds_slider.value
+        _details = ", ".join(
+            f"{p.name}={len(range(p.min_val, p.max_val + 1, p.step))}"
+            for p in params
+        )
+        _pinned_str = ""
+        if pinned_params:
+            _pinned_str = "  \nPinned: " + ", ".join(
+                f"{name}={val}" for name, val in pinned_params
+            )
         _output = mo.md(
-            f"**{len(params)} parameters** x **{len(combos)} combinations** x **{seeds_slider.value} seed(s)** = **{_total_jobs} total jobs**"
+            f"**{len(params)} parameters** ({_details}) × "
+            f"**{len(combos)} combinations** × "
+            f"**{seeds_slider.value} seed(s)** = **{_total_jobs} total jobs**"
+            f"{_pinned_str}"
         )
     _output
     return
@@ -654,6 +752,7 @@ def _(
     mo,
     os,
     params,
+    pinned_params,
     relax_ops_checkbox,
     run_button,
     run_sweep,
@@ -693,6 +792,7 @@ def _(
                 int(jobs_slider.value),
                 print_fn=lambda x: None,
                 progress_bar=_bar,
+                pinned_params=pinned_params,
             )
     return (results,)
 
@@ -841,8 +941,16 @@ def _(alt, mo, sensitivity):
             _rows.append(
                 {
                     "Parameter": _row.name,
-                    "Metric": "Noise",
-                    "Value": _row.noise,
+                    "Metric": "Seed noise",
+                    "Value": _row.seed_noise,
+                    "S/N": _sn_str,
+                }
+            )
+            _rows.append(
+                {
+                    "Parameter": _row.name,
+                    "Metric": "Interaction noise",
+                    "Value": _row.interaction_noise,
                     "S/N": _sn_str,
                 }
             )
@@ -856,7 +964,8 @@ def _(alt, mo, sensitivity):
                 color=alt.Color(
                     "Metric:N",
                     scale=alt.Scale(
-                        domain=["Signal", "Noise"], range=["#4c78a8", "#e45756"]
+                        domain=["Signal", "Seed noise", "Interaction noise"],
+                        range=["#4c78a8", "#f58518", "#e45756"],
                     ),
                 ),
                 yOffset="Metric:N",
@@ -868,9 +977,9 @@ def _(alt, mo, sensitivity):
                 ],
             )
             .properties(
-                title="Sensitivity: Signal vs Noise",
+                title="Sensitivity: Signal vs Noise (decomposed)",
                 width=400,
-                height=max(len(sensitivity) * 50, 100),
+                height=max(len(sensitivity) * 70, 100),
             )
         )
         _result = mo.vstack(

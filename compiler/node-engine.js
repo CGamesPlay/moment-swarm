@@ -178,7 +178,7 @@ function parseDirection(tok, lineNum) {
  * Parse assembly source into a program IR.
  * Returns { instructions, sourceLines, tagNames?, registerAliases? }
  */
-function parseAssembly(source, { allowAbort = false } = {}) {
+function parseAssembly(source, { isa = 'prod' } = {}) {
   const lines = source.split("\n");
   const labels = new Map();
   const aliases = new Map();
@@ -343,7 +343,10 @@ function parseAssembly(source, { allowAbort = false } = {}) {
         if (reg === null) throw new AssemblyError(lineNum, `Expected register (r0-r7), got: "${args[0]}"`);
         // Allow named magic registers (rD_FD etc.) as source — this is how (reg rD_PX) etc. are implemented
         const magicIdx = MAGIC_REGISTER_NAMES[args[1].toUpperCase()];
-        if (magicIdx !== undefined) return { op, operands: [{ type: "lit", val: reg }, { type: "reg", val: magicIdx }] };
+        if (magicIdx !== undefined) {
+          if (isa !== 'debug') throw new AssemblyError(lineNum, `Magic registers (rD_FD, rD_CL, rD_PX, rD_PY, rD_PC) are not available in prod ISA`);
+          return { op, operands: [{ type: "lit", val: reg }, { type: "reg", val: magicIdx }] };
+        }
         const val = parseOperand(args[1]);
         if (!val) throw new AssemblyError(lineNum, `Invalid value: "${args[1]}"`);
         return { op, operands: [{ type: "lit", val: reg }, val] };
@@ -424,7 +427,7 @@ function parseAssembly(source, { allowAbort = false } = {}) {
       }
 
       case Opcode.ABORT: {
-        if (!allowAbort) throw new AssemblyError(lineNum, "ABORT opcode is not allowed (run with --allow-abort for debug builds)");
+        if (isa !== 'debug') throw new AssemblyError(lineNum, "ABORT opcode is not allowed in prod ISA (compile with DEBUG=1 and run with --isa=debug)");
         if (args.length !== 1) throw new AssemblyError(lineNum, "ABORT requires 1 arg: <code>");
         const val = parseOperand(args[0]);
         if (!val) throw new AssemblyError(lineNum, `Invalid ABORT code: "${args[0]}"`);
@@ -918,7 +921,7 @@ function runTick(world, config = DEFAULT_CONFIG) {
     ant.regs[REG_PX] = ant.x;
     ant.regs[REG_PY] = ant.y;
     ant.regs[REG_PC] = ant.pc;
-    const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange, -1, config.allowAbort);
+    const delivered = stepAnt(ant, i, bytecode, instrCount, map, 0, _tickRng, config.maxOpsPerTick, antGrid, config.senseRange, -1, config.isa === 'debug');
     if (delivered) world.foodCollected++;
     map.visitCounts[ant.y * map.width + ant.x]++;
 
