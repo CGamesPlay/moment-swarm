@@ -17,7 +17,7 @@ import { collectMetadata } from './metadata';
 import { lowerToSSA, printSSA } from './ssa';
 import { optimize } from './optimize';
 import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
-import { generateCode } from './codegen';
+import { generateCode, computeLiveRegsAtEnd } from './codegen';
 import { peephole } from './peephole';
 
 export interface CompileOptions {
@@ -64,10 +64,15 @@ export function compileAntLispDebug(source: string, options: CompileOptions = {}
   const numbered = numberInstructions(linearized);
   const intervals = computeLiveIntervals(linearized, numbered);
   const allocResult = linearScan(ssaProgram, intervals);
+
+  // Compute live registers at block exits BEFORE applyAllocation
+  // (blocks still have %t names that computeBlockLiveness needs)
+  const liveRegsAtEnd = computeLiveRegsAtEnd(ssaProgram, allocResult.allocation);
+
   applyAllocation(ssaProgram, allocResult.allocation);
 
   // Phase 6: Code generation
-  const rawAsm = generateCode(ssaProgram, linearized, allocResult);
+  const rawAsm = generateCode(ssaProgram, linearized, allocResult, liveRegsAtEnd);
 
   // Phase 7: Peephole
   const lines = rawAsm.split('\n');

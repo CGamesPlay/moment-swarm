@@ -8,7 +8,7 @@ import { collectMetadata, Metadata } from './metadata';
 import { lowerToSSA, SSAProgram, BasicBlock, SSAInstr, PhiNode, Terminator, printSSA } from './ssa';
 import { optimize } from './optimize';
 import { linearizeBlocks, numberInstructions, computeLiveIntervals, linearScan, applyAllocation } from './regalloc';
-import { generateCode } from './codegen';
+import { generateCode, computeLiveRegsAtEnd } from './codegen';
 import { peephole } from './peephole';
 
 // ─── Test Harness ───────────────────────────────────────────
@@ -130,8 +130,9 @@ export function compileSource(src: string, opts?: { constOverrides?: Record<stri
   const numbered = numberInstructions(linearized);
   const intervals = computeLiveIntervals(linearized, numbered);
   const allocResult = linearScan(program, intervals);
+  const liveRegsAtEnd = computeLiveRegsAtEnd(program, allocResult.allocation);
   applyAllocation(program, allocResult.allocation);
-  const rawAsm = generateCode(program, linearized, allocResult);
+  const rawAsm = generateCode(program, linearized, allocResult, liveRegsAtEnd);
   const lines = rawAsm.split('\n');
   return peephole(lines).join('\n');
 }

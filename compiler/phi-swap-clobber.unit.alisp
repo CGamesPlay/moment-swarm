@@ -1,0 +1,31 @@
+; ═══════════════════════════════════════════════════════════════
+; Phi Swap Clobber — Minimal reproducer for register corruption
+; ═══════════════════════════════════════════════════════════════
+;
+; Bug: when resolveParallelMoves needs a swap temp register for a
+; cycle in phi copies, it checks registers involved in phi copies
+; and immediate successor phi entries, but misses registers that
+; are live-through (needed later but not involved in any phi copy
+; at that edge). The swap temp clobbers such a register.
+;
+; Pattern: 3 variables a, b, c in a loop. One branch swaps a and b
+; (generating a phi cycle r0↔r1). c (r2) is never modified but IS
+; used after the swap. resolveParallelMoves picks r2 as swap temp,
+; clobbering c from 99 to 20.
+
+(test "phi swap does not clobber live-through register"
+  :ticks 3
+  (begin
+    (let ((a 10)
+          (b 20)
+          (c 99))
+      (loop
+        ; On tick 1: a=10 triggers swap → a=20, b=10
+        ; On tick 2: a=20 skips swap, checks c
+        (when (= a 10)
+          (let ((tmp a))
+            (set! a b)
+            (set! b tmp)))
+        ; c must still be 99 after the swap
+        (assert! (= c 99) 1)
+        (move n)))))

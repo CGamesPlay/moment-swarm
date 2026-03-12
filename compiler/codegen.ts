@@ -3,7 +3,45 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { SSAProgram, BasicBlock, SSAInstr, Terminator, CmpOp } from './ssa';
-import { AllocationResult } from './regalloc';
+import { AllocationResult, computeBlockLiveness } from './regalloc';
+
+// ─── Compute Live Registers at Block Exits ──────────────────
+// Must be called BEFORE applyAllocation (while blocks still have %t names).
+// Returns a map from block → set of physical registers live at block exit.
+
+export function computeLiveRegsAtEnd(
+  program: SSAProgram,
+  allocation: Map<string, string>,
+): Map<BasicBlock, Set<string>> {
+  const blockLiveness = computeBlockLiveness(program.blocks);
+  const liveRegsAtEnd = new Map<BasicBlock, Set<string>>();
+  for (const block of program.blocks) {
+    const info = blockLiveness.get(block);
+    if (!info) continue;
+    const regs = new Set<string>();
+    // Map liveOut SSA temps to their allocated registers
+    for (const temp of info.liveOut) {
+      const reg = allocation.get(temp);
+      if (reg) regs.add(reg);
+    }
+    // Also include phi source/dest registers from successor phis
+    // (covers constants and values that might not be in liveOut)
+    for (const succ of block.succs) {
+      for (const phi of succ.phis) {
+        const destReg = allocation.get(phi.dest);
+        if (destReg) regs.add(destReg);
+        for (const entry of phi.entries) {
+          if (entry.block === block && typeof entry.value === 'string' && entry.value.startsWith('%t')) {
+            const sourceReg = allocation.get(entry.value);
+            if (sourceReg) regs.add(sourceReg);
+          }
+        }
+      }
+    }
+    if (regs.size > 0) liveRegsAtEnd.set(block, regs);
+  }
+  return liveRegsAtEnd;
+}
 
 // ─── Code Generation ────────────────────────────────────────
 
@@ -11,6 +49,7 @@ export function generateCode(
   program: SSAProgram,
   linearized: BasicBlock[],
   allocResult: AllocationResult,
+  liveRegsAtEnd?: Map<BasicBlock, Set<string>>,
 ): string {
   const output: string[] = [];
 
@@ -25,25 +64,26 @@ export function generateCode(
     phiCopiesPerBlock.get(block)!.push({ from, to });
   }
 
-  // Build live register map: block → all registers holding values that flow to
-  // successor phis (including coalesced ones that have no copy). This is needed
-  // so resolveParallelMoves avoids using live registers as swap temps.
-  const liveRegsAtEnd = new Map<BasicBlock, Set<string>>();
-  for (const block of program.blocks) {
-    for (const phi of block.phis) {
-      const destReg = allocResult.allocation.get(phi.dest);
-      for (const entry of phi.entries) {
-        let sourceReg: string;
-        if (entry.value.startsWith('%t')) {
-          sourceReg = allocResult.allocation.get(entry.value) ?? entry.value;
-        } else {
-          sourceReg = entry.value;
+  // If liveRegsAtEnd was not pre-computed (backward compat), fall back to
+  // phi-only approximation. Callers should prefer passing the pre-computed map
+  // from computeLiveRegsAtEnd() for correctness.
+  if (!liveRegsAtEnd) {
+    liveRegsAtEnd = new Map<BasicBlock, Set<string>>();
+    for (const block of program.blocks) {
+      for (const phi of block.phis) {
+        const destReg = allocResult.allocation.get(phi.dest) ?? phi.dest;
+        for (const entry of phi.entries) {
+          let sourceReg: string;
+          if (typeof entry.value === 'string' && entry.value.startsWith('%t')) {
+            sourceReg = allocResult.allocation.get(entry.value) ?? entry.value;
+          } else {
+            sourceReg = String(entry.value);
+          }
+          if (!liveRegsAtEnd.has(entry.block)) liveRegsAtEnd.set(entry.block, new Set());
+          const regs = liveRegsAtEnd.get(entry.block)!;
+          regs.add(sourceReg);
+          regs.add(destReg);
         }
-        // Both the source (live value) and dest (target) registers are in use
-        if (!liveRegsAtEnd.has(entry.block)) liveRegsAtEnd.set(entry.block, new Set());
-        const regs = liveRegsAtEnd.get(entry.block)!;
-        regs.add(sourceReg);
-        if (destReg) regs.add(destReg);
       }
     }
   }

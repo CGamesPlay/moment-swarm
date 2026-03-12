@@ -266,7 +266,7 @@ function runTestBlock(testDef, preamble, verbose, sourceFile, constOverrides = {
 
   let program;
   try {
-    program = parseAssembly(asm, { allowAbort: true });
+    program = parseAssembly(asm, { isa: 'debug' });
   } catch (e) {
     return { name, passed: false, error: `Assembly error: ${e.message}`,
              asmSource: asm, failedAssertions: [], regState: '', worldTick: 0, foodCollected: 0,
