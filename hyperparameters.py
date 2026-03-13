@@ -79,6 +79,36 @@ def _(re):
 
 
 @app.cell
+def _():
+    ADVERSARIAL_SEEDS = [6, 14, 26, 8, 23]
+    return (ADVERSARIAL_SEEDS,)
+
+
+@app.cell
+def _(ADVERSARIAL_SEEDS):
+    def build_seeds(n_seeds: int, seed_start: int, use_adversarial: bool) -> list[int]:
+        """Build seed list, optionally prepending adversarial seeds.
+
+        With use_adversarial=True, the first slots are filled from ADVERSARIAL_SEEDS
+        (in order). Once those are exhausted, sequential seeds starting at seed_start
+        are appended until the total count reaches n_seeds.
+        """
+        if not use_adversarial:
+            return list(range(seed_start, seed_start + n_seeds))
+
+        adversarial = ADVERSARIAL_SEEDS[:n_seeds]
+        remaining = n_seeds - len(adversarial)
+        extra: list[int] = []
+        s = seed_start
+        while len(extra) < remaining:
+            if s not in adversarial:
+                extra.append(s)
+            s += 1
+        return adversarial + extra
+    return (build_seeds,)
+
+
+@app.cell
 def _(ANNOTATION_RE, CONST_RE, HyperParam):
     def parse_annotations(path: str) -> tuple[list[str], list[HyperParam]]:
         """Parse @hp annotations and extract hyperparameters."""
@@ -415,8 +445,10 @@ def print_sensitivity(sensitivity, print_fn=print):
 
 @app.cell
 def _(
+    ADVERSARIAL_SEEDS,
     argparse,
     build_search_space,
+    build_seeds,
     compute_sensitivity,
     mo,
     os,
@@ -475,6 +507,11 @@ def _(
                 help="Parallel workers (default: 8)",
             )
             _parser.add_argument(
+                "--adversarial-seeds",
+                action="store_true",
+                help=f"Prepend adversarial seeds {ADVERSARIAL_SEEDS} to the seed list",
+            )
+            _parser.add_argument(
                 "--write",
                 action="store_true",
                 help="Write best combo back to file",
@@ -516,7 +553,7 @@ def _(
 
             # Build search space
             _combos = build_search_space(_params)
-            _seeds = list(range(_args.seed_start, _args.seed_start + _args.seeds))
+            _seeds = build_seeds(_args.seeds, _args.seed_start, _args.adversarial_seeds)
 
             print(f"\n{'=' * 70}")
             print(f"Hyperparameter Optimizer")
@@ -527,7 +564,8 @@ def _(
                 print(f"Pinned: {', '.join(f'{n}={v}' for n, v in _cli_pinned)}")
             print(f"Combinations: {len(_combos)}")
             print(
-                f"Seeds: {len(_seeds)} (from {_args.seed_start} to {_args.seed_start + _args.seeds - 1})"
+                f"Seeds: {len(_seeds)} {_seeds}"
+                + (" [adversarial]" if _args.adversarial_seeds else "")
             )
             print(f"Total jobs: {len(_combos) * len(_seeds)}")
             if _args.map_filter:
@@ -765,16 +803,20 @@ def _(mo):
     relax_ops_checkbox = mo.ui.checkbox(
         value=False, label="Relax ops limit (-o 1000)"
     )
+    adversarial_seeds_checkbox = mo.ui.checkbox(
+        value=False, label=f"Adversarial seeds (prepend {ADVERSARIAL_SEEDS})"
+    )
 
     mo.hstack(
         [
             mo.vstack([seeds_slider, seed_start_input]),
             mo.vstack(
-                [jobs_slider, mo.vstack([map_filter_input, relax_ops_checkbox])]
+                [jobs_slider, mo.vstack([map_filter_input, relax_ops_checkbox, adversarial_seeds_checkbox])]
             ),
         ]
     )
     return (
+        adversarial_seeds_checkbox,
         jobs_slider,
         map_filter_input,
         relax_ops_checkbox,
@@ -795,7 +837,9 @@ def _(combo_count, mo, params, seeds_slider):
 
 @app.cell
 def _(
+    adversarial_seeds_checkbox,
     build_search_space,
+    build_seeds,
     combo_count,
     filepath,
     jobs_slider,
@@ -826,11 +870,10 @@ def _(
     project_root = os.path.dirname(os.path.abspath(__file__))
     map_filter = map_filter_input.value or None
     relax_ops = relax_ops_checkbox.value
-    seeds = list(
-        range(
-            int(seed_start_input.value),
-            int(seed_start_input.value) + seeds_slider.value,
-        )
+    seeds = build_seeds(
+        seeds_slider.value,
+        int(seed_start_input.value),
+        adversarial_seeds_checkbox.value,
     )
     _total = combo_count * len(seeds)
 
@@ -930,7 +973,7 @@ def _(mo, ranked, sweep_filepath, sweep_params, sweep_pinned_full, write_back, w
     """
 
     _output = None
-    if write_button and write_button.value and sweep_filepath:
+    if write_button is not None and write_button.value and sweep_filepath:
         _lines = open(sweep_filepath).readlines()
         best_combo, best_avg = ranked[0]
         # Write swept params with best combo values, plus pinned overrides

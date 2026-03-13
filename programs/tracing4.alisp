@@ -69,7 +69,7 @@
 (const OPENING_ENTER_CHANCE 3)
 ; Max steps in tracing-home before bailing to dead-reckon
 ; Sweep: clear signal (S/N=0.58). 60 is sweet spot. +20 pts.
-; @hp min=10 max=80 step=5
+; @hp min=50 max=120 step=10
 (const TRACE_HOME_BUDGET 80)
 
 
