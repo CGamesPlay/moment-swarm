@@ -162,11 +162,10 @@
 
         (grab-food-if-adjacent dir homepos (go returning))
 
-        (mark-gradient TRAIL_PH nest)
-
         ; Pickup beacon → spiral
         (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
                   (= (sense food) 0))
+          (mark-gradient TRAIL_PH nest)
           (pick-random-nonwall dir)
           (go spiraling))
 
@@ -183,11 +182,14 @@
             (pick-nonwall-no-reverse dir back))
           (set! steps (+ (random HEADING_STEPS) 1)))
 
-        ; Wall hit → enter TRACING-OUT
+        ; Wall hit → enter TRACING-OUT (skip gradient — will mark on next tick)
         (when (= (probe dir) 1)
           (pick-cw-from-wall dir cw)
           (set! dir (turn-away dir cw))
-          (go tracing-out))
+          (go tracing-out-fast))
+
+        ; Mark gradient before moving (normal path — not on wall-hit path)
+        (mark-gradient TRAIL_PH nest)
 
         (move-track-unsafe dir homepos)
         (set! steps (- steps 1))))
@@ -195,6 +197,14 @@
     ; ────────────────────────────────────────
     ; TRACING-OUT — follow wall found during exploration
     ; ────────────────────────────────────────
+
+    ; Fast entry from exploring → tracing-out: skip gradient (already marked),
+    ; delivery trail (already checked), and food (just sensed in exploring).
+    tracing-out-fast
+    (set-tag tracing-out)
+    (set! tdir 0)
+    (go do-trace-step)
+
     tracing-out
     (set-tag tracing-out)
 
@@ -283,8 +293,7 @@
         (when (= (random WRONG_WAY_CHANCE) 0)
           (set! cw (- 1 cw)))
         (set! dir (turn-away dir cw))
-        ; Do first trace-step then enter tracing-home loop
-        ; tdir is already set to 1-4, so dispatch will route to tracing-home
+        ; Fast entry: skip gradient/nest/budget checks (all done in returning)
         (go do-trace-step)))
 
     ; ────────────────────────────────────────
@@ -338,13 +347,13 @@
       (if (!= (probe ws) 1)
         (begin
           (set! dir ws)
-          (move-track dir homepos))
+          (move-track-unsafe dir homepos))   ; ws already probed clear
         (if (!= (probe dir) 1)
           (move-track-unsafe dir homepos)
           (begin
             (set! dir (turn-away dir cw))
             (if (!= (probe dir) 1)
-              (move-track dir homepos)
+              (move-track-unsafe dir homepos) ; just probed clear
               (begin
                 (set! dir (turn-away dir cw))
                 (move-track dir homepos)))))))
