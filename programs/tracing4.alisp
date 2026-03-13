@@ -51,9 +51,10 @@
 ; @hp min=20 max=60 step=5
 (const HEADING_STEPS 40)
 (const DELIVERY_GO_TOWARD 2)
+; Number of rings at 3-cell spacing (matches sensing width).
 ; Sweep: 3 is optimal (S/N=0.21). Larger spirals waste time.
-; @hp min=1 max=7 step=2
-(const SPIRAL_RADIUS 3)
+; @hp min=1 max=4 step=1
+(const SPIRAL_RADIUS 1)
 (const PICKUP_SIGNAL 10)
 
 ; ── Wall-tracing constants ──
@@ -133,9 +134,11 @@
     (move-track-unsafe dir homepos)
     (set! leg-steps (- leg-steps 1))
 
+    ; Leg lengths: 3, 3, 6, 6, 9, 9, ... — each ring is 3 cells
+    ; from the previous, matching the ant's sensing width (1 + self + 1).
     (when (<= leg-steps 0)
       (set! legs (+ legs 1))
-      (set! leg-steps (+ (/ legs 2) 1 (random 2)))
+      (set! leg-steps (* (+ (/ legs 2) 1) 3))
       (set! dir (turn-right dir)))
 
     (go spiral-top)))
@@ -243,7 +246,7 @@
     ; SPIRALING — outward spiral after pickup beacon
     ; ────────────────────────────────────────
     spiraling
-    (let ((steps 1) (age 0))
+    (let ((steps 3) (age 0))
       (spiral-search dir homepos steps age SPIRAL_RADIUS
                      (go returning) (go exploring)))
 
