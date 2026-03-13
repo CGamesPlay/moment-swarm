@@ -159,43 +159,56 @@
     ; EXPLORING — gradient-guided random walk
     ; ────────────────────────────────────────
     exploring
-    (let ((steps 0))
-      (loop
-        (set-tag exploring)
+    (set! thb 0)  ; thb doubles as 'steps' in exploring state
 
-        (grab-food-if-adjacent dir homepos (go returning))
+    exploring-top
+    (set-tag exploring)
 
-        ; Pickup beacon → spiral
-        (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
-                  (= (sense food) 0))
-          (mark-gradient TRAIL_PH nest)
-          (pick-random-nonwall dir)
-          (go spiraling))
+    (grab-food-if-adjacent dir homepos (go returning))
 
-        ; DELIVERING gradient — follow toward food
-        (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
-          (let ((del-dir (smell DELIVERING_PH)))
-            (when (!= del-dir 0)
-              (set! dir del-dir)
-              (set! steps HEADING_STEPS))))
+    ; Pickup beacon → spiral
+    (when (and (>= (sniff PICKUP_PH here) PICKUP_SIGNAL)
+              (= (sense food) 0))
+      (mark-gradient TRAIL_PH nest)
+      (pick-random-nonwall dir)
+      (go spiraling))
 
-        ; Pick new heading when steps runs out
-        (when (<= steps 0)
-          (let ((back (invert-dir dir)))
-            (pick-nonwall-no-reverse dir back))
-          (set! steps (+ (random HEADING_STEPS) 1)))
+    ; DELIVERING gradient — follow toward food
+    (when (>= (sniff DELIVERING_PH here) DELIVERY_GO_TOWARD)
+      (let ((del-dir (smell DELIVERING_PH)))
+        (when (!= del-dir 0)
+          (set! dir del-dir)
+          (set! thb HEADING_STEPS))))
 
-        ; Wall hit → enter TRACING-OUT (skip gradient — will mark on next tick)
-        (when (= (probe dir) 1)
-          (pick-cw-from-wall dir cw)
-          (set! dir (turn-away dir cw))
-          (go tracing-out-fast))
+    ; Pick new heading when steps runs out
+    (when (<= thb 0)
+      (let ((back (invert-dir dir)))
+        (pick-nonwall-no-reverse dir back))
+      (set! thb (+ (random HEADING_STEPS) 1))
+      ; On heading-change ticks, use lighter gradient propagation (no seed check)
+      ; to stay under the 64-op budget. The trail gradient is seeded by
+      ; returning ants near the nest, so skipping the seed check here is safe.
+      (when (= (probe dir) 1)
+        (pick-cw-from-wall dir cw)
+        (set! dir (turn-away dir cw))
+        (go tracing-out-fast))
+      (mark-gradient-propagate TRAIL_PH)
+      (move-track-unsafe dir homepos)
+      (set! thb (- thb 1))
+      (go exploring-top))
 
-        ; Mark gradient before moving (normal path — not on wall-hit path)
-        (mark-gradient TRAIL_PH nest)
+    ; Wall hit → enter TRACING-OUT (skip gradient — will mark on next tick)
+    (when (= (probe dir) 1)
+      (pick-cw-from-wall dir cw)
+      (set! dir (turn-away dir cw))
+      (go tracing-out-fast))
 
-        (move-track-unsafe dir homepos)
-        (set! steps (- steps 1))))
+    ; Mark gradient before moving (normal path — not on wall-hit path)
+    (mark-gradient TRAIL_PH nest)
+
+    (move-track-unsafe dir homepos)
+    (set! thb (- thb 1))
+    (go exploring-top)
 
     ; ────────────────────────────────────────
     ; TRACING-OUT — follow wall found during exploration
@@ -270,8 +283,9 @@
       (mark-gradient DELIVERING_PH food)
       (go exploring))
 
-    ; Gradient trail marking (reinforce on the way home)
-    (mark-gradient TRAIL_PH nest)
+    ; Gradient trail marking (reinforce on the way home — propagate-only to
+    ; save ops; the trail is seeded near the nest on prior returning ticks)
+    (mark-gradient-propagate TRAIL_PH)
 
     ; Follow gradient
     (let ((trail-dir (smell TRAIL_PH)))
@@ -323,12 +337,15 @@
         (set! homepos 0)
         (go exploring)))
 
-    ; Budget check — bail to returning with dead-reckon after N steps
+    ; Budget check — bail to returning after N steps.
+    ; Move toward home and enter returning on the next tick (avoids stalling
+    ; by trying to do both trace-home header + full returning in one tick).
     (set! thb (- thb 1))
     (when (<= thb 0)
       (home-dir dir homepos)
       (when (= (probe dir) 1)
         (pick-random-nonwall dir))
+      (move-track-unsafe dir homepos)
       (go returning))
 
     ; Fall through to shared trace-step (tdir = 1-4 from returning setup)
