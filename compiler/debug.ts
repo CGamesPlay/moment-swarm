@@ -72,6 +72,7 @@ interface Watchpoint {
 interface TickProgress {
   nextAntIndex: number;
   tickStarted: boolean; // whether beginTick was called for current tick
+  skipBreakOnResume: boolean; // skip breakpoint check for the first ant after a break
 }
 
 interface DebugState {
@@ -176,7 +177,7 @@ function restoreToTick(state: DebugState, targetTick: number) {
   state.world.stallsByTag = undefined;
   state.world.abortCounts = 0;
   state.world.abortsByCode = undefined;
-  state.tickProgress = { nextAntIndex: 0, tickStarted: false };
+  state.tickProgress = { nextAntIndex: 0, tickStarted: false, skipBreakOnResume: false };
   return true;
 }
 
@@ -273,10 +274,15 @@ function runUntilBreak(state: DebugState): PauseResult {
       ant.regs[REG_PY] = ant.y;
       ant.regs[REG_PC] = ant.pc;
 
-      // Check breakpoints BEFORE stepping
-      if (matchesBreakpoint(state, ant, i)) {
+      // Check breakpoints BEFORE stepping.
+      // Skip on the very first ant after resuming from a break (that position
+      // already fired; we don't want to re-fire before the ant has stepped).
+      if (state.tickProgress.skipBreakOnResume) {
+        state.tickProgress.skipBreakOnResume = false;
+      } else if (matchesBreakpoint(state, ant, i)) {
         state.currentAntId = i;
         state.tickProgress.nextAntIndex = i;
+        state.tickProgress.skipBreakOnResume = true;
         return { reason: "breakpoint", antId: i };
       }
 
@@ -1012,7 +1018,7 @@ async function main() {
     watchpoints: [],
     nextBreakpointId: 1,
     nextWatchpointId: 1,
-    tickProgress: { nextAntIndex: 0, tickStarted: false },
+    tickProgress: { nextAntIndex: 0, tickStarted: false, skipBreakOnResume: false },
     snapshots: new Map(),
     maxSnapshots: 2000,
     maxTicks: config.maxTicks,
