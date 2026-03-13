@@ -390,6 +390,31 @@ export function peephole(lines: string[], instrIndex?: number[]): { lines: strin
       }
     }
 
+    // Pass 2b: Dead code after unconditional JMP.
+    // Remove any instructions between an unconditional JMP and the next label,
+    // since they are unreachable.
+    {
+      let i = 0;
+      while (i < output.length) {
+        const trimmed = output[i].trim();
+        if (trimmed.startsWith('JMP ')) {
+          // Delete all non-label, non-blank, non-comment lines until the next label
+          let j = i + 1;
+          while (j < output.length) {
+            const next = output[j].trim();
+            if (next === '' || next.startsWith(';')) { j++; continue; }
+            if (next.endsWith(':')) break;  // hit a label — stop
+            // This is an unreachable instruction — delete it
+            output.splice(j, 1);
+            outputIdx.splice(j, 1);
+            changed = true;
+            // Don't increment j since array shifted
+          }
+        }
+        i++;
+      }
+    }
+
     // Pass 3: Remove redundant JMP instructions that jump to a label which
     // would be reached by fall-through.
     for (let i = 0; i < output.length; i++) {
