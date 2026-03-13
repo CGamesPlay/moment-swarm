@@ -149,8 +149,17 @@ runSuite('Peephole', () => {
   });
 
   test('tail merge: three blocks sharing 2-instruction tail', () => {
-    // savings = (3-1)*2 - 3 = 1
+    // savings = (3-1)*2 - 3 = 1, so tail merge extracts a shared block.
+    // Then the final short-block inlining pass inlines the 2-instruction
+    // shared tail back into callers (eliminating a runtime JMP per caller).
+    // Since unreferenced block labels are removed and dead code after JMP
+    // is not cleaned (no dead-code-after-JMP pass here), the result has
+    // the first block's instructions followed by the inlined tail.
     const result = runPeephole([
+      '  JEQ r0 0 block_a',
+      '  JEQ r0 1 block_b',
+      '  JEQ r0 2 block_c',
+      '  MOVE r0',
       'block_a:',
       '  SET r0 1',
       '  SUB r1 1',
@@ -166,8 +175,10 @@ runSuite('Peephole', () => {
       '__target:',
       '  MOVE r0',
     ]);
+    // Tail merge extracts SUB r1 1 into a shared tail. The tail is reachable
+    // by fall-through so it's NOT inlined back. SUB appears once (in the tail).
     const subs = result.filter(l => l.trim() === 'SUB r1 1');
-    assertEq(subs.length, 1);  // shared tail has it once
+    assertEq(subs.length, 1);
   });
 
   test('tail merge: identical blocks deduplicated', () => {
@@ -274,6 +285,128 @@ runSuite('Peephole', () => {
   test('instrIndex: default fills with -1 when not provided', () => {
     const { instrIndex } = peephole(['  SET r0 5', '  SET r0 10']);
     assertEq(instrIndex, [-1]);
+  });
+
+  // ─── Dead code after unconditional JMP ─────────────────────
+
+  // ─── Short-block inlining ────────────────────────────────────
+
+  test('short-block inline: 2-instruction tail block inlined into callers', () => {
+    // __tail has 2 instructions (OR + JMP __target).
+    // It's preceded by a JMP (not reachable by fall-through), so it's inlineable.
+    // Both callers' JMP __tail get inlined with the tail's body.
+    const result = runPeephole([
+      '  JEQ r0 0 block_a',
+      '  JEQ r0 1 block_b',
+      '  JEQ r0 2 block_mid',
+      '  JMP __target',
+      '__tail:',
+      '  OR r1 r0',
+      '  JMP __target',
+      'block_mid:',
+      '  SET r2 42',
+      '  MOVE r1',
+      '__target:',
+      '  MOVE r0',
+      'block_a:',
+      '  SET r0 1',
+      '  JMP __tail',
+      'block_b:',
+      '  SET r0 2',
+      '  JMP __tail',
+    ]);
+    // All JMP __tail should be replaced with inlined body
+    const tailJmps = result.filter(l => l.trim() === 'JMP __tail');
+    assertEq(tailJmps.length, 0);
+    // __tail label and body removed (dead after inlining, not reachable by fall-through)
+    const tailLabels = result.filter(l => l.trim() === '__tail:');
+    assertEq(tailLabels.length, 0);
+    // OR appears 2 times: both inlined call sites (original body removed)
+    const ors = result.filter(l => l.trim() === 'OR r1 r0');
+    assertEq(ors.length, 2);
+  });
+
+  test('short-block inline: chain tail resolved', () => {
+    // __tail_a (2 instrs) jumps to a distant __target.
+    // block_x's JMP __tail_a gets inlined, eliminating the chain.
+    const result = runPeephole([
+      '__target:',
+      '  MOVE r1',
+      '  JEQ r0 0 block_x',
+      '  MOVE r0',
+      'block_x:',
+      '  SET r0 1',
+      '  AND r0 255',
+      '  JMP __tail_a',
+      '__tail_a:',
+      '  OR r1 r0',
+      '  JMP __target',
+    ]);
+    // __tail_a should be inlined into block_x, label removed
+    const tailALabels = result.filter(l => l.trim() === '__tail_a:');
+    assertEq(tailALabels.length, 0);
+    // OR r1 r0 should appear in block_x's body now
+    const ors = result.filter(l => l.trim() === 'OR r1 r0');
+    assertEq(ors.length, 1);
+    // JMP __target should exist (from inlined body, replacing JMP __tail_a)
+    const jmpTarget = result.filter(l => l.trim() === 'JMP __target');
+    assertEq(jmpTarget.length, 1);
+  });
+
+  test('short-block inline: 3-instruction block NOT inlined', () => {
+    // Block with 3 instructions should NOT be inlined (only 2-instr blocks are).
+    // __big_tail is placed non-adjacent to block_a to avoid fall-through optimization.
+    const result = runPeephole([
+      '  JEQ r0 0 block_a',
+      '  MOVE r0',
+      '__big_tail:',
+      '  OR r1 r0',
+      '  AND r1 255',
+      '  JMP __target',
+      '__target:',
+      '  MOVE r0',
+      'block_a:',
+      '  SET r0 1',
+      '  JMP __big_tail',
+    ]);
+    // __big_tail has 3 instructions → not inlined; JMP __big_tail preserved
+    const jmpBigTail = result.filter(l => l.trim() === 'JMP __big_tail');
+    assertEq(jmpBigTail.length, 1);
+  });
+
+  test('short-block inline: instrIndex preserved', () => {
+    const { lines, instrIndex } = peephole([
+      '__target:',
+      '  MOVE r0',
+      '  JEQ r0 0 block_a',
+      '  MOVE r0',
+      'block_a:',
+      '  SET r0 1',
+      '  JMP __tail',
+      '__tail:',
+      '  OR r1 r0',
+      '  JMP __target',
+    ], [-1, 5, 10, 20, -1, 30, 40, -1, 50, 60]);
+    // After inlining, the OR instruction should carry __tail's instrIndex (50)
+    const orIdx = lines.findIndex(l => l.trim() === 'OR r1 r0');
+    assertEq(instrIndex[orIdx], 50);
+  });
+
+  test('short-block inline: block ending with MOVE not inlined', () => {
+    // Block ending with MOVE (not JMP) should NOT be inlined.
+    // __action is non-adjacent to block_a.
+    const result = runPeephole([
+      '  JEQ r0 0 block_a',
+      '  MOVE r0',
+      '__action:',
+      '  SET r0 1',
+      '  MOVE r0',
+      'block_a:',
+      '  JMP __action',
+    ]);
+    // __action has 2 instructions but ends with MOVE, not JMP → not inlined
+    const jmpAction = result.filter(l => l.trim() === 'JMP __action');
+    assertEq(jmpAction.length, 1);
   });
 
   // ─── Dead code after unconditional JMP ─────────────────────

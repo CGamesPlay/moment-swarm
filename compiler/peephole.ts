@@ -470,5 +470,192 @@ export function peephole(lines: string[], instrIndex?: number[]): { lines: strin
     outputIdx = filteredIdx;
   }
 
+  // ── Final pass: Short-block inlining (runs once, after fixed-point) ──
+  // When a JMP targets a block with exactly 2 instructions (non-JMP + JMP),
+  // inline the block's body in place of the JMP.  This eliminates one
+  // runtime JMP at the cost of slightly larger code — beneficial because the
+  // ISA has a 64-op-per-tick budget and no program-size limit.
+  //
+  // This pass runs outside the fixed-point loop to avoid oscillating with
+  // tail merging (tail merge extracts shared tails; inlining undoes sharing;
+  // tail merge would re-extract; etc.).
+  //
+  // Only unconditional JMPs are rewritten.  After inlining, we run a
+  // cleanup loop to remove redundant JMPs and dead labels created by
+  // the inlining (e.g. if all references to a block were inlined, the
+  // block becomes dead).
+  {
+    const blocks = parseBlocks(output);
+    const inlineTargets = new Map<string, { body: string[]; bodyIdx: number[] }>();
+
+    // Build a label→line-index map so we can check the preceding instruction
+    const labelLineIdx = new Map<string, number>();
+    for (let i = 0; i < output.length; i++) {
+      const t = output[i].trim();
+      if (t.endsWith(':')) labelLineIdx.set(t.slice(0, -1), i);
+    }
+
+    for (const block of blocks) {
+      if (block.labels.length === 0) continue;
+      if (block.body.length !== 2) continue;
+      const lastInstr = block.body[block.body.length - 1];
+      if (!lastInstr.startsWith('JMP ')) continue;
+      // Don't inline if the JMP target is one of this block's own labels
+      const jmpTarget = lastInstr.split(/\s+/)[1];
+      if (block.labels.includes(jmpTarget)) continue;
+
+      // Only inline if the block is NOT reachable by fall-through.
+      // Check the instruction immediately before the block's first label.
+      // If it's an unconditional JMP, the block is only reachable via jumps
+      // to its label, so after inlining all JMP refs the block becomes dead.
+      const firstLabelLine = labelLineIdx.get(block.labels[0]);
+      if (firstLabelLine !== undefined) {
+        let prevIsJmp = false;
+        for (let p = firstLabelLine - 1; p >= 0; p--) {
+          const prev = output[p].trim();
+          if (prev === '' || prev.startsWith(';')) continue;
+          if (prev.endsWith(':')) continue; // skip adjacent labels
+          prevIsJmp = prev.startsWith('JMP ');
+          break;
+        }
+        if (!prevIsJmp) continue; // reachable by fall-through → don't inline
+      }
+
+      const bodyIdx = block.bodyLines.map(li => outputIdx[li]);
+      for (const lbl of block.labels) {
+        inlineTargets.set(lbl, { body: block.body, bodyIdx });
+      }
+    }
+
+    if (inlineTargets.size > 0) {
+      let inlined = false;
+      for (let i = 0; i < output.length; i++) {
+        const trimmed = output[i].trim();
+        if (!trimmed.startsWith('JMP ')) continue;
+        const target = trimmed.split(/\s+/)[1];
+        const inline = inlineTargets.get(target);
+        if (!inline) continue;
+
+        // Replace this JMP with the inlined body
+        const newLines = inline.body.map(b => `  ${b}`);
+        const newIdx = [...inline.bodyIdx];
+        output.splice(i, 1, ...newLines);
+        outputIdx.splice(i, 1, ...newIdx);
+        inlined = true;
+        // Skip past the inlined instructions
+        i += newLines.length - 1;
+      }
+
+      // Cleanup: remove dead code, redundant JMPs, and dead labels
+      if (inlined) {
+        let cleanChanged = true;
+        while (cleanChanged) {
+          cleanChanged = false;
+
+          // Remove unreachable code after unconditional JMP.
+          // Note: MOVE, PICKUP, DROP are tick-ending actions but execution
+          // continues from the next instruction on the following tick, so
+          // code after them IS reachable.
+          {
+            let i = 0;
+            while (i < output.length) {
+              const trimmed = output[i].trim();
+              if (trimmed.startsWith('JMP ')) {
+                let j = i + 1;
+                while (j < output.length) {
+                  const next = output[j].trim();
+                  if (next === '' || next.startsWith(';')) { j++; continue; }
+                  if (next.endsWith(':')) break;
+                  output.splice(j, 1);
+                  outputIdx.splice(j, 1);
+                  cleanChanged = true;
+                }
+              }
+              i++;
+            }
+          }
+
+          // Remove redundant JMPs that fall through to their target
+          for (let i = 0; i < output.length; i++) {
+            const line = output[i].trim();
+            if (!line.startsWith('JMP ')) continue;
+            const target = line.split(/\s+/)[1];
+            let redundant = false;
+            for (let j = i + 1; j < output.length; j++) {
+              const next = output[j].trim();
+              if (next === '') continue;
+              if (next.endsWith(':')) {
+                if (next.slice(0, -1) === target) { redundant = true; break; }
+                continue;
+              }
+              break;
+            }
+            if (redundant) {
+              output.splice(i, 1);
+              outputIdx.splice(i, 1);
+              i--;
+              cleanChanged = true;
+            }
+          }
+
+          // Remove dead labels AND their unreachable block bodies.
+          // A dead label's block is unreachable if the instruction preceding
+          // the label is an unconditional JMP (no fall-through).  In that case,
+          // remove the label and all body instructions until the next label.
+          // If the block IS reachable by fall-through, only remove the label.
+          const refs = new Set<string>();
+          for (const line of output) {
+            const t = line.trim();
+            if (t === '' || t.startsWith(';') || t.endsWith(':')) continue;
+            const tokens = t.split(/\s+/);
+            const op = tokens[0];
+            if (op === 'JMP' && tokens[1]) refs.add(tokens[1]);
+            else if (JUMP_OPS.has(op) && tokens[3]) refs.add(tokens[3]);
+          }
+          const beforeLen = output.length;
+          const filt: string[] = [];
+          const filtI: number[] = [];
+          for (let i = 0; i < output.length; i++) {
+            const t = output[i].trim();
+            if (t.endsWith(':') && !refs.has(t.slice(0, -1))) {
+              // Dead label. Check if reachable by fall-through.
+              // Find the last real instruction before this label.
+              let prevIsJmp = false;
+              for (let p = filt.length - 1; p >= 0; p--) {
+                const prev = filt[p].trim();
+                if (prev === '' || prev.startsWith(';')) continue;
+                if (prev.endsWith(':')) continue; // skip other labels
+                prevIsJmp = prev.startsWith('JMP ');
+                break;
+              }
+              if (prevIsJmp) {
+                // Block is unreachable — skip label AND body instructions
+                // until the next label or EOF.
+                i++; // skip the label line (already not pushed)
+                while (i < output.length) {
+                  const next = output[i].trim();
+                  if (next === '' || next.startsWith(';')) { i++; continue; }
+                  if (next.endsWith(':')) { i--; break; } // back up; outer loop will handle this label
+                  i++; // skip this body instruction
+                  cleanChanged = true;
+                }
+                cleanChanged = true;
+                continue;
+              }
+              // Reachable by fall-through — just remove the dead label
+              cleanChanged = true;
+              continue;
+            }
+            filt.push(output[i]);
+            filtI.push(outputIdx[i]);
+          }
+          if (filt.length !== beforeLen) cleanChanged = true;
+          output = filt;
+          outputIdx = filtI;
+        }
+      }
+    }
+  }
+
   return { lines: output, instrIndex: outputIdx };
 }
