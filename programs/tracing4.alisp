@@ -46,13 +46,13 @@
 (const DELIVERING_PH ch_green)   ; food-delivery breadcrumb channel
 (const PICKUP_PH ch_blue)        ; "food was here" beacon channel
 
-(const USE_SPREAD 1)
+; @hp min=0 max=1 step=1
+(const USE_SPREAD 0)
 ; Sweep: no signal (S/N=0.27). 40 confirmed.
-; @hp min=20 max=60 step=5
-(const HEADING_STEPS 40)
+; @hp min=20 max=60 step=10
+(const HEADING_STEPS 60)
 (const DELIVERY_GO_TOWARD 2)
 ; Number of rings at 3-cell spacing (matches sensing width).
-; Sweep: 3 is optimal (S/N=0.21). Larger spirals waste time.
 ; @hp min=1 max=4 step=1
 (const SPIRAL_RADIUS 1)
 (const PICKUP_SIGNAL 10)
@@ -60,17 +60,17 @@
 ; ── Wall-tracing constants ──
 ; Sweep: no signal (S/N=0.20). 20 confirmed.
 ; @hp min=8 max=40 step=4
-(const WALL_LEAVE_CHANCE 20)
+(const WALL_LEAVE_CHANCE 40)
 ; Sweep: no signal (S/N=0.10). 6 confirmed.
-; @hp min=2 max=8 step=1
+; @hp min=1 max=8 step=1
 (const WRONG_WAY_CHANCE 6)
 ; Sweep: no signal (S/N=0.14). 2 confirmed.
 ; @hp min=1 max=6 step=1
-(const OPENING_ENTER_CHANCE 2)
+(const OPENING_ENTER_CHANCE 3)
 ; Max steps in tracing-home before bailing to dead-reckon
 ; Sweep: clear signal (S/N=0.58). 60 is sweet spot. +20 pts.
 ; @hp min=10 max=80 step=5
-(const TRACE_HOME_BUDGET 60)
+(const TRACE_HOME_BUDGET 80)
 
 
 ; ── Local macros ──────────────────────────────────────────────────────────────
