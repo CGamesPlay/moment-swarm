@@ -13,7 +13,6 @@
 ;   TRACING-OUT  Follow wall found during EXPLORING using shared trace-step.
 ;                Detach on: random chance, DELIVERING_PH trail, opening entry.
 ;                Still marks gradient and senses food.
-;                On gradient too weak → RETURNING.
 ;
 ;   SPIRALING    Outward spiral after pickup beacon (food was here).
 ;                Uses scan-wall for gap-finding (unchanged from open2).

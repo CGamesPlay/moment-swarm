@@ -1,0 +1,1142 @@
+.tag 0 exploring
+.tag 1 tracing-out
+.tag 2 spiraling
+.tag 3 returning
+.tag 4 tracing-home
+
+  RANDOM r0 4
+  ADD r0 1
+  SET r1 0
+  SET r2 0
+__tag_exploring_5:
+  SET r3 0
+__loop_12:
+  TAG 0
+  SENSE FOOD r4
+  JEQ r4 0 __endwhen_16
+  SNIFF CH_RED HERE r0
+  SENSE NEST r3
+  JEQ r3 0 __else_18
+  JGT r0 254 __endif_19
+  SET r3 255
+  SUB r3 r0
+  MARK CH_RED r3
+  JMP __endif_19
+__else_18:
+  SMELL CH_RED r3
+  SNIFF CH_RED r3 r5
+  JLT r5 1 __endwhen_23
+  SUB r5 1
+  JGT r5 r0 __when_body_24
+__endwhen_25:
+__endwhen_23:
+__endif_19:
+  JNE r4 1 __cond_next_28
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  SUB r0 1
+  JMP __tail_20
+__when_body_24:
+  SUB r5 r0
+  MARK CH_RED r5
+  JMP __endwhen_25
+__cond_next_28:
+  JNE r4 2 __cond_next_30
+  SET r0 r1
+  AND r0 255
+  ADD r0 1
+  JMP __tail_31
+__cond_next_30:
+  JNE r4 3 __cond_next_32
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  ADD r0 1
+  JMP __tail_20
+__cond_next_32:
+  JNE r4 4 __cond_next_34
+  SET r0 r1
+  AND r0 255
+  SUB r0 1
+  JMP __tail_31
+__cond_next_34:
+__endcond_26:
+  MOVE r4
+  PICKUP
+  MARK CH_BLUE 255
+  SET r0 r4
+  SET r4 r2
+  JMP __tag_returning_9
+__endwhen_16:
+  SNIFF CH_BLUE HERE r4
+  JLT r4 10 __endwhen_37
+  SENSE FOOD r4
+  JNE r4 0 __endwhen_37
+  SNIFF CH_RED HERE r0
+  SENSE NEST r3
+  JEQ r3 0 __else_40
+  JGT r0 254 __endif_41
+  SET r3 255
+  SUB r3 r0
+  MARK CH_RED r3
+  JMP __endif_41
+__else_40:
+  SMELL CH_RED r3
+  SNIFF CH_RED r3 r4
+  JLT r4 1 __endwhen_45
+  SUB r4 1
+  JGT r4 r0 __when_body_46
+__endwhen_47:
+__endwhen_45:
+__endif_41:
+  RANDOM r0 4
+  ADD r0 1
+  PROBE r0 r3
+  JNE r3 1 __endwhen_49
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r3
+  JNE r3 1 __endwhen_51
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r3
+  JNE r3 1 __endwhen_53
+  MOD r0 4
+  ADD r0 1
+__endwhen_53:
+__endwhen_51:
+__endwhen_49:
+  SET r3 3
+  SET r4 0
+  JMP __tag_spiral-top_145
+__when_body_46:
+  SUB r4 r0
+  MARK CH_RED r4
+  JMP __endwhen_47
+__tag_spiral-top_145:
+  TAG 2
+  SNIFF CH_RED HERE r5
+  SENSE NEST r6
+  JEQ r6 0 __else_147
+  JGT r5 254 __endif_148
+  SET r6 255
+  SUB r6 r5
+  MARK CH_RED r6
+  JMP __endif_148
+__else_147:
+  SMELL CH_RED r6
+  SNIFF CH_RED r6 r7
+  JLT r7 1 __endwhen_152
+  SUB r7 1
+  JGT r7 r5 __when_body_153
+__endwhen_154:
+__endwhen_152:
+__endif_148:
+  SENSE FOOD r5
+  JEQ r5 0 __endwhen_156
+  JNE r5 1 __cond_next_159
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  SUB r0 1
+  JMP __tail_21
+__when_body_153:
+  SUB r7 r5
+  MARK CH_RED r7
+  JMP __endwhen_154
+__cond_next_159:
+  JNE r5 2 __cond_next_161
+  SET r0 r1
+  AND r0 255
+  ADD r0 1
+  JMP __tail_32
+__cond_next_161:
+  JNE r5 3 __cond_next_163
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  ADD r0 1
+  JMP __tail_21
+__cond_next_163:
+  JNE r5 4 __cond_next_165
+  SET r0 r1
+  AND r0 255
+  SUB r0 1
+  JMP __tail_32
+__cond_next_165:
+__endcond_157:
+  MOVE r5
+  PICKUP
+  MARK CH_BLUE 255
+  SET r0 r5
+  SET r4 r2
+  JMP __tag_returning_9
+__endwhen_156:
+  JLT r4 2 __endwhen_168
+  JMP __tag_exploring_5
+__endwhen_168:
+  PROBE r0 r5
+  JNE r5 1 __endwhen_171
+  RANDOM r0 4
+  ADD r0 1
+  PROBE r0 r5
+  JNE r5 1 __endwhen_173
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r5
+  JNE r5 1 __endwhen_175
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r5
+  JNE r5 1 __endwhen_177
+  MOD r0 4
+  ADD r0 1
+__endwhen_177:
+__endwhen_175:
+__endwhen_173:
+__endwhen_171:
+  JNE r0 1 __cond_next_180
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  SUB r5 1
+  JMP __tail_22
+__cond_next_180:
+  JNE r0 2 __cond_next_182
+  SET r5 r1
+  AND r5 255
+  ADD r5 1
+  JMP __tail_33
+__cond_next_182:
+  JNE r0 3 __cond_next_184
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  ADD r5 1
+  JMP __tail_22
+__cond_next_184:
+  JNE r0 4 __cond_next_186
+  SET r5 r1
+  AND r5 255
+  SUB r5 1
+  JMP __tail_33
+__cond_next_186:
+__endcond_178:
+  MOVE r0
+  SUB r3 1
+  JGT r3 0 __tag_spiral-top_145
+  ADD r4 1
+  SET r3 r4
+  DIV r3 2
+  ADD r3 1
+  MUL r3 3
+  MOD r0 4
+  ADD r0 1
+  JMP __tag_spiral-top_145
+__endwhen_37:
+  SNIFF CH_GREEN HERE r4
+  JLT r4 2 __endwhen_56
+  SMELL CH_GREEN r4
+  JEQ r4 0 __endwhen_58
+  SET r0 60
+  SET r3 r0
+  SET r0 r4
+__endwhen_58:
+__endwhen_56:
+  JGT r3 0 __endwhen_60
+  ADD r0 1
+  MOD r0 4
+  ADD r0 1
+  RANDOM r3 3
+  ADD r3 1
+  SET r4 r0
+  ADD r4 r3
+  ADD r4 -1
+  MOD r4 4
+  ADD r4 1
+  PROBE r4 r5
+  JNE r5 1 __endwhen_62
+  SET r4 r3
+  MOD r4 3
+  SET r5 r0
+  ADD r5 r4
+  MOD r5 4
+  ADD r5 1
+  PROBE r5 r4
+  JNE r4 1 __endwhen_64
+  ADD r3 1
+  MOD r3 3
+  SET r4 r0
+  ADD r4 r3
+  MOD r4 4
+  ADD r4 1
+  PROBE r4 r3
+  JEQ r3 1 __when_body_65
+__endwhen_66:
+  SET r5 r4
+__endwhen_64:
+  SET r4 r5
+__endwhen_62:
+  RANDOM r0 60
+  ADD r0 1
+  SET r3 r0
+  SET r0 r4
+__endwhen_60:
+  PROBE r0 r4
+  JNE r4 1 __endwhen_68
+  SET r3 r0
+  ADD r3 2
+  SET r4 r3
+  MOD r4 4
+  ADD r4 1
+  PROBE r4 r5
+  JNE r5 1 __else_70
+  SET r4 0
+  JMP __endif_71
+__when_body_65:
+  SET r4 r0
+  JMP __endwhen_66
+__else_70:
+  SET r4 r0
+  MOD r4 4
+  ADD r4 1
+  PROBE r4 r5
+  JNE r5 1 __else_73
+  SET r4 1
+  JMP __endif_74
+__else_73:
+  RANDOM r4 2
+__endif_74:
+__endif_71:
+  JNE r4 1 __else_76
+  MOD r3 4
+  ADD r3 1
+  SET r0 r3
+  JMP __endif_77
+__else_76:
+  MOD r0 4
+  ADD r0 1
+__endif_77:
+  TAG 1
+  SET r3 0
+  SET r5 r4
+  SET r4 r2
+  SET r2 r5
+__tag_do-trace-step_11:
+  JNE r2 1 __else_346
+  SET r5 r0
+  JMP __tail_12
+__else_346:
+  SET r5 r0
+  ADD r5 2
+  JMP __tail_12
+__endif_347:
+  PROBE r5 r6
+  JEQ r6 1 __else_349
+  JNE r5 1 __cond_next_353
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  SUB r0 1
+  JMP __tail_23
+__cond_next_353:
+  JNE r5 2 __cond_next_355
+  SET r0 r1
+  AND r0 255
+  ADD r0 1
+  JMP __tail_34
+__cond_next_355:
+  JNE r5 3 __cond_next_357
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  ADD r0 1
+  JMP __tail_23
+__cond_next_357:
+  JNE r5 4 __cond_next_359
+  SET r0 r1
+  AND r0 255
+  SUB r0 1
+  JMP __tail_34
+__cond_next_359:
+__endcond_351:
+  MOVE r5
+  SET r0 r5
+  JMP __endif_350
+__else_349:
+  PROBE r0 r5
+  JEQ r5 1 __else_361
+  JNE r0 1 __cond_next_365
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  SUB r5 1
+  JMP __tail_24
+__cond_next_365:
+  JNE r0 2 __cond_next_367
+  SET r5 r1
+  AND r5 255
+  ADD r5 1
+  JMP __tail_35
+__cond_next_367:
+  JNE r0 3 __cond_next_369
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  ADD r5 1
+  JMP __tail_24
+__cond_next_369:
+  JNE r0 4 __cond_next_371
+  SET r5 r1
+  AND r5 255
+  SUB r5 1
+  JMP __tail_35
+__cond_next_371:
+__endcond_363:
+  MOVE r0
+  JMP __endif_362
+__else_361:
+  JNE r2 1 __tail_13
+  ADD r0 2
+  JMP __tail_13
+__endif_374:
+  PROBE r0 r5
+  JEQ r5 1 __else_376
+  JNE r0 1 __cond_next_380
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  SUB r5 1
+  JMP __tail_25
+__cond_next_380:
+  JNE r0 2 __cond_next_382
+  SET r5 r1
+  AND r5 255
+  ADD r5 1
+  JMP __tail_36
+__cond_next_382:
+  JNE r0 3 __cond_next_384
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  ADD r5 1
+  JMP __tail_25
+__cond_next_384:
+  JNE r0 4 __cond_next_386
+  SET r5 r1
+  AND r5 255
+  SUB r5 1
+  JMP __tail_36
+__cond_next_386:
+__endcond_378:
+  MOVE r0
+  JMP __endif_377
+__else_376:
+  JNE r2 1 __tail_14
+  ADD r0 2
+  JMP __tail_14
+__endif_389:
+  PROBE r0 r5
+  JEQ r5 1 __endif_392
+  JNE r0 1 __cond_next_395
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  SUB r5 1
+  JMP __tail_43
+__cond_next_395:
+  JNE r0 2 __cond_next_397
+  SET r5 r1
+  AND r5 255
+  ADD r5 1
+  JMP __tail_37
+__cond_next_397:
+  JNE r0 3 __cond_next_399
+  SET r5 r1
+  RSHIFT r5 8
+  AND r5 255
+  ADD r5 1
+  JMP __tail_43
+__cond_next_399:
+  JNE r0 4 __cond_next_401
+  SET r5 r1
+  AND r5 255
+  SUB r5 1
+  JMP __tail_37
+__cond_next_401:
+__endcond_393:
+  MOVE r0
+__endif_392:
+__endif_377:
+__endif_362:
+__endif_350:
+  JEQ r3 0 __when_body_402
+  JNE r0 r3 __endwhen_406
+  JNE r2 1 __else_410
+  SET r5 r0
+  JMP __tail_15
+__when_body_402:
+  TAG 1
+  SNIFF CH_RED HERE r3
+  SMELL CH_RED r5
+  SNIFF CH_RED r5 r6
+  JLT r6 1 __endwhen_99
+  SUB r6 1
+  JGT r6 r3 __when_body_100
+__endwhen_101:
+__endwhen_99:
+  SENSE FOOD r3
+  JEQ r3 0 __endwhen_103
+  JNE r3 1 __cond_next_106
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  SUB r0 1
+  JMP __tail_26
+__when_body_100:
+  SUB r6 r3
+  MARK CH_RED r6
+  JMP __endwhen_101
+__cond_next_106:
+  JNE r3 2 __cond_next_108
+  SET r0 r1
+  AND r0 255
+  ADD r0 1
+  JMP __tail_38
+__cond_next_108:
+  JNE r3 3 __cond_next_110
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  ADD r0 1
+  JMP __tail_26
+__cond_next_110:
+  JNE r3 4 __cond_next_112
+  SET r0 r1
+  AND r0 255
+  SUB r0 1
+  JMP __tail_38
+__cond_next_112:
+__endcond_104:
+  MOVE r3
+  PICKUP
+  MARK CH_BLUE 255
+  SET r0 r3
+  JMP __tag_returning_9
+__endwhen_103:
+  SNIFF CH_GREEN HERE r3
+  JLT r3 2 __endwhen_115
+  SMELL CH_GREEN r3
+  JNE r3 0 __tail_17
+__endwhen_115:
+  RANDOM r3 50
+  JNE r3 0 __endwhen_120
+  JNE r2 1 __tail_16
+  ADD r0 2
+  JMP __tail_16
+__endif_123:
+  PROBE r0 r2
+  JNE r2 1 __endwhen_125
+  ADD r0 1
+  MOD r0 4
+  ADD r0 1
+__endwhen_125:
+  SET r2 r4
+  JMP __tag_exploring_5
+__endwhen_120:
+  JNE r2 1 __else_128
+  SET r3 r0
+  JMP __tail_18
+__else_128:
+  SET r3 r0
+  ADD r3 2
+  JMP __tail_18
+__endif_129:
+  PROBE r3 r5
+  JEQ r5 1 __endwhen_131
+  RANDOM r5 5
+  JNE r5 0 __endwhen_133
+  JNE r3 1 __cond_next_136
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  SUB r0 1
+  JMP __tail_27
+__cond_next_136:
+  JNE r3 2 __cond_next_138
+  SET r0 r1
+  AND r0 255
+  ADD r0 1
+  JMP __tail_39
+__cond_next_138:
+  JNE r3 3 __cond_next_140
+  SET r0 r1
+  RSHIFT r0 8
+  AND r0 255
+  ADD r0 1
+  JMP __tail_27
+__cond_next_140:
+  JNE r3 4 __cond_next_142
+  SET r0 r1
+  AND r0 255
+  SUB r0 1
+  JMP __tail_39
+__cond_next_142:
+__endcond_134:
+  MOVE r3
+  JMP __tail_17
+__endwhen_133:
+__endwhen_131:
+  SET r3 0
+  JMP __tag_do-trace-step_11
+__else_410:
+  SET r5 r0
+  ADD r5 2
+  JMP __tail_15
+__endif_411:
+  PROBE r5 r6
+  JEQ r6 1 __endwhen_408
+  JMP __tag_returning_9
+__endwhen_408:
+__endwhen_406:
+  TAG 4
+  CARRYING r5
+  JNE r5 1 __endwhen_286
+  SNIFF CH_GREEN HERE r5
+  SENSE FOOD r6
+  JEQ r6 0 __else_288
+  JGT r5 254 __endif_289
+  SET r6 255
+  SUB r6 r5
+  MARK CH_GREEN r6
+  JMP __endif_289
+__else_288:
+  SMELL CH_GREEN r6
+  SNIFF CH_GREEN r6 r7
+  JLT r7 1 __endwhen_293
+  SUB r7 1
+  JGT r7 r5 __when_body_294
+__endwhen_295:
+__endwhen_293:
+__endif_289:
+__endwhen_286:
+  SNIFF CH_RED HERE r5
+  SMELL CH_RED r6
+  SNIFF CH_RED r6 r7
+  JLT r7 1 __endwhen_297
+  SUB r7 1
+  JGT r7 r5 __when_body_298
+__endwhen_299:
+__endwhen_297:
+  SENSE NEST r5
+  JNE r5 0 __when_body_300
+  SUB r4 1
+  JGT r4 0 __tag_do-trace-step_11
+  SET r0 r1
+  AND r0 255
+  JLT r0 128 __endwhen_315
+  SUB r0 256
+__endwhen_315:
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  JLT r2 128 __endwhen_317
+  SUB r2 256
+__endwhen_317:
+  JGT r0 -1 __else_319
+  SET r3 0
+  SUB r3 r0
+  JMP __endif_320
+__when_body_294:
+  SUB r7 r5
+  MARK CH_GREEN r7
+  JMP __endwhen_295
+__when_body_298:
+  SUB r7 r5
+  MARK CH_RED r7
+  JMP __endwhen_299
+__when_body_300:
+  MOVE r5
+  DROP
+  SET r0 0
+  SET r1 r0
+  SET r2 r4
+  SET r0 r5
+  JMP __tag_exploring_5
+__else_319:
+  SET r3 r0
+__endif_320:
+  JGT r2 -1 __else_322
+  SET r5 0
+  SUB r5 r2
+  JGT r5 r3 __then_324
+  JLT r0 1 __else_328
+  SET r0 4
+  JMP __endif_323
+__then_324:
+  SET r0 3
+  JMP __endif_323
+__else_328:
+  SET r0 2
+  JMP __endif_323
+__else_322:
+  JGT r2 r3 __then_330
+  JLT r0 1 __else_334
+  SET r0 4
+  JMP __endif_335
+__then_330:
+  SET r0 1
+  JMP __endif_332
+__else_334:
+  SET r0 2
+__endif_335:
+__endif_332:
+__endif_323:
+  PROBE r0 r2
+  JNE r2 1 __endwhen_337
+  RANDOM r0 4
+  ADD r0 1
+  PROBE r0 r2
+  JNE r2 1 __endwhen_339
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r2
+  JNE r2 1 __endwhen_341
+  MOD r0 4
+  ADD r0 1
+  PROBE r0 r2
+  JNE r2 1 __endwhen_343
+  MOD r0 4
+  ADD r0 1
+__endwhen_343:
+__endwhen_341:
+__endwhen_339:
+__endwhen_337:
+__tag_returning_9:
+  TAG 3
+  SENSE NEST r2
+  JNE r2 0 __when_body_190
+  CARRYING r2
+  JNE r2 1 __else_203
+  SNIFF CH_GREEN HERE r0
+  SENSE FOOD r2
+  JEQ r2 0 __else_206
+  JGT r0 254 __endif_207
+  SET r2 255
+  SUB r2 r0
+  MARK CH_GREEN r2
+  JMP __endif_207
+__when_body_190:
+  MOVE r2
+  DROP
+  SET r0 0
+  SET r1 r0
+  SET r0 r2
+  SET r2 r4
+  JMP __tag_exploring_5
+__else_206:
+  SMELL CH_GREEN r2
+  SNIFF CH_GREEN r2 r3
+  JLT r3 1 __endwhen_211
+  SUB r3 1
+  JGT r3 r0 __when_body_212
+__endwhen_213:
+__endwhen_211:
+__endif_207:
+  SNIFF CH_RED HERE r0
+  SENSE NEST r2
+  JEQ r2 0 __else_216
+  JGT r0 254 __endif_217
+  SET r2 255
+  SUB r2 r0
+  MARK CH_RED r2
+  JMP __endif_217
+__when_body_212:
+  SUB r3 r0
+  MARK CH_GREEN r3
+  JMP __endwhen_213
+__else_216:
+  SMELL CH_RED r2
+  SNIFF CH_RED r2 r3
+  JLT r3 1 __endwhen_221
+  SUB r3 1
+  JGT r3 r0 __when_body_222
+__endwhen_223:
+__endwhen_221:
+__endif_217:
+  SMELL CH_RED r0
+  JEQ r0 0 __endwhen_225
+  PROBE r0 r2
+  JEQ r2 1 __endwhen_227
+  JNE r0 1 __cond_next_230
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  SUB r2 1
+  JMP __tail_28
+__when_body_222:
+  SUB r3 r0
+  MARK CH_RED r3
+  JMP __endwhen_223
+__cond_next_230:
+  JNE r0 2 __cond_next_232
+  SET r2 r1
+  AND r2 255
+  ADD r2 1
+  JMP __tail_40
+__cond_next_232:
+  JNE r0 3 __cond_next_234
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  ADD r2 1
+  JMP __tail_28
+__cond_next_234:
+  JNE r0 4 __cond_next_236
+  SET r2 r1
+  AND r2 255
+  SUB r2 1
+  JMP __tail_40
+__cond_next_236:
+__endcond_228:
+  MOVE r0
+  JMP __tag_returning_9
+__endwhen_227:
+__endwhen_225:
+  SET r0 r1
+  AND r0 255
+  JLT r0 128 __endwhen_239
+  SUB r0 256
+__endwhen_239:
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  JLT r2 128 __endwhen_241
+  SUB r2 256
+__endwhen_241:
+  JGT r0 -1 __else_243
+  SET r3 0
+  SUB r3 r0
+  JMP __endif_244
+__else_243:
+  SET r3 r0
+__endif_244:
+  JGT r2 -1 __else_246
+  SET r5 0
+  SUB r5 r2
+  JGT r5 r3 __then_248
+  JLT r0 1 __else_252
+  SET r0 4
+  JMP __endif_247
+__then_248:
+  SET r0 3
+  JMP __endif_247
+__else_252:
+  SET r0 2
+  JMP __endif_247
+__else_246:
+  JGT r2 r3 __then_254
+  JLT r0 1 __else_258
+  SET r0 4
+  JMP __endif_259
+__then_254:
+  SET r0 1
+  JMP __endif_256
+__else_258:
+  SET r0 2
+__endif_259:
+__endif_256:
+__endif_247:
+  PROBE r0 r2
+  JEQ r2 1 __else_261
+  JNE r0 1 __cond_next_265
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  SUB r2 1
+  JMP __tail_29
+__cond_next_265:
+  JNE r0 2 __cond_next_267
+  SET r2 r1
+  AND r2 255
+  ADD r2 1
+  JMP __tail_41
+__cond_next_267:
+  JNE r0 3 __cond_next_269
+  SET r2 r1
+  RSHIFT r2 8
+  AND r2 255
+  ADD r2 1
+  JMP __tail_29
+__cond_next_269:
+  JNE r0 4 __cond_next_271
+  SET r2 r1
+  AND r2 255
+  SUB r2 1
+  JMP __tail_41
+__cond_next_271:
+__endcond_263:
+  MOVE r0
+  JMP __tag_returning_9
+__else_261:
+  SET r2 80
+  SET r3 r0
+  ADD r3 2
+  MOD r3 4
+  ADD r3 1
+  PROBE r3 r4
+  JNE r4 1 __else_274
+  SET r3 0
+  JMP __endif_275
+__else_274:
+  SET r3 r0
+  MOD r3 4
+  ADD r3 1
+  PROBE r3 r4
+  JNE r4 1 __else_277
+  SET r3 1
+  JMP __endif_278
+__else_277:
+  RANDOM r3 2
+__endif_278:
+__endif_275:
+  RANDOM r4 6
+  JNE r4 0 __endwhen_280
+  SET r4 1
+  SUB r4 r3
+  SET r3 r4
+__endwhen_280:
+  JNE r3 1 __else_282
+  SET r4 r0
+  ADD r4 2
+  JMP __tail_19
+__else_282:
+  SET r4 r0
+  JMP __tail_19
+__endif_283:
+  SET r5 r4
+  SET r4 r2
+  SET r2 r3
+  SET r3 r0
+  SET r0 r5
+  JMP __tag_do-trace-step_11
+__else_203:
+  SET r2 r4
+  JMP __tag_exploring_5
+__endwhen_68:
+  SNIFF CH_RED HERE r4
+  SENSE NEST r5
+  JEQ r5 0 __else_80
+  JGT r4 254 __endif_81
+  SET r5 255
+  SUB r5 r4
+  MARK CH_RED r5
+  JMP __endif_81
+__else_80:
+  SMELL CH_RED r5
+  SNIFF CH_RED r5 r6
+  JLT r6 1 __endwhen_85
+  SUB r6 1
+  JGT r6 r4 __when_body_86
+__endwhen_87:
+__endwhen_85:
+__endif_81:
+  JNE r0 1 __cond_next_90
+  SET r4 r1
+  RSHIFT r4 8
+  AND r4 255
+  SUB r4 1
+  JMP __tail_30
+__when_body_86:
+  SUB r6 r4
+  MARK CH_RED r6
+  JMP __endwhen_87
+__cond_next_90:
+  JNE r0 2 __cond_next_92
+  SET r4 r1
+  AND r4 255
+  ADD r4 1
+  JMP __tail_42
+__cond_next_92:
+  JNE r0 3 __cond_next_94
+  SET r4 r1
+  RSHIFT r4 8
+  AND r4 255
+  ADD r4 1
+  JMP __tail_30
+__cond_next_94:
+  JNE r0 4 __cond_next_96
+  SET r4 r1
+  AND r4 255
+  SUB r4 1
+  JMP __tail_42
+__cond_next_96:
+__endcond_88:
+  MOVE r0
+  SUB r3 1
+  JMP __loop_12
+__tail_12:
+  MOD r5 4
+  ADD r5 1
+  JMP __endif_347
+__tail_13:
+  MOD r0 4
+  ADD r0 1
+  JMP __endif_374
+__tail_14:
+  MOD r0 4
+  ADD r0 1
+  JMP __endif_389
+__tail_15:
+  MOD r5 4
+  ADD r5 1
+  JMP __endif_411
+__tail_16:
+  MOD r0 4
+  ADD r0 1
+  JMP __endif_123
+__tail_17:
+  SET r0 r3
+  SET r2 r4
+  JMP __tag_exploring_5
+__tail_18:
+  MOD r3 4
+  ADD r3 1
+  JMP __endif_129
+__tail_19:
+  MOD r4 4
+  ADD r4 1
+  JMP __endif_283
+__tail_20:
+  AND r0 255
+  LSHIFT r0 8
+  AND r1 4294902015
+  OR r1 r0
+  JMP __endcond_26
+__tail_21:
+  AND r0 255
+  LSHIFT r0 8
+  AND r1 4294902015
+  OR r1 r0
+  JMP __endcond_157
+__tail_22:
+  AND r5 255
+  LSHIFT r5 8
+  AND r1 4294902015
+  OR r1 r5
+  JMP __endcond_178
+__tail_23:
+  AND r0 255
+  LSHIFT r0 8
+  AND r1 4294902015
+  OR r1 r0
+  JMP __endcond_351
+__tail_24:
+  AND r5 255
+  LSHIFT r5 8
+  AND r1 4294902015
+  OR r1 r5
+  JMP __endcond_363
+__tail_25:
+  AND r5 255
+  LSHIFT r5 8
+  AND r1 4294902015
+  OR r1 r5
+  JMP __endcond_378
+__tail_26:
+  AND r0 255
+  LSHIFT r0 8
+  AND r1 4294902015
+  OR r1 r0
+  JMP __endcond_104
+__tail_27:
+  AND r0 255
+  LSHIFT r0 8
+  AND r1 4294902015
+  OR r1 r0
+  JMP __endcond_134
+__tail_28:
+  AND r2 255
+  LSHIFT r2 8
+  AND r1 4294902015
+  OR r1 r2
+  JMP __endcond_228
+__tail_29:
+  AND r2 255
+  LSHIFT r2 8
+  AND r1 4294902015
+  OR r1 r2
+  JMP __endcond_263
+__tail_30:
+  AND r4 255
+  LSHIFT r4 8
+  AND r1 4294902015
+  OR r1 r4
+  JMP __endcond_88
+__tail_31:
+  AND r0 255
+  AND r1 4294967040
+  OR r1 r0
+  JMP __endcond_26
+__tail_32:
+  AND r0 255
+  AND r1 4294967040
+  OR r1 r0
+  JMP __endcond_157
+__tail_33:
+  AND r5 255
+  AND r1 4294967040
+  OR r1 r5
+  JMP __endcond_178
+__tail_34:
+  AND r0 255
+  AND r1 4294967040
+  OR r1 r0
+  JMP __endcond_351
+__tail_35:
+  AND r5 255
+  AND r1 4294967040
+  OR r1 r5
+  JMP __endcond_363
+__tail_36:
+  AND r5 255
+  AND r1 4294967040
+  OR r1 r5
+  JMP __endcond_378
+__tail_37:
+  AND r5 255
+  AND r1 4294967040
+  OR r1 r5
+  JMP __endcond_393
+__tail_38:
+  AND r0 255
+  AND r1 4294967040
+  OR r1 r0
+  JMP __endcond_104
+__tail_39:
+  AND r0 255
+  AND r1 4294967040
+  OR r1 r0
+  JMP __endcond_134
+__tail_40:
+  AND r2 255
+  AND r1 4294967040
+  OR r1 r2
+  JMP __endcond_228
+__tail_41:
+  AND r2 255
+  AND r1 4294967040
+  OR r1 r2
+  JMP __endcond_263
+__tail_42:
+  AND r4 255
+  AND r1 4294967040
+  OR r1 r4
+  JMP __endcond_88
+__tail_43:
+  AND r5 255
+  LSHIFT r5 8
+  AND r1 4294902015
+  OR r1 r5
+  JMP __endcond_393
