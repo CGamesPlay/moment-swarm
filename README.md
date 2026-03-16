@@ -3,6 +3,8 @@
 9th place submission (773/1000) for the [Moment SWARM contest](https://dev.moment.com/swarm), March 6–13, 2026. SWARM is an ant colony simulator: write a single program controlling 200 ants simultaneously to collect as much food as possible across 12 diverse maps within 2000 ticks. Every ant runs the same program independently, sharing state only through pheromones.
 
 > 📣 If you participated in this contest and want to share your submission, please open an issue in this repository. I'll add a link to your Github / blog post!
+>
+> ⬇️​ There are already some links [down below](#swarm-submissions-webring).
 
 I approached the contest as a fun opportunity to push the limits of my ability to use AI agents, and in particular to get acquainted with the Pi coding agent. I am writing a blog post with my development log that will have more details about this, follow [my blog](https://cgamesplay.com/blog/) for updates.
 
@@ -249,3 +251,23 @@ A set of primitives (`inc-dx!`, `dec-dy!`, etc.) update the individual bytes in-
 When an ant needs to navigate home, `home-dir` unpacks dx and dy, compares their absolute values, and sets `dir` to step along the dominant axis toward zero.
 
 Resetting `homepos` to 0 on nest arrival appears to be a latent bug. It may be covering up some other bug, but logically there shouldn't be any need to do it and this may have interfered with other experiments trying to use the two unused bytes of this register for other purposes.
+
+## SWARM Submissions Webring
+
+### 🏅 7th place, enlyth, 778 points
+
+Link: [Inquire here](https://news.ycombinator.com/item?id=47362378)
+
+2-color exploration trail for extended range. Manual antssembly optimized with genetic programming techniques.
+
+### 🏅 9th place, CGamesPlay, 773 points
+
+You're here!
+
+### Other entrants
+
+- 66th place at 504 points, [Will-Morr/momentswarm](https://github.com/Will-Morr/momentswarm). Uses dead-reckoning, two "follow" trails and two "repel" trails. Lots of map analysis work on the side.
+
+### Non-entrants
+
+- [rpadaki/swarm-lang](https://github.com/rpadaki/swarm-lang) rpadaki, the Moment employee who created the challenge, also experimented with a higher-level programming language for antssembly.
